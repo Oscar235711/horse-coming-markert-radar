@@ -49,7 +49,17 @@ def _normalize_post(record: Mapping[str, Any]) -> NormalizedPost:
 def _merge_posts(posts: list[NormalizedPost]) -> NormalizedPost:
     selected = max(
         posts,
-        key=lambda post: (len(post.body), post.score, post.comment_count, post.url),
+        key=lambda post: (
+            len(post.body),
+            post.score,
+            post.comment_count,
+            post.url,
+            post.post_id,
+            post.title,
+            post.author or "",
+            post.created_at,
+            post.subreddit,
+        ),
     )
     return NormalizedPost(
         post_id=selected.post_id,
@@ -96,6 +106,8 @@ def _parse_timestamp(value: object) -> datetime:
         return datetime.fromtimestamp(value, tz=UTC)
     if isinstance(value, str):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
     raise ValueError("post record requires created_utc or created_at")
 
