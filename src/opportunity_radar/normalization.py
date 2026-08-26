@@ -51,6 +51,7 @@ def _merge_posts(posts: list[NormalizedPost]) -> NormalizedPost:
         posts,
         key=lambda post: (
             len(post.body),
+            post.body,
             post.score,
             post.comment_count,
             post.url,

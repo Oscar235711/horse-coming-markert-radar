@@ -149,3 +149,26 @@ def test_deduplication_is_identical_when_same_url_tie_records_are_permuted() -> 
     assert forward[0].title == "Zulu title"
     assert forward[0].author == "zed"
     assert forward[0].created_at == datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+
+def test_deduplication_uses_body_content_to_break_same_id_equal_length_ties() -> None:
+    """Equal-length body variants for one post must not retain whichever listing arrived first."""
+    shared = {
+        "id": "shared",
+        "permalink": "/r/powerstroke/comments/shared/example/",
+        "subreddit": "powerstroke",
+        "title": "Same title",
+        "author": "owner",
+        "created_at": "2026-08-01T12:00:00+00:00",
+        "score": 5,
+        "num_comments": 2,
+    }
+    alpha = {**shared, "selftext": "Alpha", "source_surface": "hot"}
+    zulu = {**shared, "selftext": "Zulu!", "source_surface": "new"}
+
+    forward = opportunity_radar.normalize_and_deduplicate((alpha, zulu))
+    reverse = opportunity_radar.normalize_and_deduplicate((zulu, alpha))
+
+    assert forward == reverse
+    assert forward[0].body == "Zulu!"
+    assert forward[0].source_surfaces == ("hot", "new")
