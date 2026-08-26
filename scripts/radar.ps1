@@ -19,13 +19,20 @@ Import-RadarEnv -ConfigPath $ConfigPath
 
 $DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { $env:RADAR_DATA_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
 $OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { $env:RADAR_OUTPUT_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
+$toolsRoot = Resolve-RadarPath -Value $env:RADAR_TOOLS_ROOT -RepoRoot $repoRoot -DefaultRelative ".tools"
 $agentReachHome = Resolve-RadarPath -Value $env:RADAR_AGENT_REACH_HOME -RepoRoot $repoRoot -DefaultRelative ".local\agent-reach"
 $agentReachFallbacks = @(
+  (Join-Path $toolsRoot "agent-reach\.venv\Scripts\agent-reach.exe"),
+  (Join-Path $toolsRoot "agent-reach\.venv\bin\agent-reach"),
   (Join-Path $agentReachHome ".venv\Scripts\agent-reach.exe"),
   (Join-Path $agentReachHome ".venv\bin\agent-reach")
 )
-$agentReachExe = Find-RadarExecutable -ExplicitPath $env:RADAR_AGENT_REACH_EXE -CommandName "agent-reach" -FallbackPaths $agentReachFallbacks
-$openCliExe = Find-RadarExecutable -ExplicitPath $env:RADAR_OPENCLI_EXE -CommandName "opencli"
+$agentReachExe = Find-RadarExecutable -ExplicitPath $env:RADAR_AGENT_REACH_EXE -CommandName "agent-reach" -FallbackPaths $agentReachFallbacks -PreferFallbacks
+$openCliFallbacks = @(
+  (Join-Path $toolsRoot "opencli\node_modules\.bin\opencli.cmd"),
+  (Join-Path $toolsRoot "opencli\node_modules\.bin\opencli")
+)
+$openCliExe = Find-RadarExecutable -ExplicitPath $env:RADAR_OPENCLI_EXE -CommandName "opencli" -FallbackPaths $openCliFallbacks -PreferFallbacks
 $nodeFallbacks = @()
 if ($env:USERPROFILE) { $nodeFallbacks += (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe") }
 $nodeExe = Find-RadarExecutable -ExplicitPath $env:RADAR_NODE_EXE -CommandName "node" -FallbackPaths $nodeFallbacks
@@ -50,6 +57,7 @@ switch ($Command) {
       config_path = $ConfigPath
       data_root = $DataRoot
       output_root = $OutputRoot
+      tools_root = $toolsRoot
       agent_reach_home = $agentReachHome
       agent_reach_exe = $agentReachExe
       opencli_exe = $openCliExe

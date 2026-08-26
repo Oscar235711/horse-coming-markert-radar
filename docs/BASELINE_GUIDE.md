@@ -17,6 +17,7 @@
 git clone https://github.com/Oscar235711/horse-coming-markert-radar.git
 cd horse-coming-markert-radar
 .\scripts\radar.ps1 init
+.\scripts\install-tools.ps1
 .\scripts\setup-local-runtime.ps1
 .\scripts\radar.ps1 paths
 .\scripts\radar.ps1 doctor
@@ -25,7 +26,9 @@ cd horse-coming-markert-radar
 
 `init`会创建被Git忽略的`.env`及`.local`目录，不会覆盖已经存在的`.env`。相对路径始终按仓库根目录解析，因此仓库可以放在任意磁盘和目录。
 
-如果`doctor`提示找不到Agent Reach或OpenCLI，编辑`.env`填写对应安装位置；如果命令已经在PATH中则保持为空。`setup-local-runtime.ps1`会优先读取`.env`中的`RADAR_NODE_MODULES`，未设置时自动查找当前Windows用户的Codex运行时。
+`install-tools.ps1`会把固定版本的Agent Reach和OpenCLI安装到仓库自己的`.tools`目录，不要求全局安装，也不会包含或复制Chrome Cookie。`setup-local-runtime.ps1`会优先读取`.env`中的`RADAR_NODE_MODULES`，未设置时自动查找当前Windows用户的Codex运行时。
+
+如果`install-tools.ps1`提示缺少`uv`或`npm`，先安装Python环境管理器uv和Node.js，或者在`.env`中配置`RADAR_UV_EXE`、`RADAR_NPM_EXE`。如需使用电脑上已有的Agent Reach/OpenCLI，也可通过`RADAR_AGENT_REACH_EXE`、`RADAR_OPENCLI_EXE`覆盖项目内版本。
 
 ## 放入本地数据后检查
 

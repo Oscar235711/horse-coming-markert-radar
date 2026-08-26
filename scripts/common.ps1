@@ -30,16 +30,24 @@ function Find-RadarExecutable {
   param(
     [string]$ExplicitPath,
     [string]$CommandName,
-    [string[]]$FallbackPaths = @()
+    [string[]]$FallbackPaths = @(),
+    [switch]$PreferFallbacks
   )
   if ($ExplicitPath) {
     $expanded = [Environment]::ExpandEnvironmentVariables($ExplicitPath)
     if (Test-Path -LiteralPath $expanded) { return [System.IO.Path]::GetFullPath($expanded) }
   }
+  if ($PreferFallbacks) {
+    foreach ($candidate in $FallbackPaths) {
+      if ($candidate -and (Test-Path -LiteralPath $candidate)) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
+  }
   $command = Get-Command $CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($command) { return $command.Source }
-  foreach ($candidate in $FallbackPaths) {
-    if ($candidate -and (Test-Path -LiteralPath $candidate)) { return [System.IO.Path]::GetFullPath($candidate) }
+  if (-not $PreferFallbacks) {
+    foreach ($candidate in $FallbackPaths) {
+      if ($candidate -and (Test-Path -LiteralPath $candidate)) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
   }
   return $null
 }

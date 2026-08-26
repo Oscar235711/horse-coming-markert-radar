@@ -6,6 +6,7 @@
 
 ```powershell
 .\scripts\radar.ps1 init
+.\scripts\install-tools.ps1
 .\scripts\setup-local-runtime.ps1
 .\scripts\radar.ps1 paths
 .\scripts\radar.ps1 doctor

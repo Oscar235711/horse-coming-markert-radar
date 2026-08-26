@@ -22,6 +22,7 @@ $requiredRepoFiles = @(
   "docs\DATA_CONTRACT.md",
   "scripts\radar.ps1",
   "scripts\common.ps1",
+  "scripts\install-tools.ps1",
   "scripts\fetch-details.ps1",
   "scripts\deep-dive.ps1",
   "scripts\build-evidence-xlsx.mjs",
@@ -51,7 +52,12 @@ $detailCount = (Get-ChildItem -LiteralPath (Join-Path $DataRoot "details_all") -
 if ($candidateCount -ne 41) { throw "Expected 41 candidate rows, found $candidateCount" }
 if ($detailCount -ne 41) { throw "Expected 41 detail files, found $detailCount" }
 
-$trackedText = Get-ChildItem -LiteralPath $repoRoot -Recurse -File | Where-Object { $_.FullName -notmatch '\\.git\\|\\node_modules\\' -and $_.Name -ne "verify-baseline.ps1" } | ForEach-Object { Get-Content -Raw -ErrorAction SilentlyContinue $_.FullName }
+$trackedFiles = @(& git -C $repoRoot ls-files)
+if ($LASTEXITCODE -ne 0) { throw "Unable to list Git-tracked files for credential scan" }
+$trackedText = $trackedFiles | Where-Object { $_ -ne "scripts/verify-baseline.ps1" } | ForEach-Object {
+  $trackedPath = Join-Path $repoRoot $_
+  if (Test-Path -LiteralPath $trackedPath) { Get-Content -Raw -Encoding UTF8 -ErrorAction SilentlyContinue $trackedPath }
+}
 $secretPatterns = 'reddit_session=|api[_-]?key\s*=\s*["''][A-Za-z0-9_-]{16,}|client_secret\s*=\s*["''][^"'']+'
 if (($trackedText -join "`n") -match $secretPatterns) { throw "Potential credential material detected in repository files" }
 
