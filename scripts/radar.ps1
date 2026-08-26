@@ -18,7 +18,7 @@ switch ($Command) {
     opencli reddit --help | Select-Object -First 5
   }
   "status" {
-    Get-Content -Raw (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
+    Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
   }
   "verify-baseline" {
     & (Join-Path $PSScriptRoot "verify-baseline.ps1") -DataRoot $DataRoot -OutputRoot $OutputRoot
