@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+cookies/
+data/raw/
+data/processed/
+outputs/*
+!outputs/.gitkeep
+node_modules/
+.venv/
+*.log
+*.inspect.ndjson
+*_preview.png

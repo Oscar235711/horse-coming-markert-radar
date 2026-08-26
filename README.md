@@ -130,3 +130,17 @@ HTML为单文件、离线可打开的交互报告；DOCX使用相同章节和数
 ●API Key使用环境变量；Cookie继续由Agent Reach/rdt-cli本地管理。
 ●第一期不建设网站、不做多人权限、不接内部VOC、不训练模型。
 ●网站产品化时继续复用现有CLI、配置Schema、SQLite历史数据和 analysis.json，不重写采集分析核心。
+
+## 6. 2026-08-26 已验证基线
+
+当前仓库已加入第一轮真实Reddit测试形成的可复用基线：
+
+- 41条去重帖子及完整正文获取链路；
+- 353条评论获取链路；
+- AI预复核、聚类、产品机会卡和用户画像Excel生成器；
+- 用户公开历史帖子与评论深挖脚本；
+- 90天柴油皮卡扫描配置；
+- 分析结果和用户画像JSON Schema；
+- Cookie/API Key忽略和敏感信息检查。
+
+使用入口和本地验收方法见 [基线使用指南](docs/BASELINE_GUIDE.md)，当前能力与限制见 [CURRENT_BASELINE.md](docs/CURRENT_BASELINE.md)。

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Opportunity Radar Public Behavior Profile",
+  "type": "object",
+  "required": ["user_code", "selection_score", "evidence_urls", "confidence"],
+  "properties": {
+    "user_code": { "type": "string" },
+    "public_username": { "type": ["string", "null"] },
+    "selection_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "vehicle_platforms": { "type": "array", "items": { "type": "string" } },
+    "usage_scenarios": { "type": "array", "items": { "type": "string" } },
+    "experience_level": { "enum": ["new", "intermediate", "advanced", "unknown"] },
+    "purchase_signals": { "type": "array", "items": { "type": "string" } },
+    "pain_points": { "type": "array", "items": { "type": "string" } },
+    "budget_signals": { "type": "array", "items": { "type": "string" } },
+    "inferred_behavior_type": { "type": ["string", "null"] },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "evidence_urls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+    "unknown_fields": { "type": "array", "items": { "type": "string" } },
+    "privacy_note": { "type": "string" }
+  },
+  "additionalProperties": false
+}
