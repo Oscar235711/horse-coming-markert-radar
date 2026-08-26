@@ -8,9 +8,9 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "common.ps1")
 if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
-Import-RadarEnv -ConfigPath $ConfigPath
-$DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { $env:RADAR_DATA_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
-$OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { $env:RADAR_OUTPUT_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
+$radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
+$DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { Get-RadarSetting -Name "RADAR_DATA_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
+$OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { Get-RadarSetting -Name "RADAR_OUTPUT_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
 $requiredRepoFiles = @(
   "README.md",
   ".gitignore",

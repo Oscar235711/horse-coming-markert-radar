@@ -15,27 +15,27 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "common.ps1")
 if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
 $ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
-Import-RadarEnv -ConfigPath $ConfigPath
+$radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
 
-$DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { $env:RADAR_DATA_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
-$OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { $env:RADAR_OUTPUT_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
-$toolsRoot = Resolve-RadarPath -Value $env:RADAR_TOOLS_ROOT -RepoRoot $repoRoot -DefaultRelative ".tools"
-$agentReachHome = Resolve-RadarPath -Value $env:RADAR_AGENT_REACH_HOME -RepoRoot $repoRoot -DefaultRelative ".local\agent-reach"
+$DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { Get-RadarSetting -Name "RADAR_DATA_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
+$OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { Get-RadarSetting -Name "RADAR_OUTPUT_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
+$toolsRoot = Resolve-RadarPath -Value (Get-RadarSetting -Name "RADAR_TOOLS_ROOT" -Config $radarConfig) -RepoRoot $repoRoot -DefaultRelative ".tools"
+$agentReachHome = Resolve-RadarPath -Value (Get-RadarSetting -Name "RADAR_AGENT_REACH_HOME" -Config $radarConfig) -RepoRoot $repoRoot -DefaultRelative ".local\agent-reach"
 $agentReachFallbacks = @(
   (Join-Path $toolsRoot "agent-reach\.venv\Scripts\agent-reach.exe"),
   (Join-Path $toolsRoot "agent-reach\.venv\bin\agent-reach"),
   (Join-Path $agentReachHome ".venv\Scripts\agent-reach.exe"),
   (Join-Path $agentReachHome ".venv\bin\agent-reach")
 )
-$agentReachExe = Find-RadarExecutable -ExplicitPath $env:RADAR_AGENT_REACH_EXE -CommandName "agent-reach" -FallbackPaths $agentReachFallbacks -PreferFallbacks
+$agentReachExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_AGENT_REACH_EXE" -Config $radarConfig) -CommandName "agent-reach" -FallbackPaths $agentReachFallbacks -PreferFallbacks
 $openCliFallbacks = @(
   (Join-Path $toolsRoot "opencli\node_modules\.bin\opencli.cmd"),
   (Join-Path $toolsRoot "opencli\node_modules\.bin\opencli")
 )
-$openCliExe = Find-RadarExecutable -ExplicitPath $env:RADAR_OPENCLI_EXE -CommandName "opencli" -FallbackPaths $openCliFallbacks -PreferFallbacks
+$openCliExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_OPENCLI_EXE" -Config $radarConfig) -CommandName "opencli" -FallbackPaths $openCliFallbacks -PreferFallbacks
 $nodeFallbacks = @()
 if ($env:USERPROFILE) { $nodeFallbacks += (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe") }
-$nodeExe = Find-RadarExecutable -ExplicitPath $env:RADAR_NODE_EXE -CommandName "node" -FallbackPaths $nodeFallbacks
+$nodeExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_NODE_EXE" -Config $radarConfig) -CommandName "node" -FallbackPaths $nodeFallbacks
 
 switch ($Command) {
   "init" {
@@ -86,8 +86,16 @@ switch ($Command) {
   }
   "report" {
     if (-not $nodeExe) { throw "Node.js not found. Install Node.js or set RADAR_NODE_EXE in $ConfigPath" }
-    $env:RADAR_DATA_ROOT = $DataRoot
-    $env:RADAR_OUTPUT_ROOT = $OutputRoot
-    & $nodeExe (Join-Path $PSScriptRoot "build-evidence-xlsx.mjs")
+    $previousDataRoot = $env:RADAR_DATA_ROOT
+    $previousOutputRoot = $env:RADAR_OUTPUT_ROOT
+    try {
+      $env:RADAR_DATA_ROOT = $DataRoot
+      $env:RADAR_OUTPUT_ROOT = $OutputRoot
+      & $nodeExe (Join-Path $PSScriptRoot "build-evidence-xlsx.mjs")
+    }
+    finally {
+      $env:RADAR_DATA_ROOT = $previousDataRoot
+      $env:RADAR_OUTPUT_ROOT = $previousOutputRoot
+    }
   }
 }

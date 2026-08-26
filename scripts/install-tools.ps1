@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
   [string]$ToolsRoot,
+  [string]$ConfigPath,
   [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "common.ps1")
-$ToolsRoot = Resolve-RadarPath -Value $ToolsRoot -RepoRoot $repoRoot -DefaultRelative ".tools"
+if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
+$radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
+$ToolsRoot = Resolve-RadarPath -Value $(if ($ToolsRoot) { $ToolsRoot } else { Get-RadarSetting -Name "RADAR_TOOLS_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".tools"
 
 $agentReachCommit = "06c202b03400a7d31886bf4399213706da1a0324"
 $agentReachSource = "https://github.com/Panniantong/Agent-Reach/archive/$agentReachCommit.zip"
@@ -24,8 +27,8 @@ Write-Host "AGENT_REACH_SOURCE $agentReachSource"
 Write-Host "OPENCLI_PACKAGE $openCliPackage"
 if ($DryRun) { exit 0 }
 
-$uvExe = Find-RadarExecutable -ExplicitPath $env:RADAR_UV_EXE -CommandName "uv"
-$npmExe = Find-RadarExecutable -ExplicitPath $env:RADAR_NPM_EXE -CommandName "npm"
+$uvExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_UV_EXE" -Config $radarConfig) -CommandName "uv"
+$npmExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_NPM_EXE" -Config $radarConfig) -CommandName "npm"
 if (-not $uvExe) { throw "uv not found. Install uv or set RADAR_UV_EXE in .env" }
 if (-not $npmExe) { throw "npm not found. Install Node.js or set RADAR_NPM_EXE in .env" }
 

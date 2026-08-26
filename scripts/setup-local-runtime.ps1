@@ -9,13 +9,14 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $common = Join-Path $PSScriptRoot "common.ps1"
 . $common
 if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
-Import-RadarEnv -ConfigPath $ConfigPath
+$radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
 
 if (-not $JunctionPath) { $JunctionPath = Join-Path $repoRoot "node_modules" }
 $JunctionPath = Resolve-RadarPath -Value $JunctionPath -RepoRoot $repoRoot -DefaultRelative "node_modules"
 $candidates = @()
 if ($BundledNodeModules) { $candidates += $BundledNodeModules }
-if ($env:RADAR_NODE_MODULES) { $candidates += $env:RADAR_NODE_MODULES }
+$configuredNodeModules = Get-RadarSetting -Name "RADAR_NODE_MODULES" -Config $radarConfig
+if ($configuredNodeModules) { $candidates += $configuredNodeModules }
 if ($env:USERPROFILE) { $candidates += (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules") }
 $sourceModules = $candidates | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) } | Where-Object {
   Test-Path -LiteralPath (Join-Path $_ "@oai\artifact-tool\package.json")

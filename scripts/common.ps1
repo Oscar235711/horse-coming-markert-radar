@@ -1,6 +1,7 @@
 function Import-RadarEnv {
   param([string]$ConfigPath)
-  if (-not $ConfigPath -or -not (Test-Path -LiteralPath $ConfigPath)) { return }
+  $values = @{}
+  if (-not $ConfigPath -or -not (Test-Path -LiteralPath $ConfigPath)) { return $values }
   foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $ConfigPath) {
     $trimmed = $line.Trim()
     if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
@@ -8,10 +9,20 @@ function Import-RadarEnv {
     if ($parts.Count -ne 2) { continue }
     $name = $parts[0].Trim()
     $value = $parts[1].Trim().Trim('"').Trim("'")
-    if ($name -and $value -and -not [Environment]::GetEnvironmentVariable($name, "Process")) {
-      [Environment]::SetEnvironmentVariable($name, $value, "Process")
-    }
+    if ($name -and $value) { $values[$name] = $value }
   }
+  return $values
+}
+
+function Get-RadarSetting {
+  param(
+    [string]$Name,
+    [hashtable]$Config
+  )
+  $processValue = [Environment]::GetEnvironmentVariable($Name, "Process")
+  if ($processValue) { return $processValue }
+  if ($Config -and $Config.ContainsKey($Name)) { return $Config[$Name] }
+  return $null
 }
 
 function Resolve-RadarPath {
