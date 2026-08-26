@@ -1,6 +1,24 @@
 """Opportunity Radar core package."""
 
 from .config import load_config
+from .collector import (
+    CollectionFailure,
+    CollectionResult,
+    OpenCliCollector,
+    ThreadComment,
+    ThreadDocument,
+)
+from .deepseek import (
+    DEFAULT_BASE_URL,
+    FLASH_MODEL,
+    PRO_MODEL,
+    DeepSeekClient,
+    DeepSeekError,
+    EvidenceClaim,
+    HttpResponse,
+    PostAnalysis,
+    TopicCandidate,
+)
 from .models import (
     Community,
     CollectionSettings,
@@ -20,15 +38,29 @@ from .windowing import window_posts
 __all__ = [
     "Community",
     "CollectionSettings",
+    "CollectionFailure",
+    "CollectionResult",
+    "DEFAULT_BASE_URL",
+    "DeepSeekClient",
+    "DeepSeekError",
+    "EvidenceClaim",
+    "FLASH_MODEL",
+    "HttpResponse",
     "NormalizedPost",
+    "OpenCliCollector",
     "PostWindow",
+    "PostAnalysis",
+    "PRO_MODEL",
     "RadarConfig",
     "RunManifest",
     "RunPaths",
     "ShortlistedPost",
     "TopicRecord",
+    "TopicCandidate",
     "TopicRegistry",
     "WindowedPost",
+    "ThreadComment",
+    "ThreadDocument",
     "create_run_paths",
     "load_config",
     "normalize_and_deduplicate",
