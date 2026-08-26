@@ -1,10 +1,16 @@
 param(
-  [string]$DataRoot = "D:\zuop\agent-reach\data\processed-20260826",
-  [string]$OutputRoot = "D:\zuop\agent-reach\outputs\20260826"
+  [string]$DataRoot,
+  [string]$OutputRoot,
+  [string]$ConfigPath
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "common.ps1")
+if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
+Import-RadarEnv -ConfigPath $ConfigPath
+$DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { $env:RADAR_DATA_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
+$OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { $env:RADAR_OUTPUT_ROOT }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
 $requiredRepoFiles = @(
   "README.md",
   ".gitignore",
@@ -15,6 +21,7 @@ $requiredRepoFiles = @(
   "docs\CURRENT_BASELINE.md",
   "docs\DATA_CONTRACT.md",
   "scripts\radar.ps1",
+  "scripts\common.ps1",
   "scripts\fetch-details.ps1",
   "scripts\deep-dive.ps1",
   "scripts\build-evidence-xlsx.mjs",
@@ -26,8 +33,8 @@ foreach ($relative in $requiredRepoFiles) {
 }
 if ($missing.Count -gt 0) { throw "Missing repository files: $($missing -join ', ')" }
 
-Get-Content -Raw (Join-Path $repoRoot "schemas\analysis.schema.json") | ConvertFrom-Json | Out-Null
-Get-Content -Raw (Join-Path $repoRoot "schemas\user_profile.schema.json") | ConvertFrom-Json | Out-Null
+Get-Content -Raw -Encoding UTF8 (Join-Path $repoRoot "schemas\analysis.schema.json") | ConvertFrom-Json | Out-Null
+Get-Content -Raw -Encoding UTF8 (Join-Path $repoRoot "schemas\user_profile.schema.json") | ConvertFrom-Json | Out-Null
 
 $requiredBaseline = @(
   (Join-Path $DataRoot "evidence_candidates.csv"),

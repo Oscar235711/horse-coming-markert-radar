@@ -1,6 +1,19 @@
 # horse-coming-markert-radar
 马来——北美产品机会雷达
 🐴 训练方案-Opportunity Radar
+
+## GitHub版本快速开始
+
+```powershell
+.\scripts\radar.ps1 init
+.\scripts\setup-local-runtime.ps1
+.\scripts\radar.ps1 paths
+.\scripts\radar.ps1 doctor
+.\scripts\radar.ps1 status
+```
+
+所有电脑专属路径写入被Git忽略的`.env`；仓库代码不包含个人用户名、固定盘符、Cookie或API Key。完整说明见[基线使用指南](docs/BASELINE_GUIDE.md)。
+
 Opportunity Radar GitHub + Skill MVP 实施计划
 1. 项目目标与边界
 建设公司私有仓库 suncentauto/opportunity-radar，为北美柴油皮卡改装新品探索提供：

@@ -10,6 +10,7 @@ outputs/*
 !outputs/.gitkeep
 node_modules/
 .venv/
+.local/
 *.log
 *.inspect.ndjson
 *_preview.png

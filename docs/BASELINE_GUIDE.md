@@ -11,22 +11,44 @@
 5. 代表用户公开历史深挖测试；
 6. 数据、安全和画像选择规则。
 
-## 快速检查
+## 新电脑首次安装
 
 ```powershell
+git clone https://github.com/Oscar235711/horse-coming-markert-radar.git
+cd horse-coming-markert-radar
+.\scripts\radar.ps1 init
 .\scripts\setup-local-runtime.ps1
+.\scripts\radar.ps1 paths
 .\scripts\radar.ps1 doctor
 .\scripts\radar.ps1 status
+```
+
+`init`会创建被Git忽略的`.env`及`.local`目录，不会覆盖已经存在的`.env`。相对路径始终按仓库根目录解析，因此仓库可以放在任意磁盘和目录。
+
+如果`doctor`提示找不到Agent Reach或OpenCLI，编辑`.env`填写对应安装位置；如果命令已经在PATH中则保持为空。`setup-local-runtime.ps1`会优先读取`.env`中的`RADAR_NODE_MODULES`，未设置时自动查找当前Windows用户的Codex运行时。
+
+## 放入本地数据后检查
+
+GitHub不包含原始Reddit数据、Cookie、API Key或历史报告。把采集结果放入`.env`配置的`RADAR_DATA_ROOT`后再运行：
+
+```powershell
 .\scripts\radar.ps1 verify-baseline
 .\scripts\radar.ps1 report
+```
+
+已有数据在其他目录时，可以直接修改`.env`，例如：
+
+```text
+RADAR_DATA_ROOT=E:\opportunity-radar-data\processed
+RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
 ```
 
 ## 继续采集
 
 ```powershell
 .\scripts\radar.ps1 fetch-details `
-  -EvidenceCsv "D:\zuop\agent-reach\data\processed-20260826\evidence_candidates.csv" `
-  -OutputDir "D:\zuop\agent-reach\data\processed-20260826\details_all"
+  -EvidenceCsv ".local\data\evidence_candidates.csv" `
+  -OutputDir ".local\data\details_all"
 ```
 
 ## 用户主页深挖测试
@@ -34,7 +56,7 @@
 ```powershell
 .\scripts\radar.ps1 deep-dive `
   -Users "ace_mcgee68,Lucky_Wrongdoer1270,Lil-quacker" `
-  -OutputDir "D:\zuop\agent-reach\data\processed-20260826\user_deep_dive_test"
+  -OutputDir ".local\data\user_deep_dive_test"
 ```
 
 ## 安全边界

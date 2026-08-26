@@ -21,6 +21,6 @@
 
 ## 已验证产物位置
 
-- 数据根目录：`D:\zuop\agent-reach\data\processed-20260826`
-- Excel：`D:\zuop\agent-reach\outputs\20260826\evidence_candidates_中文.xlsx`
-- 用户深挖测试报告：`D:\zuop\agent-reach\outputs\20260826\user_deep_dive_test_report.md`
+- 数据根目录由`.env`中的`RADAR_DATA_ROOT`决定；默认是仓库内`.local\data`。
+- Excel和用户深挖报告写入`RADAR_OUTPUT_ROOT`；默认是仓库内`.local\outputs`。
+- 原始数据、报告、Cookie和密钥均不进入Git仓库。

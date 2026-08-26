@@ -1,8 +1,11 @@
 import fs from "node:fs/promises";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
-const dataRoot = (process.env.RADAR_DATA_ROOT ?? "D:/zuop/agent-reach/data/processed-20260826").replaceAll("\\", "/");
-const outputDir = (process.env.RADAR_OUTPUT_ROOT ?? "D:/zuop/agent-reach/outputs/20260826").replaceAll("\\", "/");
+if (!process.env.RADAR_DATA_ROOT || !process.env.RADAR_OUTPUT_ROOT) {
+  throw new Error("RADAR_DATA_ROOT and RADAR_OUTPUT_ROOT must be set by radar.ps1 or the environment");
+}
+const dataRoot = process.env.RADAR_DATA_ROOT.replaceAll("\\", "/");
+const outputDir = process.env.RADAR_OUTPUT_ROOT.replaceAll("\\", "/");
 const inputPath = `${dataRoot}/evidence_candidates_中文.csv`;
 const outputPath = `${outputDir}/evidence_candidates_中文.xlsx`;
 const previewPath = `${outputDir}/evidence_candidates_中文_preview.png`;
