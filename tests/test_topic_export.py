@@ -244,6 +244,26 @@ def test_post_signal_from_thread_carries_distinct_comment_authors() -> None:
     assert signal.evidence_urls == {"post": post.url, "c1": post.url + "?c=c1", "c2": post.url + "?c=c2", "c3": post.url + "?c=c3"}
 
 
+def test_aggregator_thread_entrypoint_connects_collected_authors(tmp_path: Path) -> None:
+    """The production aggregation entrypoint must build signals from collected threads."""
+    from opportunity_radar.collector import ThreadComment, ThreadDocument
+
+    threads = []
+    analyses = []
+    for index in range(3):
+        post = _post(index, age_days=index + 1, author=f"owner-{index}")
+        threads.append(ThreadDocument(post=post, comments=(
+            ThreadComment(f"c{index}", "reply", post.url + f"?c={index}", f"commenter-{index}"),
+        )))
+        analyses.append(opportunity_radar.PostAnalysis(topics=(), claims=()))
+
+    result = opportunity_radar.TopicAggregator(
+        pro=DeterministicPro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate_threads("diesel", threads, analyses)
+
+    assert result.formal_topics[0]["commenter_count"] == 3
+
+
 def test_commenter_threshold_counts_distinct_non_op_authors_only(tmp_path: Path) -> None:
     """Ten comments by the same person cannot manufacture a formal topic."""
     posts = (_post(1, age_days=2, author="op-1", comments=10), _post(2, age_days=3, author="op-2", comments=10))

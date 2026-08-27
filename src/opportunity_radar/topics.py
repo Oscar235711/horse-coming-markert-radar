@@ -171,6 +171,17 @@ class TopicAggregator:
         }
         return TopicAggregationResult(analysis, formal, weak, tuple(excluded))
 
+    def aggregate_threads(
+        self, community: str, threads: Sequence[Any], analyses: Sequence[PostAnalysis]
+    ) -> TopicAggregationResult:
+        """Aggregate collected deep-read threads without dropping commenter authors."""
+        threads = tuple(threads)
+        analyses = tuple(analyses)
+        if len(threads) != len(analyses):
+            raise ValueError("threads and analyses must have the same length")
+        signals = tuple(PostSignal.from_thread(thread, analysis) for thread, analysis in zip(threads, analyses))
+        return self.aggregate(community, signals)
+
     def _make_topic(
         self,
         community: str,

@@ -45,3 +45,5 @@
 - GREEN: workbook builder re-imports the exported XLSX with `FileBlob`/`SpreadsheetFile.importXlsx` and inspects all seven sheet names before returning.
 - RED: production thread-to-signal regression failed because `PostSignal` had no constructor carrying thread commenter authors.
 - GREEN: `PostSignal.from_thread()` now maps thread evidence URLs and distinct public commenter authors into the aggregation input; focused and full tests pass.
+- RED: production entrypoint regression failed because no aggregator method invoked `PostSignal.from_thread()`.
+- GREEN: `TopicAggregator.aggregate_threads()` now constructs signals from collected threads and analyses before aggregation; focused and full tests pass.
