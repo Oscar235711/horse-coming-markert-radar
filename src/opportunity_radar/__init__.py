@@ -1,6 +1,7 @@
 """Opportunity Radar core package."""
 
-from .config import load_config
+from .cli_app import RadarCliApp
+from .config import load_community_catalog, load_config, write_community_catalog
 from .collector import (
     CollectionFailure,
     CollectionResult,
@@ -21,6 +22,7 @@ from .deepseek import (
 )
 from .models import (
     Community,
+    CommunityCatalog,
     CollectionSettings,
     NormalizedPost,
     PostWindow,
@@ -54,6 +56,7 @@ __all__ = [
     "DEFAULT_BASE_URL",
     "DeepSeekClient",
     "DeepSeekError",
+    "CommunityCatalog",
     "EvidenceClaim",
     "EvidenceBackedClaim",
     "EXCEL_SHEET_NAMES",
@@ -66,6 +69,7 @@ __all__ = [
     "PostSignal",
     "PRO_MODEL",
     "ProTopicProposal",
+    "RadarCliApp",
     "RadarConfig",
     "RunManifest",
     "RunPaths",
@@ -81,11 +85,13 @@ __all__ = [
     "ThreadComment",
     "ThreadDocument",
     "create_run_paths",
+    "load_community_catalog",
     "load_config",
     "normalize_and_deduplicate",
     "read_manifest",
     "score_shortlist",
     "window_posts",
     "write_manifest",
+    "write_community_catalog",
     "export_topic_analysis",
 ]

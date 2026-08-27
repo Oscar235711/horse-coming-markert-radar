@@ -26,6 +26,20 @@ class Community:
     """An approved Reddit community to collect from."""
 
     name: str
+    aliases: tuple[str, ...] = ()
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    category: str = ""
+    brand: str = ""
+    slang: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CommunityCatalog:
+    """A versioned, approved set of communities and their governance metadata."""
+
+    version: str
+    communities: tuple[Community, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +61,7 @@ class RadarConfig:
 
     project: str
     communities: tuple[Community, ...]
+    community_catalog_version: str = ""
     current_window_days: int = 30
     baseline_window_days: int = 60
     shortlist_per_community: int = 30

@@ -20,6 +20,9 @@ class RunPaths:
     checkpoints_dir: Path
     artifacts_dir: Path
     manifest_path: Path
+    state_path: Path
+    config_snapshot_path: Path
+    suggestions_dir: Path
 
 
 def create_run_paths(root: str | Path, run_id: str) -> RunPaths:
@@ -32,12 +35,17 @@ def create_run_paths(root: str | Path, run_id: str) -> RunPaths:
     artifacts_dir = run_dir / "artifacts"
     for directory in (raw_dir, checkpoints_dir, artifacts_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    suggestions_dir = run_dir / "suggestions"
+    suggestions_dir.mkdir(parents=True, exist_ok=True)
     return RunPaths(
         run_dir=run_dir,
         raw_dir=raw_dir,
         checkpoints_dir=checkpoints_dir,
         artifacts_dir=artifacts_dir,
         manifest_path=run_dir / "manifest.json",
+        state_path=run_dir / "state.json",
+        config_snapshot_path=run_dir / "config.snapshot.yaml",
+        suggestions_dir=suggestions_dir,
     )
 
 

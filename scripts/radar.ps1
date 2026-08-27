@@ -1,13 +1,18 @@
 param(
   [Parameter(Position = 0, Mandatory = $true)]
-  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report")]
+  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report", "run", "resume", "export", "communities-suggest", "communities-approve")]
   [string]$Command,
   [string]$EvidenceCsv,
   [string]$OutputDir,
   [string]$Users,
   [string]$DataRoot,
   [string]$OutputRoot,
-  [string]$ConfigPath
+  [string]$ConfigPath,
+  [string]$RunConfigPath,
+  [string]$RunId,
+  [string]$Formats,
+  [string]$Suggestion,
+  [string]$SuggestionId
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +41,17 @@ $openCliExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_
 $nodeFallbacks = @()
 if ($env:USERPROFILE) { $nodeFallbacks += (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe") }
 $nodeExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_NODE_EXE" -Config $radarConfig) -CommandName "node" -FallbackPaths $nodeFallbacks
+$pythonFallbacks = @(
+  (Join-Path $repoRoot ".venv\Scripts\python.exe"),
+  (Join-Path $repoRoot ".venv\Scripts\python")
+)
+$pythonExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_PYTHON_EXE" -Config $radarConfig) -CommandName "python" -FallbackPaths $pythonFallbacks
+
+function Invoke-RadarPythonCli {
+  param([string[]]$Arguments)
+  if (-not $pythonExe) { throw "Python not found. Install Python 3.12+ or set RADAR_PYTHON_EXE in $ConfigPath" }
+  & $pythonExe "-m" "opportunity_radar" @Arguments
+}
 
 switch ($Command) {
   "init" {
@@ -97,5 +113,29 @@ switch ($Command) {
       $env:RADAR_DATA_ROOT = $previousDataRoot
       $env:RADAR_OUTPUT_ROOT = $previousOutputRoot
     }
+  }
+  "run" {
+    if (-not $RunConfigPath) { throw "run requires -RunConfigPath" }
+    $arguments = @("run", "--config", $RunConfigPath)
+    if ($RunId) { $arguments += @("--run-id", $RunId) }
+    Invoke-RadarPythonCli -Arguments $arguments
+  }
+  "resume" {
+    if (-not $RunId) { throw "resume requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("resume", "--run-id", $RunId)
+  }
+  "export" {
+    if (-not $RunId) { throw "export requires -RunId" }
+    $arguments = @("export", "--run-id", $RunId)
+    if ($Formats) { $arguments += @("--formats", $Formats) }
+    Invoke-RadarPythonCli -Arguments $arguments
+  }
+  "communities-suggest" {
+    if (-not $RunId) { throw "communities-suggest requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("communities", "suggest", "--run-id", $RunId)
+  }
+  "communities-approve" {
+    if (-not $Suggestion -or -not $SuggestionId) { throw "communities-approve requires -Suggestion and -SuggestionId" }
+    Invoke-RadarPythonCli -Arguments @("communities", "approve", "--suggestion", $Suggestion, "--suggestion-id", $SuggestionId)
   }
 }
