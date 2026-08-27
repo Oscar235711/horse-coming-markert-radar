@@ -8,7 +8,7 @@ const config = {
   keywords: { candidate_only_brands: ['SEALIGHT', 'Sylvania', 'Philips', 'AUXITO'] },
 };
 
-test('rule analysis creates evidence-backed lighting opportunities and market hotspots', () => {
+test('rule analysis keeps pain hotspots but does not promote thin pain or product mentions into opportunities', () => {
   const analysis = analyzeDetails(fixtureDetails(), config, { runId: 'analysis-run' });
 
   assert.equal(analysis.run_id, 'analysis-run');
@@ -16,19 +16,15 @@ test('rule analysis creates evidence-backed lighting opportunities and market ho
   assert.equal(analysis.metrics.posts_analyzed, 2);
   assert.equal(analysis.metrics.us_posts, 1);
   assert.equal(analysis.metrics.unknown_geography_posts, 1);
-  assert.ok(analysis.opportunities.some((item) => item.id === 'product-led-headlight-upgrade'));
-  const led = analysis.opportunities.find((item) => item.id === 'product-led-headlight-upgrade');
-  assert.ok(led.evidence_ids.length >= 1);
-  assert.ok(led.communities.includes('MechanicAdvice'));
-  assert.ok(led.fitment_tags.includes('H11'));
-  assert.ok(led.pain_points.includes('闪烁/故障码'));
-  assert.ok(led.opportunity_score >= 1 && led.opportunity_score <= 100);
+  assert.equal(analysis.opportunities.length, 0);
+  assert.ok(analysis.candidate_signals.some((item) => item.id === 'led-headlight-bulb-kit'));
+  assert.ok(analysis.pain_points.some((item) => item.id === 'flicker'));
   assert.ok(analysis.hotspots.communities.some((item) => item.name === 'MechanicAdvice'));
 });
 
 test('analysis separates facts, inferences, and unknown supply-chain fields', () => {
   const analysis = analyzeDetails(fixtureDetails(), config);
-  const opportunity = analysis.opportunities[0];
+  const opportunity = analysis.candidate_signals[0];
 
   assert.ok(opportunity.claims.facts.length > 0);
   assert.ok(opportunity.claims.inferences.length > 0);
@@ -66,7 +62,7 @@ test('optional LLM failure preserves rule analysis and records the fallback', as
   assert.equal(result.analysis_engine.active_result, 'rules');
 });
 
-test('product concept rules recognize plural bulb and housing language', () => {
+test('product concept rules recognize bulbs but do not turn housing condensation into an opportunity', () => {
   const details = [{
     post: {
       id: 'post-plural', post_id: 'plural', subreddit: 'f150', title: 'How to access my headlight bulbs',
@@ -78,8 +74,8 @@ test('product concept rules recognize plural bulb and housing language', () => {
 
   const analysis = analyzeDetails(details, config);
 
-  assert.ok(analysis.opportunities.some((item) => item.id === 'product-led-headlight-upgrade'));
-  assert.ok(analysis.opportunities.some((item) => item.id === 'product-headlight-assembly'));
+  assert.ok(analysis.candidate_signals.some((item) => item.id === 'led-headlight-bulb-kit'));
+  assert.ok(!analysis.opportunities.some((item) => /assembly|sealing|condensation/.test(item.id)));
 });
 
 test('pain extraction stays within the matched product context', () => {
@@ -93,7 +89,7 @@ test('pain extraction stays within the matched product context', () => {
   }];
 
   const analysis = analyzeDetails(details, config);
-  const auxiliary = analysis.opportunities.find((item) => item.id === 'product-auxiliary-light');
+  const auxiliary = analysis.candidate_signals.find((item) => item.id === 'auxiliary-light-kit');
 
   assert.ok(auxiliary);
   assert.ok(!auxiliary.pain_points.includes('进水/起雾'));

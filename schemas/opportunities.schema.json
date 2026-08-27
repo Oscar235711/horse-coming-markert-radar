@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/opportunities.schema.json",
+  "title": "Evidence-backed product opportunity analysis",
+  "type": "object",
+  "required": ["pain_points", "opportunities", "candidate_signals", "competitors"],
+  "properties": {
+    "pain_points": { "type": "array", "items": { "$ref": "#/$defs/pain" } },
+    "opportunities": { "type": "array", "items": { "$ref": "#/$defs/opportunity", "required": ["id", "label", "opportunity_type", "opportunity_score", "score_components", "score_penalties", "threshold_check", "evidence_ids", "claims"], "properties": { "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] }, "score_components": { "type": "object" }, "threshold_check": { "type": "object" } } } },
+    "candidate_signals": { "type": "array", "items": { "$ref": "#/$defs/opportunity" } },
+    "competitors": { "type": "array" }
+  },
+  "$defs": {
+    "pain": {
+      "type": "object",
+      "required": ["id", "label", "evidence_ids", "unique_users", "communities"],
+      "properties": {
+        "id": { "type": "string" }, "label": { "type": "string" },
+        "evidence_ids": { "type": "array", "items": { "type": "string" } },
+        "unique_users": { "type": "integer", "minimum": 0 },
+        "communities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "opportunity": {
+      "type": "object",
+      "required": ["id", "label", "opportunity_type", "opportunity_score", "score_components", "score_penalties", "threshold_check", "evidence_ids", "claims"],
+      "properties": {
+        "id": { "type": "string" }, "label": { "type": "string" },
+        "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] },
+        "opportunity_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "score_components": { "type": "object" }, "score_penalties": { "type": "object" },
+        "threshold_check": { "type": "object", "required": ["passed", "checks", "failures", "required"] },
+        "evidence_ids": { "type": "array", "items": { "type": "string" } },
+        "claims": { "type": "object", "required": ["facts", "inferences", "unknowns"] }
+      }
+    }
+  }
+}

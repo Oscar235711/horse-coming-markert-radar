@@ -56,6 +56,17 @@ test('evidence-quality schema and universal rule/config contracts are tracked', 
   assert.ok(Array.isArray(pilot.market_rules.geography.non_target_signals));
 });
 
+test('opportunity schema limits formal opportunities to sellable product types', async () => {
+  const opportunities = await schema('opportunities.schema.json');
+  assert.deepEqual(opportunities.properties.opportunities.items.properties.opportunity_type.enum, [
+    'validated_entry', 'emerging_product', 'adjacent_bundle',
+  ]);
+  assert.ok(opportunities.properties.opportunities.items.required.includes('score_components'));
+  assert.ok(opportunities.properties.opportunities.items.required.includes('threshold_check'));
+  assert.ok(opportunities.required.includes('pain_points'));
+  assert.ok(opportunities.required.includes('candidate_signals'));
+});
+
 async function schema(name) {
   return JSON.parse(await fs.readFile(path.join(repoRoot, 'schemas', name), 'utf8'));
 }
