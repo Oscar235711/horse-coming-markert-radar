@@ -159,6 +159,18 @@ test('extractSelfDeclaredContext only keeps state from explicit first-person loc
   }
 });
 
+test('extractSelfDeclaredContext chooses the earliest allowed state inside a first-person location clause', () => {
+  const result = extractSelfDeclaredContext({
+    id: 'state-order',
+    activity_type: 'comment',
+    body_original: 'I live in Texas but travel to California for work, and I still need a better cutoff.',
+    created_at: '2026-08-21T00:00:00.000Z',
+    url: 'https://www.reddit.com/comments/state-order',
+  }, 'state-order');
+
+  assert.equal(result.find((item) => item.kind === 'state')?.value, 'Texas');
+});
+
 test('collectAuthorActivity enforces author and total limits, writes checkpoints, and continues failures', async (t) => {
   const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'author-deep-dive-'));
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));

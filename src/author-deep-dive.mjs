@@ -219,12 +219,7 @@ export function extractSelfDeclaredContext(activity, evidenceId) {
 
   const explicitLocation = extractExplicitLocationText(text);
   if (explicitLocation) {
-    for (const [state, pattern] of STATE_PATTERNS) {
-      if (pattern.test(explicitLocation)) {
-        push('state', state);
-        break;
-      }
-    }
+    push('state', selectStateFromExplicitLocation(explicitLocation));
   }
 
   const underBudget = text.match(/\b(?:my budget is|budget is|budget's|budget)\s+(under \$\d+(?:\.\d{1,2})?)/i)
@@ -540,6 +535,19 @@ function extractExplicitLocationText(text) {
     if (match?.[1]) return match[1];
   }
   return null;
+}
+
+function selectStateFromExplicitLocation(text) {
+  let bestMatch = null;
+  for (const [state, pattern] of STATE_PATTERNS) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const candidate = { state, index: match.index };
+    if (!bestMatch || candidate.index < bestMatch.index) {
+      bestMatch = candidate;
+    }
+  }
+  return bestMatch?.state ?? null;
 }
 
 function isOccupationRelevant(text) {
