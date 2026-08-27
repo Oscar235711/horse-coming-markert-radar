@@ -4,7 +4,7 @@
 
 - Implemented the V1.2 product opportunity engine in `src/opportunity-engine.mjs`.
 - Replaced legacy V1.1-style opportunity construction in `src/radar-analysis.mjs`.
-- Added one runner-side compatibility fallback in `src/radar-runner.mjs` so the Audience Map can visualize `candidate_signals` when formal opportunities are empty.
+- Kept Audience Map scoped to formal `opportunities` only; `candidate_signals` remain outside the formal product graph.
 
 ## RED Evidence
 
@@ -68,3 +68,56 @@ node --test
 ```
 
 Result: 59 tests, 59 passed, 0 failed.
+
+## Review Fixes
+
+### Additional RED Evidence from independent review
+
+Command:
+
+```powershell
+node --test tests/opportunity-engine.test.mjs tests/radar-runner.test.mjs tests/schema-contract.test.mjs
+```
+
+Observed failures included:
+
+- `contextual_demand` still counted toward qualified support for adjacent bundle scoring
+- `runner` still injected `candidate_signals` into Audience Map as if they were formal opportunities
+- `schemas/opportunities.schema.json` was too loose to enforce the auditable scoring and commercial contract
+
+### Additional GREEN Evidence
+
+- `src/opportunity-engine.mjs`
+  - qualified support now requires `eligible: true`
+  - `contextual_demand` no longer contributes to `qualified_evidence_ids`, qualified users, qualified communities, or formal opportunity scoring
+- `src/radar-runner.mjs`
+  - Audience Map now reads only formal `opportunities`
+  - candidate backlog remains in `analysis.candidate_signals`, not in the graph
+- `schemas/opportunities.schema.json`
+  - score components now require the fixed seven audit dimensions
+  - score penalties now require the fixed penalty fields plus `total`
+  - threshold checks, commercial fields, competitor signals, count fields, and entry-gap fields are strongly constrained
+- `tests/radar-analysis.test.mjs`
+  - adjusted the regression assertion to reflect the stricter qualified-support gate
+
+### Additional Verification
+
+Focused verification after review fixes:
+
+```powershell
+node --test tests/radar-analysis.test.mjs tests/opportunity-engine.test.mjs tests/radar-runner.test.mjs tests/schema-contract.test.mjs
+```
+
+Result: 17 tests, 17 passed, 0 failed.
+
+Final full verification after review fixes:
+
+```powershell
+node --test
+git diff --check
+```
+
+Result:
+
+- `node --test`: 60 tests, 60 passed, 0 failed
+- `git diff --check`: no diff errors

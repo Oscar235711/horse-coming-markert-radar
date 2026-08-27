@@ -36,7 +36,10 @@ test('runner produces normalized data, analysis, graph, and offline report in on
     assert.equal(await exists(path.join(runDir, name)), true, name);
   }
   assert.equal(result.analysis.run_id, 'runner-run');
-  assert.ok(result.audienceMap.nodes.length >= 2);
+  assert.equal(result.analysis.opportunities.length, 0);
+  assert.ok(result.analysis.candidate_signals.length >= 1);
+  assert.equal(result.audienceMap.nodes.length, 0);
+  assert.equal(result.audienceMap.edges.length, 0);
   assert.equal(result.manifest.status, 'complete');
 });
 

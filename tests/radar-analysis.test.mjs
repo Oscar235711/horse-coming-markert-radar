@@ -24,13 +24,15 @@ test('rule analysis keeps pain hotspots but does not promote thin pain or produc
 
 test('analysis separates facts, inferences, and unknown supply-chain fields', () => {
   const analysis = analyzeDetails(fixtureDetails(), config);
-  const opportunity = analysis.candidate_signals[0];
+  const opportunity = analysis.candidate_signals.find((item) => item.id === 'led-headlight-bulb-kit');
 
+  assert.ok(opportunity);
   assert.ok(opportunity.claims.facts.length > 0);
   assert.ok(opportunity.claims.inferences.length > 0);
   assert.ok(opportunity.claims.unknowns.includes('制造成本'));
+  assert.deepEqual(opportunity.qualified_evidence_ids, []);
   assert.equal(opportunity.commercial.shipping_complexity.status, 'unknown');
-  assert.equal(opportunity.commercial.return_risk.status, 'inference');
+  assert.equal(opportunity.commercial.return_risk.status, 'unknown');
 });
 
 test('analysis retains English evidence and excludes sensitive demographic inference', () => {

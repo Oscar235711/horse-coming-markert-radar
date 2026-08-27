@@ -45,6 +45,7 @@ test('classifies only concrete sellable concepts into the three allowed opportun
     evidenceRecord('e1', 'u4', 'projectcar', 'I made a breather vent workaround; I want a vent membrane kit.', 'direct_experience'),
     evidenceRecord('e2', 'u5', 'MechanicAdvice', 'A vent membrane kit would replace my DIY moisture workaround.', 'contextual_demand'),
     evidenceRecord('e3', 'u6', 'projectcar', 'I tried a vent membrane kit prototype for recurring fogging.', 'direct_experience'),
+    evidenceRecord('e4', 'u10', 'MechanicAdvice', 'Shops already sell breather vent kits, but most headlight housings still lack a clean membrane option.', 'market_observation'),
     evidenceRecord('a1', 'u7', 'f150', 'I added protective headlight film with my LED bulb install.', 'direct_experience'),
     evidenceRecord('a2', 'u8', 'CarModification', 'I bought headlight film as protection after an upgrade.', 'direct_experience'),
     evidenceRecord('a3', 'u9', 'f150', 'Protective film is an easy add-on to a headlight upgrade.', 'market_observation'),
@@ -126,6 +127,26 @@ test('contextual demand cannot count as direct experience or prove product perfo
   assert.ok(candidate.claims.facts.every((fact) => !/works|performance|solves/i.test(fact)));
 });
 
+test('contextual demand does not count as qualified support for adjacent bundle promotion', () => {
+  const evidence = [
+    evidenceRecord('c1', 'u1', 'f150', 'I need protective headlight film after this upgrade.', 'contextual_demand'),
+    evidenceRecord('c2', 'u2', 'MechanicAdvice', 'Which protective film is best for headlight protection?', 'contextual_demand'),
+    evidenceRecord('c3', 'u3', 'CarModification', 'Looking for headlight film as an add-on after install.', 'contextual_demand'),
+  ];
+  const result = classifyOpportunities(
+    buildOpportunityCandidates(evidence, extractPainRecords(evidence, config), config),
+    config,
+  );
+
+  assert.equal(result.opportunities.length, 0);
+  assert.equal(result.candidate_signals[0].id, 'protective-headlight-film');
+  assert.deepEqual(result.candidate_signals[0].qualified_evidence_ids, []);
+  assert.equal(result.candidate_signals[0].unique_user_count, 0);
+  assert.equal(result.candidate_signals[0].community_count, 0);
+  assert.equal(result.candidate_signals[0].score_components.qualified_demand, 0);
+  assert.ok(result.candidate_signals[0].threshold_check.failures.includes('qualified_evidence'));
+});
+
 function evidenceRecord(id, author, subreddit, body, role) {
   return {
     id,
@@ -135,7 +156,7 @@ function evidenceRecord(id, author, subreddit, body, role) {
     url: `https://www.reddit.com/r/${subreddit}/comments/p/${id}`,
     geography: 'us',
     quality: {
-      eligible: !['weak', 'noise'].includes(role),
+      eligible: ['direct_experience', 'qualified_practitioner', 'market_observation'].includes(role),
       evidence_role: role,
       quality_band: role === 'contextual_demand' ? 'medium' : 'high',
       quality_score: role === 'contextual_demand' ? 55 : 80,

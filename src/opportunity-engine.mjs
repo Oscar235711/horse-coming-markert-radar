@@ -2,7 +2,6 @@ const ALLOWED_TYPES = new Set(['validated_entry', 'emerging_product', 'adjacent_
 const QUALIFIED_ROLES = new Set([
   'direct_experience',
   'qualified_practitioner',
-  'contextual_demand',
   'market_observation',
 ]);
 const PAIN_THEME_TERMS = /\b(optimization|improvement|issue|problem|pain|glare|flicker|condensation|fogging|moisture|water ingress|fitment|installation|difficult)\b/i;
@@ -307,6 +306,7 @@ function relevantEvidence(evidence) {
 function isQualifiedSupport(item) {
   const quality = item?.quality ?? {};
   return QUALIFIED_ROLES.has(quality.evidence_role)
+    && quality.eligible === true
     && ['high', 'medium'].includes(quality.quality_band)
     && quality.hard_exclusion !== true;
 }

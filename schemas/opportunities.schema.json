@@ -3,35 +3,345 @@
   "$id": "https://example.local/schemas/opportunities.schema.json",
   "title": "Evidence-backed product opportunity analysis",
   "type": "object",
+  "additionalProperties": false,
   "required": ["pain_points", "opportunities", "candidate_signals", "competitors"],
   "properties": {
-    "pain_points": { "type": "array", "items": { "$ref": "#/$defs/pain" } },
-    "opportunities": { "type": "array", "items": { "$ref": "#/$defs/opportunity", "required": ["id", "label", "opportunity_type", "opportunity_score", "score_components", "score_penalties", "threshold_check", "evidence_ids", "claims"], "properties": { "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] }, "score_components": { "type": "object" }, "threshold_check": { "type": "object" } } } },
-    "candidate_signals": { "type": "array", "items": { "$ref": "#/$defs/opportunity" } },
-    "competitors": { "type": "array" }
+    "pain_points": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pain" }
+    },
+    "opportunities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/opportunity",
+        "required": [
+          "id",
+          "label",
+          "opportunity_type",
+          "opportunity_score",
+          "score_components",
+          "score_penalties",
+          "threshold_check",
+          "evidence_ids",
+          "claims"
+        ],
+        "properties": {
+          "opportunity_type": {
+            "enum": ["validated_entry", "emerging_product", "adjacent_bundle"]
+          },
+          "score_components": { "$ref": "#/$defs/score_components" },
+          "threshold_check": { "$ref": "#/$defs/threshold_check" }
+        }
+      }
+    },
+    "candidate_signals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/opportunity" }
+    },
+    "competitors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/competitor_signal" }
+    }
   },
   "$defs": {
     "pain": {
       "type": "object",
-      "required": ["id", "label", "evidence_ids", "unique_users", "communities"],
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "evidence_ids",
+        "unique_users",
+        "communities",
+        "evidence_count",
+        "qualified_evidence_count",
+        "fact_status"
+      ],
       "properties": {
-        "id": { "type": "string" }, "label": { "type": "string" },
-        "evidence_ids": { "type": "array", "items": { "type": "string" } },
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "unique_users": { "type": "integer", "minimum": 0 },
-        "communities": { "type": "array", "items": { "type": "string" } }
+        "communities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_count": { "type": "integer", "minimum": 0 },
+        "qualified_evidence_count": { "type": "integer", "minimum": 0 },
+        "fact_status": { "enum": ["fact"] }
+      }
+    },
+    "score_components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualified_demand",
+        "existing_market_validation",
+        "unresolved_entry_gap",
+        "purchase_price_signals",
+        "diversity",
+        "adjacency_bundle_logic",
+        "evidence_quality"
+      ],
+      "properties": {
+        "qualified_demand": { "type": "integer", "minimum": 0, "maximum": 25 },
+        "existing_market_validation": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "unresolved_entry_gap": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "purchase_price_signals": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "diversity": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "adjacency_bundle_logic": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "evidence_quality": { "type": "integer", "minimum": 0, "maximum": 5 }
+      }
+    },
+    "score_penalties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "one_user_concentration",
+        "one_community_concentration",
+        "contextual_question_dominance",
+        "missing_qualified_support",
+        "non_sellable_concept",
+        "total"
+      ],
+      "properties": {
+        "one_user_concentration": { "type": "integer", "minimum": 0 },
+        "one_community_concentration": { "type": "integer", "minimum": 0 },
+        "contextual_question_dominance": { "type": "integer", "minimum": 0 },
+        "missing_qualified_support": { "type": "integer", "minimum": 0 },
+        "non_sellable_concept": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "threshold_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualified_evidence",
+        "unique_users",
+        "communities",
+        "direct_experience",
+        "contexts",
+        "core_contexts",
+        "score",
+        "concrete_product",
+        "existing_market",
+        "entry_gap",
+        "solution_validation"
+      ],
+      "properties": {
+        "qualified_evidence": { "type": "boolean" },
+        "unique_users": { "type": "boolean" },
+        "communities": { "type": "boolean" },
+        "direct_experience": { "type": "boolean" },
+        "contexts": { "type": "boolean" },
+        "core_contexts": { "type": "boolean" },
+        "score": { "type": "boolean" },
+        "concrete_product": { "type": "boolean" },
+        "existing_market": { "type": "boolean" },
+        "entry_gap": { "type": "boolean" },
+        "solution_validation": { "type": "boolean" }
+      }
+    },
+    "threshold_required": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unique_users", "score"],
+      "properties": {
+        "unique_users": { "type": "integer", "minimum": 0 },
+        "communities": { "type": "integer", "minimum": 0 },
+        "direct_experience": { "type": "integer", "minimum": 0 },
+        "contexts": { "type": "integer", "minimum": 0 },
+        "core_contexts": { "type": "integer", "minimum": 0 },
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "threshold_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "checks", "failures", "required"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "checks": { "$ref": "#/$defs/threshold_checks" },
+        "failures": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "qualified_evidence",
+              "unique_users",
+              "communities",
+              "direct_experience",
+              "contexts",
+              "core_contexts",
+              "score",
+              "concrete_product",
+              "existing_market",
+              "entry_gap",
+              "solution_validation"
+            ]
+          }
+        },
+        "required": { "$ref": "#/$defs/threshold_required" }
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts", "inferences", "unknowns"],
+      "properties": {
+        "facts": { "type": "array", "items": { "type": "string" } },
+        "inferences": { "type": "array", "items": { "type": "string" } },
+        "unknowns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "commercial_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "value"],
+      "properties": {
+        "status": { "enum": ["fact", "inference", "unknown"] },
+        "value": {
+          "type": ["string", "number", "boolean", "null"]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "basis": { "type": "string" }
+      }
+    },
+    "commercial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pricing_band",
+        "margin_potential",
+        "manufacturing_complexity",
+        "shipping_complexity",
+        "return_risk"
+      ],
+      "properties": {
+        "pricing_band": { "$ref": "#/$defs/commercial_field" },
+        "margin_potential": { "$ref": "#/$defs/commercial_field" },
+        "manufacturing_complexity": { "$ref": "#/$defs/commercial_field" },
+        "shipping_complexity": { "$ref": "#/$defs/commercial_field" },
+        "return_risk": { "$ref": "#/$defs/commercial_field" }
+      }
+    },
+    "competitor_signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "evidence_ids"],
+      "properties": {
+        "name": { "type": "string" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "why_not_done": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "text"],
+      "properties": {
+        "status": { "enum": ["fact", "inference", "unknown"] },
+        "text": { "type": ["string", "null"] }
       }
     },
     "opportunity": {
       "type": "object",
-      "required": ["id", "label", "opportunity_type", "opportunity_score", "score_components", "score_penalties", "threshold_check", "evidence_ids", "claims"],
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "category",
+        "opportunity_type",
+        "opportunity_score",
+        "verdict",
+        "score_components",
+        "score_penalties",
+        "threshold_check",
+        "evidence_ids",
+        "qualified_evidence_ids",
+        "unique_user_count",
+        "matched_user_count",
+        "community_count",
+        "communities",
+        "matched_communities",
+        "direct_experience_count",
+        "fitment_tags",
+        "pain_points",
+        "solution_ideas",
+        "competitor_signals",
+        "existing_product_signals",
+        "entry_gaps",
+        "claims",
+        "commercial",
+        "why_not_done"
+      ],
       "properties": {
-        "id": { "type": "string" }, "label": { "type": "string" },
-        "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] },
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "category": { "type": "string" },
+        "opportunity_type": {
+          "enum": ["validated_entry", "emerging_product", "adjacent_bundle"]
+        },
         "opportunity_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "score_components": { "type": "object" }, "score_penalties": { "type": "object" },
-        "threshold_check": { "type": "object", "required": ["passed", "checks", "failures", "required"] },
-        "evidence_ids": { "type": "array", "items": { "type": "string" } },
-        "claims": { "type": "object", "required": ["facts", "inferences", "unknowns"] }
+        "verdict": { "type": "string" },
+        "score_components": { "$ref": "#/$defs/score_components" },
+        "score_penalties": { "$ref": "#/$defs/score_penalties" },
+        "threshold_check": { "$ref": "#/$defs/threshold_check" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "qualified_evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "unique_user_count": { "type": "integer", "minimum": 0 },
+        "matched_user_count": { "type": "integer", "minimum": 0 },
+        "community_count": { "type": "integer", "minimum": 0 },
+        "communities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "matched_communities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "direct_experience_count": { "type": "integer", "minimum": 0 },
+        "fitment_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pain_points": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "solution_ideas": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "competitor_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/competitor_signal" }
+        },
+        "existing_product_signals": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "entry_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "claims": { "$ref": "#/$defs/claims" },
+        "commercial": { "$ref": "#/$defs/commercial" },
+        "why_not_done": { "$ref": "#/$defs/why_not_done" }
       }
     }
   }

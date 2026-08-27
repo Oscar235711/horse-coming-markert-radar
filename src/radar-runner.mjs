@@ -17,10 +17,7 @@ export async function runLightingRadar({ config, adapter, runDir, runId, llmAnal
       expanded: config.keywords?.expanded ?? [],
     },
   };
-  const audienceMapSource = analysis.opportunities.length
-    ? analysis
-    : { ...analysis, opportunities: analysis.candidate_signals ?? [] };
-  const audienceMap = buildAudienceMap(audienceMapSource);
+  const audienceMap = buildAudienceMap(analysis);
   const manifest = {
     ...collection.manifest,
     counts: {

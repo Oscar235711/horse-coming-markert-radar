@@ -61,8 +61,54 @@ test('opportunity schema limits formal opportunities to sellable product types',
   assert.deepEqual(opportunities.properties.opportunities.items.properties.opportunity_type.enum, [
     'validated_entry', 'emerging_product', 'adjacent_bundle',
   ]);
-  assert.ok(opportunities.properties.opportunities.items.required.includes('score_components'));
-  assert.ok(opportunities.properties.opportunities.items.required.includes('threshold_check'));
+  assert.deepEqual(opportunities.$defs.score_components.required, [
+    'qualified_demand',
+    'existing_market_validation',
+    'unresolved_entry_gap',
+    'purchase_price_signals',
+    'diversity',
+    'adjacency_bundle_logic',
+    'evidence_quality',
+  ]);
+  assert.deepEqual(opportunities.$defs.score_penalties.required, [
+    'one_user_concentration',
+    'one_community_concentration',
+    'contextual_question_dominance',
+    'missing_qualified_support',
+    'non_sellable_concept',
+    'total',
+  ]);
+  assert.deepEqual(opportunities.$defs.commercial.required, [
+    'pricing_band',
+    'margin_potential',
+    'manufacturing_complexity',
+    'shipping_complexity',
+    'return_risk',
+  ]);
+  assert.ok(opportunities.$defs.opportunity.required.includes('threshold_check'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('qualified_evidence_ids'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('unique_user_count'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('community_count'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('competitor_signals'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('existing_product_signals'));
+  assert.ok(opportunities.$defs.opportunity.required.includes('entry_gaps'));
+  assert.equal(opportunities.$defs.opportunity.properties.unique_user_count.minimum, 0);
+  assert.equal(opportunities.$defs.opportunity.properties.community_count.minimum, 0);
+  assert.equal(opportunities.$defs.opportunity.properties.direct_experience_count.minimum, 0);
+  assert.deepEqual(opportunities.$defs.competitor_signal.required, ['name', 'evidence_ids']);
+  assert.deepEqual(opportunities.$defs.threshold_checks.required, [
+    'qualified_evidence',
+    'unique_users',
+    'communities',
+    'direct_experience',
+    'contexts',
+    'core_contexts',
+    'score',
+    'concrete_product',
+    'existing_market',
+    'entry_gap',
+    'solution_validation',
+  ]);
   assert.ok(opportunities.required.includes('pain_points'));
   assert.ok(opportunities.required.includes('candidate_signals'));
 });
