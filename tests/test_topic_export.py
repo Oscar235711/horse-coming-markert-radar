@@ -226,6 +226,24 @@ def test_topic_rejects_evidence_without_a_chinese_translation(tmp_path: Path) ->
     assert result.excluded_records[0]["reason"] == "invalid_evidence"
 
 
+def test_post_signal_from_thread_carries_distinct_comment_authors() -> None:
+    """The production adapter from a deep-read thread must feed commenter authors to aggregation."""
+    from opportunity_radar.collector import ThreadComment, ThreadDocument
+
+    post = _post(99, age_days=2, author="op")
+    thread = ThreadDocument(post=post, comments=(
+        ThreadComment("c1", "reply", post.url + "?c=c1", "commenter-a"),
+        ThreadComment("c2", "reply", post.url + "?c=c2", "commenter-a"),
+        ThreadComment("c3", "reply", post.url + "?c=c3", "commenter-b"),
+    ))
+    analysis = opportunity_radar.PostAnalysis(topics=(), claims=())
+
+    signal = opportunity_radar.PostSignal.from_thread(thread, analysis)
+
+    assert signal.comment_authors == ("commenter-a", "commenter-b")
+    assert signal.evidence_urls == {"post": post.url, "c1": post.url + "?c=c1", "c2": post.url + "?c=c2", "c3": post.url + "?c=c3"}
+
+
 def test_commenter_threshold_counts_distinct_non_op_authors_only(tmp_path: Path) -> None:
     """Ten comments by the same person cannot manufacture a formal topic."""
     posts = (_post(1, age_days=2, author="op-1", comments=10), _post(2, age_days=3, author="op-2", comments=10))

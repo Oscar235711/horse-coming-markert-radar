@@ -41,6 +41,19 @@ class PostSignal:
     evidence_urls: Mapping[str, str]
     comment_authors: tuple[str, ...] = ()
 
+    @classmethod
+    def from_thread(cls, thread: Any, analysis: PostAnalysis) -> "PostSignal":
+        """Build the aggregation input from one collected deep-read thread."""
+        evidence_urls = {"post": thread.post.url}
+        evidence_urls.update({comment.comment_id: comment.url for comment in thread.comments})
+        authors = getattr(thread, "comment_authors", ())
+        return cls(
+            post=thread.post,
+            analysis=analysis,
+            evidence_urls=evidence_urls,
+            comment_authors=tuple(authors),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TopicEvidence:

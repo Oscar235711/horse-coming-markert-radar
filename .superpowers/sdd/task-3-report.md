@@ -43,3 +43,5 @@
 - RED: distinct commenter regression failed because `ThreadComment` dropped the public author field; artifact re-import verification was absent.
 - GREEN: `ThreadComment.author` and `ThreadDocument.comment_authors` now preserve de-duplicated public authors excluding the OP; focused and full tests pass.
 - GREEN: workbook builder re-imports the exported XLSX with `FileBlob`/`SpreadsheetFile.importXlsx` and inspects all seven sheet names before returning.
+- RED: production thread-to-signal regression failed because `PostSignal` had no constructor carrying thread commenter authors.
+- GREEN: `PostSignal.from_thread()` now maps thread evidence URLs and distinct public commenter authors into the aggregation input; focused and full tests pass.
