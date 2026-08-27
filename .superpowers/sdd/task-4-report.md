@@ -5,7 +5,7 @@
 - Date: 2026-08-27
 - Scope: Python CLI, PowerShell forwarding, versioned community catalog, offline acceptance tests, docs
 - Result: implemented and verified in the current worktree
-- Commit: pending final commit from this worktree
+- Implementation commit: `8af1ec9`
 
 ## RED
 
