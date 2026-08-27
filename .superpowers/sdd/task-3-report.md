@@ -37,3 +37,9 @@
 ## Concern
 
 `@oai/artifact-tool` preserves Excel `HYPERLINK` formulas in the evidence-link column, which opens as clickable links in Excel. Its own PNG renderer does not calculate that formula and displays an “is not implemented” placeholder during visual inspection; the adjacent original URL remains visible and the automated workbook test checks the exported HYPERLINK formula and URL.
+
+## Fix round 1/2 evidence
+
+- RED: distinct commenter regression failed because `ThreadComment` dropped the public author field; artifact re-import verification was absent.
+- GREEN: `ThreadComment.author` and `ThreadDocument.comment_authors` now preserve de-duplicated public authors excluding the OP; focused and full tests pass.
+- GREEN: workbook builder re-imports the exported XLSX with `FileBlob`/`SpreadsheetFile.importXlsx` and inspects all seven sheet names before returning.

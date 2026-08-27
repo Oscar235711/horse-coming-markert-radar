@@ -384,6 +384,22 @@ def test_collector_failure_records_and_failed_checkpoints_include_the_community(
     }
 
 
+def test_thread_comments_preserve_author_ids_for_distinct_commenter_counts() -> None:
+    """Deep-read normalization must retain public commenter authors, not only text and URLs."""
+    post = opportunity_radar.NormalizedPost(
+        post_id="t3_thread_fixture", url="https://www.reddit.com/r/diesel/comments/thread_fixture/example",
+        subreddit="diesel", title="Fixture", body="Body", author="owner",
+        created_at=datetime(2026, 8, 25, tzinfo=UTC), score=1, comment_count=1, source_surfaces=("hot",),
+    )
+    document = opportunity_radar.collector._thread_from_raw(
+        [{"id": "c1", "author": "commenter-a", "body": "Useful reply", "permalink": "https://reddit.com/c1"}],
+        post,
+    )
+
+    assert document.comments[0].author == "commenter-a"
+    assert document.comment_authors == ("commenter-a",)
+
+
 class FakeTransport:
     def __init__(self, responses: list[object]) -> None:
         self.responses = responses

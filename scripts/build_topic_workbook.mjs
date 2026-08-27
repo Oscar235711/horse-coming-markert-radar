@@ -1,6 +1,6 @@
 /** Build the seven-sheet Excel projection from one canonical analysis JSON. */
 import fs from "node:fs/promises";
-import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
+import { FileBlob, SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
 const [analysisPath, outputPath] = process.argv.slice(2);
 if (!analysisPath || !outputPath) {
@@ -118,3 +118,12 @@ function columnName(number) {
 await fs.mkdir(new URL(".", `file:///${outputPath.replaceAll("\\", "/")}`).pathname, { recursive: true }).catch(() => {});
 const output = await SpreadsheetFile.exportXlsx(workbook);
 await output.save(outputPath);
+
+// Re-import the actual artifact so an export can fail loudly if its workbook
+// structure is unreadable, rather than relying only on the in-memory object.
+const imported = await SpreadsheetFile.importXlsx(await FileBlob.load(outputPath));
+const inspection = await imported.inspect({ kind: "sheet", include: "id,name" });
+const inspectedText = String(inspection?.ndjson ?? inspection ?? "");
+for (const name of sheets) {
+  if (!inspectedText.includes(name)) throw new Error(`Workbook verification failed: missing sheet ${name}`);
+}

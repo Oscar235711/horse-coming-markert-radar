@@ -25,6 +25,7 @@ class ThreadComment:
     comment_id: str
     body: str
     url: str
+    author: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,15 @@ class ThreadDocument:
 
     post: Any
     comments: tuple[ThreadComment, ...]
+
+    @property
+    def comment_authors(self) -> tuple[str, ...]:
+        """Distinct public commenter names, excluding the original poster."""
+        op_author = str(getattr(self.post, "author", "") or "").casefold()
+        return tuple(dict.fromkeys(
+            comment.author for comment in self.comments
+            if comment.author and comment.author.casefold() != op_author
+        ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,7 +249,9 @@ def _thread_from_raw(document: Any, post: Any) -> ThreadDocument:
         comment_id = identifier.strip() if isinstance(identifier, str) and identifier.strip() else f"comment_{position + 1}"
         url = record.get("permalink")
         comment_url = url if isinstance(url, str) and url.strip() else f"{post.url}?comment={comment_id}"
-        comments.append(ThreadComment(comment_id, body.strip(), comment_url))
+        author = record.get("author")
+        comment_author = author.strip() if isinstance(author, str) else ""
+        comments.append(ThreadComment(comment_id, body.strip(), comment_url, comment_author))
     return ThreadDocument(post=post, comments=tuple(comments))
 
 
