@@ -541,7 +541,7 @@ class RadarCliApp:
         for name, value in headers.items():
             request.add_header(name, value)
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=120) as response:
                 return HttpResponse(response.status, response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             return HttpResponse(error.code, error.read().decode("utf-8", errors="replace"))
