@@ -6,6 +6,92 @@
     "language": "en",
     "unknown_geography_policy": "retain_as_unknown_exclude_from_us_conclusions"
   },
+  "market_rules": {
+    "schema_version": "1.0.0",
+    "minimum_quality_score": 50,
+    "geography": {
+      "target_country": "US",
+      "target_signals": [
+        "\\b(?:usa|u\\.s\\.|united states|america|texas|california|florida|washington|ohio|michigan|pennsylvania|illinois|arizona|georgia|north carolina)\\b",
+        "\\bf-?150\\b",
+        "\\bsilverado\\b",
+        "\\btacoma\\b",
+        "\\bwrangler\\b",
+        "\\bcrown ?victoria\\b"
+      ],
+      "non_target_signals": [
+        "\\b(?:canada|ontario|australia|europe|philippines|india|united kingdom|uk|mot)\\b",
+        "\\bcartalkuk\\b",
+        "\\bcarsph\\b",
+        "\\bi20[_ -]?india\\b"
+      ],
+      "unknown_policy": "retain_as_unknown_exclude_from_us_conclusions"
+    },
+    "dictionaries": {
+      "products": [
+        "headlight",
+        "headlamp",
+        "headlight bulb",
+        "led",
+        "hid",
+        "halogen",
+        "fog light",
+        "tail light",
+        "brake light",
+        "turn signal",
+        "daytime running light",
+        "light bar",
+        "headlight assembly",
+        "projector",
+        "housing",
+        "wiring harness",
+        "relay",
+        "canbus",
+        "adapter"
+      ],
+      "vehicles": [
+        "f-150",
+        "silverado",
+        "tacoma",
+        "wrangler",
+        "ram",
+        "jeep",
+        "ford",
+        "chevrolet",
+        "toyota"
+      ],
+      "fitment": [
+        "h11",
+        "9005",
+        "9006",
+        "h7",
+        "h4",
+        "9012",
+        "h13",
+        "dust cap",
+        "fitment"
+      ],
+      "competitors": ["SEALIGHT", "Sylvania", "Philips", "AUXITO"],
+      "retailers": ["Amazon", "AutoZone", "O'Reilly", "Walmart"],
+      "slang": ["flicker", "hyperflash", "beam pattern", "cutoff"],
+      "stopwords": ["car", "cars", "light", "lights"]
+    },
+    "relevance": {
+      "required_any": [
+        "\\bheadlights?\\b",
+        "\\bheadlamps?\\b",
+        "\\bfog lights?\\b",
+        "\\b(?:tail|brake|turn signal) lights?\\b",
+        "\\b(?:led|hid|halogen) bulbs?\\b",
+        "\\b(?:h11|9005|9006|h7|h4|9012|h13)\\b",
+        "\\b(?:f-?150|silverado|tacoma|wrangler|ram)\\b",
+        "\\b(?:canbus|projector|headlight assembly|wiring harness)\\b"
+      ],
+      "excluded_communities": [],
+      "excluded_patterns": []
+    },
+    "component_weight_adjustments": {}
+  },
   "keywords": {
     "anchors": [
       "headlight bulb",

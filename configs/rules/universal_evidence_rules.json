@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0.0",
+  "name": "Universal Reddit evidence-quality rules",
+  "roles": [
+    "direct_experience",
+    "qualified_practitioner",
+    "contextual_demand",
+    "market_observation",
+    "weak",
+    "noise"
+  ],
+  "component_caps": {
+    "first_person_or_practitioner": 20,
+    "product_specificity": 15,
+    "context": 15,
+    "observable_outcome": 20,
+    "purchase_signal": 10,
+    "diagnostic_detail": 10,
+    "corroboration": 5,
+    "engagement": 5
+  },
+  "quality_bands": {
+    "high": [70, 100],
+    "medium": [50, 69],
+    "weak": [30, 49],
+    "noise": [0, 29]
+  },
+  "defaults": {
+    "minimum_quality_score": 50,
+    "unknown_geography_penalty": 5
+  },
+  "penalties": {
+    "advertising_language": 10,
+    "low_information_density": 5,
+    "quotation_without_personal_context": 5,
+    "uncertain_geography": 5,
+    "suspected_duplication": 5
+  },
+  "hard_exclusions": {
+    "deleted_or_removed": [
+      "^\\s*\\[(?:deleted|removed)\\]\\s*$"
+    ],
+    "bot_authors": [
+      "^automoderator$",
+      "(?:^|[_-])bot(?:$|[_-])",
+      "^redditcare(s)?resources?$"
+    ],
+    "moderation_boilerplate": [
+      "^\\s*(?:community|subreddit) rules?\\s*$",
+      "please read (?:the )?(?:community|subreddit) rules",
+      "this (?:post|comment) has been removed",
+      "your (?:post|comment|submission) was removed"
+    ],
+    "generic_banter": [
+      "^\\s*(?:same|this|lol|lmao|looks good|nice|agreed|exactly|following|bump)\\s*[.!?]*\\s*$"
+    ],
+    "affiliate_or_coupon": [
+      "\\baffiliate(?:d|s)?\\b",
+      "\\bcoupon(?:s)?\\b",
+      "\\bpromo(?:tion)? code\\b",
+      "\\bdiscount code\\b",
+      "\\breferral(?: link| code)?\\b",
+      "\\buse code\\b",
+      "\\bcommission\\b",
+      "\\blink in bio\\b"
+    ],
+    "seller_solicitation": [
+      "\\bbuy from me\\b",
+      "\\bdm me to buy\\b",
+      "\\bmessage me for (?:a )?price\\b",
+      "\\b(?:shop|order|buy) now\\b",
+      "\\bcontact me for (?:a )?quote\\b"
+    ],
+    "promotional_copy": [
+      "(?:limited[- ]time|flash) sale",
+      "\\b(?:sponsored|#ad|advertisement)\\b",
+      "\\bfree shipping\\b[\\s\\S]{0,80}\\bbuy\\b",
+      "\\b(best|premium|number one) (?:led )?(?:headlight|bulb|lighting)\\b[\\s\\S]{0,80}\\b(?:buy|order|shop)\\b"
+    ],
+    "news_or_repost": [
+      "^\\s*(?:news|headline|breaking|report|study):",
+      "\\baccording to (?:a )?(?:report|study|article|news)\\b",
+      "\\bclick here for (?:the )?(?:full )?(?:article|story)\\b"
+    ],
+    "meme_or_motorsport": [
+      "\\b(?:meme|shitpost|formula ?1|f1|nascar|motorsport|race(?:track|car)?|racing)\\b"
+    ],
+    "household_lighting": [
+      "\\b(?:kitchen|living room|bedroom|ceiling|desk|household|home) (?:light|lamp|bulb)s?\\b",
+      "\\b(?:light|lamp|bulb)s? in my (?:house|home|kitchen|room)\\b"
+    ],
+    "unsupported_hearsay": [
+      "^\\s*(?:i )?(?:heard|hear|read somewhere) that\\b",
+      "\\b(?:people|someone|my friend) (?:say|says|said)\\b"
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/evidence-quality.schema.json",
+  "title": "Evidence Quality Classification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_role",
+    "quality_band",
+    "quality_score",
+    "eligible",
+    "hard_exclusion",
+    "components",
+    "penalties",
+    "reason_codes"
+  ],
+  "properties": {
+    "evidence_role": {
+      "enum": [
+        "direct_experience",
+        "qualified_practitioner",
+        "contextual_demand",
+        "market_observation",
+        "weak",
+        "noise"
+      ]
+    },
+    "quality_band": {
+      "enum": ["high", "medium", "weak", "noise"]
+    },
+    "quality_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "eligible": { "type": "boolean" },
+    "hard_exclusion": { "type": "boolean" },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_person_or_practitioner",
+        "product_specificity",
+        "context",
+        "observable_outcome",
+        "purchase_signal",
+        "diagnostic_detail",
+        "corroboration",
+        "engagement"
+      ],
+      "properties": {
+        "first_person_or_practitioner": { "type": "number", "minimum": 0, "maximum": 20 },
+        "product_specificity": { "type": "number", "minimum": 0, "maximum": 15 },
+        "context": { "type": "number", "minimum": 0, "maximum": 15 },
+        "observable_outcome": { "type": "number", "minimum": 0, "maximum": 20 },
+        "purchase_signal": { "type": "number", "minimum": 0, "maximum": 10 },
+        "diagnostic_detail": { "type": "number", "minimum": 0, "maximum": 10 },
+        "corroboration": { "type": "number", "minimum": 0, "maximum": 5 },
+        "engagement": { "type": "number", "minimum": 0, "maximum": 5 }
+      }
+    },
+    "penalties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "advertising_language",
+        "low_information_density",
+        "quotation_without_personal_context",
+        "uncertain_geography",
+        "suspected_duplication",
+        "total"
+      ],
+      "properties": {
+        "advertising_language": { "type": "number", "minimum": 0 },
+        "low_information_density": { "type": "number", "minimum": 0 },
+        "quotation_without_personal_context": { "type": "number", "minimum": 0 },
+        "uncertain_geography": { "type": "number", "minimum": 0 },
+        "suspected_duplication": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 }
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}
