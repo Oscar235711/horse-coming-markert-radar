@@ -230,6 +230,57 @@ test('keyword candidate schema and exploratory search defaults are tracked', asy
   assert.equal(pilot.limits.round_two_minimum_communities, 2);
 });
 
+test('persona artifact schema enforces aggregate-only demographics and representative traceability', async () => {
+  const personas = await schema('user_profile.schema.json');
+
+  assert.deepEqual(personas.required, [
+    'schema_version',
+    'status',
+    'persona_status',
+    'thresholds',
+    'counts',
+    'missing',
+    'aggregate_context',
+    'clusters',
+    'privacy_note',
+  ]);
+  assert.equal(personas.$defs.representative_user.additionalProperties, false);
+  assert.deepEqual(personas.$defs.representative_user.required, [
+    'user_code',
+    'public_username',
+    'selection_score',
+    'retained_activity_count',
+    'observable_behaviors',
+    'supporting_evidence_ids',
+    'supporting_evidence_urls',
+    'confidence',
+    'privacy_note',
+  ]);
+  assert.equal(personas.$defs.representative_user.properties.age_band, undefined);
+  assert.equal(personas.$defs.representative_user.properties.state, undefined);
+  assert.deepEqual(personas.$defs.aggregate_context.required, [
+    'age_bands',
+    'states',
+    'budget_signals',
+  ]);
+  assert.deepEqual(personas.$defs.cluster.required, [
+    'id',
+    'label',
+    'user_count',
+    'evidence_count',
+    'signals',
+    'product_interests',
+    'vehicle_platforms',
+    'purchase_criteria',
+    'recurring_pain_points',
+    'explored_solutions',
+    'related_communities',
+    'vocabulary',
+    'aggregate_context',
+    'representative_users',
+  ]);
+});
+
 async function schema(name) {
   return JSON.parse(await fs.readFile(path.join(repoRoot, 'schemas', name), 'utf8'));
 }

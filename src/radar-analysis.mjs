@@ -4,6 +4,7 @@ import {
   classifyOpportunities,
   extractPainRecords,
 } from './opportunity-engine.mjs';
+import { buildPersonas } from './persona-engine.mjs';
 
 const TARGET_SIGNALS = [
   /\b(usa|u\.s\.|united states|texas|california|florida|pensacola|new york|ohio|michigan|pennsylvania|illinois|arizona|georgia|north carolina)\b/i,
@@ -13,7 +14,7 @@ const NON_TARGET_SIGNALS = [
   /\b(mot|united kingdom|\buk\b|cartalkuk|canada|ontario|australia|europe|eu inspection|carsph|philippines|i20[_ -]?india|\bindia\b)\b/i,
 ];
 
-export function analyzeDetails(details, config = {}, { runId = 'unknown-run' } = {}) {
+export function analyzeDetails(details, config = {}, { runId = 'unknown-run', authorActivity = [] } = {}) {
   const evidence = [];
   const usDetails = [];
   const unknownDetails = [];
@@ -78,6 +79,7 @@ export function analyzeDetails(details, config = {}, { runId = 'unknown-run' } =
     buildOpportunityCandidates(usEvidence, painPoints, config),
     config,
   );
+  const personas = buildPersonas(usEvidence, authorActivity, config);
   const painHotspots = painPoints.map((pain) => ({ name: pain.label, count: pain.evidence_count }));
 
   return {
@@ -110,6 +112,7 @@ export function analyzeDetails(details, config = {}, { runId = 'unknown-run' } =
     opportunities: opportunityResults.opportunities,
     candidate_signals: opportunityResults.candidate_signals,
     competitors: opportunityResults.competitors,
+    personas,
     pain_points: painPoints,
     hotspots: {
       communities: countBy(usDetails.map((detail) => detail.post?.subreddit)),
