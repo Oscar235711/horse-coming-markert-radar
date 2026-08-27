@@ -267,25 +267,28 @@ def export_topic_analysis(
     analysis: Mapping[str, Any],
     *,
     output_dir: str | Path,
+    formats: Sequence[str] = ("json", "xlsx"),
     node_executable: str | Path | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> TopicExportArtifacts:
-    """Persist one canonical analysis then derive JSON projection and workbook from it."""
+    """Persist one canonical analysis then derive only the requested projections."""
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     canonical = dict(analysis)
     analysis_json = directory / "analysis.json"
     community_topics_json = directory / "community_topics.json"
     workbook_path = directory / "community_topics.xlsx"
+    requested_formats = tuple(dict.fromkeys(formats))
     _write_json(analysis_json, canonical)
     _write_json(community_topics_json, {
         "analysis_version": canonical.get("analysis_version"),
         "generated_at": canonical.get("generated_at"),
         "topics": canonical.get("topics", []),
     })
-    builder = Path(__file__).resolve().parents[2] / "scripts" / "build_topic_workbook.mjs"
-    node = _resolve_node_executable(node_executable, environment)
-    subprocess.run((str(node), str(builder), str(analysis_json), str(workbook_path)), check=True, capture_output=True, text=True)
+    if "xlsx" in requested_formats:
+        builder = Path(__file__).resolve().parents[2] / "scripts" / "build_topic_workbook.mjs"
+        node = _resolve_node_executable(node_executable, environment)
+        subprocess.run((str(node), str(builder), str(analysis_json), str(workbook_path)), check=True, capture_output=True, text=True)
     return TopicExportArtifacts(analysis_json, community_topics_json, workbook_path)
 
 

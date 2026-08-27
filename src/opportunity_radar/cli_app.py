@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from hashlib import sha256
 import importlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -44,7 +45,7 @@ from .topics import (
 
 ToolRunner = Callable[[tuple[str, ...]], str]
 FlashClient = Any
-Exporter = Callable[[Path, Mapping[str, Any]], TopicExportArtifacts]
+Exporter = Callable[[Path, Mapping[str, Any], tuple[str, ...]], TopicExportArtifacts]
 Clock = Callable[[], datetime]
 
 
@@ -160,6 +161,9 @@ class RadarCliApp:
         config = load_config(resolved_config)
         active_catalog_path = self._resolve_catalog_path(resolved_config)
         run_id = run_id or self._generate_run_id()
+        run_dir = self._runs_root / run_id
+        if run_dir.exists():
+            raise ValueError(f"run_id already exists: {run_id}")
         paths = create_run_paths(self._runs_root, run_id)
         snapshot_text = self._config_snapshot_text(resolved_config)
         paths.config_snapshot_path.write_text(snapshot_text, encoding="utf-8")
@@ -194,13 +198,18 @@ class RadarCliApp:
 
     def export(self, run_id: str, *, formats: Sequence[str]) -> dict[str, Any]:
         """Rebuild JSON/XLSX artifacts from the canonical saved analysis JSON."""
+        requested_formats = self._validate_export_formats(formats)
         paths = create_run_paths(self._runs_root, run_id)
         analysis_path = paths.artifacts_dir / "analysis.json"
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-        exported = self._exporter(paths.artifacts_dir, analysis)
+        exported = (
+            self._write_json_exports(paths.artifacts_dir, analysis)
+            if requested_formats == ("json",)
+            else self._invoke_exporter(paths.artifacts_dir, analysis, requested_formats)
+        )
         state = self._read_state(paths.state_path)
-        state["artifacts"] = self._artifact_map(exported)
-        state["export_formats"] = list(dict.fromkeys(formats))
+        state["artifacts"] = self._artifact_map(exported, requested_formats)
+        state["export_formats"] = list(requested_formats)
         state["stage"] = "exported"
         state["status"] = "completed"
         if "exported" not in state["completed_stages"]:
@@ -220,7 +229,7 @@ class RadarCliApp:
         return {
             "run_id": run_id,
             "status": "completed",
-            "formats": list(dict.fromkeys(formats)),
+            "formats": list(requested_formats),
             "artifacts": state["artifacts"],
         }
 
@@ -325,8 +334,8 @@ class RadarCliApp:
             return state
 
         analysis = self._aggregate_run(config, collection.deep_reads, analyses_by_post)
-        exported = self._exporter(paths.artifacts_dir, analysis)
-        state["artifacts"] = self._artifact_map(exported)
+        exported = self._invoke_exporter(paths.artifacts_dir, analysis, ("json", "xlsx"))
+        state["artifacts"] = self._artifact_map(exported, ("json", "xlsx"))
         state["stage"] = "exported"
         state["status"] = "completed"
         state["completed_stages"] = self._merge_stages(
@@ -478,7 +487,7 @@ class RadarCliApp:
     def _reddit_checks(self, communities: Sequence[Community]) -> dict[str, Any]:
         report = {"status": "ok", "whoami": {"status": "ok"}, "seed_reads": []}
         try:
-            whoami = json.loads(self._tool_runner(self._rewrite_opencli(("opencli", "reddit", "whoami", "-f", "json"))))
+            whoami = json.loads(self._tool_runner(self._rewrite_opencli(("opencli", "reddit", "whoami", "-f", "json", *_opencli_session_flags()))))
             report["whoami"] = {"status": "ok", "username": str(whoami.get("username", ""))}
         except Exception as error:
             report["status"] = "warning"
@@ -487,7 +496,7 @@ class RadarCliApp:
             try:
                 self._tool_runner(
                     self._rewrite_opencli(
-                        ("opencli", "reddit", "hot", community.name, "--limit", "1", "-f", "json")
+                        ("opencli", "reddit", "hot", community.name, "--limit", "1", "-f", "json", *_opencli_session_flags())
                     )
                 )
                 report["seed_reads"].append({"community": community.name, "status": "ok"})
@@ -502,10 +511,11 @@ class RadarCliApp:
                 )
         return report
 
-    def _default_exporter(self, output_dir: Path, analysis: Mapping[str, Any]) -> TopicExportArtifacts:
+    def _default_exporter(self, output_dir: Path, analysis: Mapping[str, Any], formats: tuple[str, ...]) -> TopicExportArtifacts:
         return export_topic_analysis(
             analysis,
             output_dir=output_dir,
+            formats=formats,
             node_executable=self._find_executable("RADAR_NODE_EXE", "node"),
             environment=self._environment,
         )
@@ -630,12 +640,14 @@ class RadarCliApp:
         )
         return PostAnalysis(topics=topics, claims=claims)
 
-    def _artifact_map(self, exported: TopicExportArtifacts) -> dict[str, str]:
-        return {
+    def _artifact_map(self, exported: TopicExportArtifacts, formats: Sequence[str]) -> dict[str, str]:
+        artifact_map = {
             "analysis_json": str(exported.analysis_json),
             "community_topics_json": str(exported.community_topics_json),
-            "community_topics_xlsx": str(exported.workbook_path),
         }
+        if "xlsx" in formats:
+            artifact_map["community_topics_xlsx"] = str(exported.workbook_path)
+        return artifact_map
 
     def _failure_to_dict(self, failure: CollectionFailure) -> dict[str, str | None]:
         return {
@@ -653,6 +665,15 @@ class RadarCliApp:
 
     def _merge_stages(self, existing: Sequence[str], *new_stages: str) -> list[str]:
         return list(dict.fromkeys([*existing, *new_stages]))
+
+    def _validate_export_formats(self, formats: Sequence[str]) -> tuple[str, ...]:
+        requested = tuple(dict.fromkeys(value.strip().lower() for value in formats if value and value.strip()))
+        if not requested:
+            raise ValueError("At least one export format is required")
+        unsupported = [value for value in requested if value not in {"json", "xlsx"}]
+        if unsupported:
+            raise ValueError(f"Unsupported export format: {unsupported[0]}")
+        return requested
 
     def _find_executable(self, env_name: str, command_name: str) -> Path | None:
         explicit = self._environment.get(env_name)
@@ -719,6 +740,26 @@ class RadarCliApp:
         else:
             next_stem = stem + ".v2"
         return next_stem + path.suffix
+
+    def _write_json_exports(self, output_dir: Path, analysis: Mapping[str, Any]) -> TopicExportArtifacts:
+        return export_topic_analysis(
+            analysis,
+            output_dir=output_dir,
+            formats=("json",),
+            environment=self._environment,
+        )
+
+    def _invoke_exporter(
+        self, output_dir: Path, analysis: Mapping[str, Any], formats: tuple[str, ...]
+    ) -> TopicExportArtifacts:
+        parameter_count = len(inspect.signature(self._exporter).parameters)
+        if parameter_count >= 3:
+            return self._exporter(output_dir, analysis, formats)
+        return self._exporter(output_dir, analysis)
+
+
+def _opencli_session_flags() -> tuple[str, ...]:
+    return ("--window", "foreground", "--site-session", "persistent")
 
 
 class DeepSeekTopicConsolidator:

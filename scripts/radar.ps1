@@ -50,7 +50,29 @@ $pythonExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_P
 function Invoke-RadarPythonCli {
   param([string[]]$Arguments)
   if (-not $pythonExe) { throw "Python not found. Install Python 3.12+ or set RADAR_PYTHON_EXE in $ConfigPath" }
-  & $pythonExe "-m" "opportunity_radar" @Arguments
+  $propagatedNames = @()
+  if ($radarConfig) {
+    $propagatedNames += $radarConfig.Keys | Where-Object { $_ -match '^(RADAR_|DEEPSEEK_)' }
+  }
+  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE"
+  $propagatedNames = $propagatedNames | Sort-Object -Unique
+
+  $previousValues = @{}
+  try {
+    foreach ($name in $propagatedNames) {
+      $previousValues[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+      $value = Get-RadarSetting -Name $name -Config $radarConfig
+      if ($null -ne $value -and $value -ne "") {
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+      }
+    }
+    & $pythonExe "-m" "opportunity_radar" @Arguments
+  }
+  finally {
+    foreach ($name in $propagatedNames) {
+      [Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
+    }
+  }
 }
 
 switch ($Command) {
@@ -81,10 +103,7 @@ switch ($Command) {
     } | ConvertTo-Json
   }
   "doctor" {
-    if (-not $agentReachExe) { throw "Agent Reach not found. Set RADAR_AGENT_REACH_EXE or RADAR_AGENT_REACH_HOME in $ConfigPath" }
-    if (-not $openCliExe) { throw "OpenCLI not found. Install it or set RADAR_OPENCLI_EXE in $ConfigPath" }
-    & $agentReachExe doctor --json
-    & $openCliExe reddit --help | Select-Object -First 5
+    Invoke-RadarPythonCli -Arguments @("doctor")
   }
   "status" {
     Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")

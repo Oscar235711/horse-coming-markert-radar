@@ -13,6 +13,7 @@ python -m venv .venv
 ```
 
 `doctor` 会检查 Python、依赖、Agent Reach/OpenCLI 路径、Reddit `whoami`、四个种子社区、DeepSeek 变量、运行目录和 Excel 导出环境。没有 `DEEPSEEK_API_KEY` 时只会警告。
+通过 `.\scripts\radar.ps1 doctor` 运行时，会把 `.env` 中的 `RADAR_*` 与 `DEEPSEEK_*` 安全注入 Python CLI 子进程；直接运行 `python -m opportunity_radar doctor` 时，请先在当前 shell 导出这些变量。
 
 ## 日常运行
 
@@ -31,6 +32,8 @@ PowerShell 等价入口：
 .\scripts\radar.ps1 export -RunId <run_id> -Formats json,xlsx
 ```
 
+`export` 当前仅支持 `json` 与 `xlsx`。`json` 只重建 JSON 产物；`xlsx` 才会调用 Node 工作簿生成器。`html` 等未实现格式会直接报错。
+
 ## 社区建议审批
 
 ```powershell
@@ -39,6 +42,7 @@ python -m opportunity_radar communities approve --suggestion .local\runs\<run_id
 ```
 
 审批会生成新的社区版本文件，但不会自动替换当前活动版本。
+如果想延续一个中断运行，只能使用 `resume --run-id <run_id>`；新的 `run --run-id <run_id>` 会在目录已存在时明确失败，避免混入旧 checkpoint。
 
 ## 三人协作分工
 

@@ -23,6 +23,7 @@ python -m venv .venv
 ```
 
 `.env.example` 只保留变量名，不包含任何真实凭据。把它复制成 `.env` 后，只在本机填写需要的路径和密钥。
+Python 直接调用 `python -m opportunity_radar ...` 只读取当前进程环境变量；如果希望自动读取仓库 `.env`，请通过 `.\scripts\radar.ps1` 入口运行。
 
 ## 关键环境变量
 
@@ -54,6 +55,7 @@ python -m opportunity_radar communities approve --suggestion .local\runs\<run_id
 ```
 
 `doctor` 在缺少 `DEEPSEEK_API_KEY` 时只给出警告，不会阻断 Reddit 侧检查。
+`export --formats` 当前仅支持 `json` 和 `xlsx`；`json` 不依赖 Node，`xlsx` 才需要 `RADAR_NODE_EXE` 或系统 `node`。
 
 ## PowerShell 兼容入口
 
@@ -90,6 +92,8 @@ python -m opportunity_radar communities approve --suggestion .local\runs\<run_id
 - `artifacts\analysis.json`：规范分析结果
 - `artifacts\community_topics.json` / `community_topics.xlsx`：由同一分析结果导出
 - `suggestions\community_suggestions.json`：待审批建议
+
+新的 `run --run-id` 不会复用已存在的目录；如果同一个 `run_id` 已存在，必须改用 `resume`。
 
 ## 三人协作建议
 

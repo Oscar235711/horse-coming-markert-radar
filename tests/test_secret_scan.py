@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import subprocess
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,11 +27,13 @@ def test_repo_examples_keep_secret_placeholders_empty() -> None:
 def test_tracked_docs_code_and_configs_do_not_persist_api_keys_or_cookie_values() -> None:
     """The repository should stay safe to clone without scrubbing generated reports."""
     tracked_files = [
-        *REPO_ROOT.glob("src/**/*.py"),
-        *REPO_ROOT.glob("scripts/**/*.ps1"),
-        *REPO_ROOT.glob("tests/**/*.py"),
-        *REPO_ROOT.glob("configs/**/*.yaml"),
-        REPO_ROOT / "README.md",
+        REPO_ROOT / relative_path
+        for relative_path in subprocess.check_output(
+            ["git", "ls-files", "*.py", "*.ps1", "*.yaml", "*.yml", "*.md", "*.toml"],
+            cwd=REPO_ROOT,
+            text=True,
+        ).splitlines()
+        if relative_path and relative_path != ".env.example"
     ]
 
     for path in tracked_files:

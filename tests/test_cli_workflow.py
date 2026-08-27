@@ -209,6 +209,84 @@ def test_run_resume_status_export_and_governance_round_trip_without_network(tmp_
     assert "winter crack" in cummins.slang
 
 
+def test_run_rejects_reusing_an_existing_run_id_without_resume(tmp_path: Path) -> None:
+    """A fresh run must not inherit stale checkpoints or artifacts from an old run directory."""
+    runs_root = tmp_path / "runs"
+    existing = opportunity_radar.create_run_paths(runs_root, "fixture-run")
+    existing.state_path.write_text("{}", encoding="utf-8")
+
+    app = opportunity_radar.RadarCliApp(
+        runs_root=runs_root,
+        config_versions_root=tmp_path / "versions",
+        environment={"DEEPSEEK_API_KEY": "very-secret-key"},
+        collector=ScriptedCollector(),
+        flash_client=FlakyFlashClient(),
+        pro_consolidator=DeterministicPro(),
+        exporter=_write_fake_workbook,
+        now=lambda: AS_OF,
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="already exists"):
+        app.run("configs/diesel_90d.yaml", run_id="fixture-run")
+
+
+def test_export_formats_control_json_and_xlsx_generation_and_reject_unknown_formats(tmp_path: Path) -> None:
+    """`export --formats` must not silently depend on Node for JSON-only output or ignore unsupported formats."""
+    run_id = "fixture-run"
+    paths = opportunity_radar.create_run_paths(tmp_path / "runs", run_id)
+    analysis = {
+        "analysis_version": "1.0",
+        "generated_at": AS_OF.isoformat(),
+        "communities": ["Cummins"],
+        "topics": [],
+        "excluded_records": [],
+    }
+    paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (paths.artifacts_dir / "analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
+    paths.state_path.write_text(json.dumps({"run_id": run_id, "completed_stages": [], "artifacts": {}, "counts": {}}), encoding="utf-8")
+    opportunity_radar.write_manifest(
+        paths,
+        opportunity_radar.RunManifest(
+            run_id=run_id,
+            started_at=AS_OF,
+            config_sha256="a" * 64,
+            status="completed",
+            completed_stages=("configured",),
+        ),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def exporter(output_dir: Path, export_analysis: dict, formats: tuple[str, ...]) -> opportunity_radar.TopicExportArtifacts:
+        calls.append(formats)
+        return _write_fake_workbook(output_dir, export_analysis)
+
+    app = opportunity_radar.RadarCliApp(
+        runs_root=tmp_path / "runs",
+        config_versions_root=tmp_path / "versions",
+        exporter=exporter,
+        now=lambda: AS_OF,
+    )
+
+    result = app.export(run_id, formats=("json",))
+
+    assert result["formats"] == ["json"]
+    assert Path(result["artifacts"]["analysis_json"]).exists()
+    assert Path(result["artifacts"]["community_topics_json"]).exists()
+    assert "community_topics_xlsx" not in result["artifacts"]
+    assert calls == []
+
+    xlsx_result = app.export(run_id, formats=("xlsx",))
+    assert Path(xlsx_result["artifacts"]["community_topics_xlsx"]).exists()
+    assert calls == [("xlsx",)]
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Unsupported export format"):
+        app.export(run_id, formats=("html",))
+
+
 class FakeTooling:
     """Minimal command adapter for doctor checks."""
 
@@ -239,5 +317,28 @@ def test_doctor_warns_for_missing_deepseek_key_but_still_checks_reddit_and_excel
     assert any("DEEPSEEK_API_KEY" in warning for warning in report["warnings"])
     assert report["checks"]["reddit"]["whoami"]["status"] == "ok"
     assert report["checks"]["excel"]["status"] in {"ok", "warning"}
-    assert opencli.calls[0] == ("opencli", "reddit", "whoami", "-f", "json")
-
+    assert opencli.calls[0] == (
+        "opencli",
+        "reddit",
+        "whoami",
+        "-f",
+        "json",
+        "--window",
+        "foreground",
+        "--site-session",
+        "persistent",
+    )
+    assert opencli.calls[1] == (
+        "opencli",
+        "reddit",
+        "hot",
+        "Cummins",
+        "--limit",
+        "1",
+        "-f",
+        "json",
+        "--window",
+        "foreground",
+        "--site-session",
+        "persistent",
+    )
