@@ -57,6 +57,30 @@ test('public JSON adapter normalizes Reddit search and caps comments', async () 
   assert.ok(requested[1].includes('limit=20'));
 });
 
+test('public JSON adapter fetches author activity through overview JSON and falls back to RSS feeds', async () => {
+  const requested = [];
+  const adapter = createPublicJsonAdapter({
+    baseUrl: 'https://old.reddit.com',
+    rssBaseUrl: 'https://www.reddit.com',
+    fetchImpl: async (url) => {
+      requested.push(String(url));
+      if (String(url).includes('/overview.json')) return errorResponse(404, 'Not Found');
+      if (String(url).includes('/submitted.rss')) {
+        return textResponse(`<?xml version="1.0"?><feed><entry><author><name>/u/tester</name></author><category term="Cartalk"/><content type="html">&lt;p&gt;F-150 headlight condensation&lt;/p&gt;</content><id>t3_post1</id><link href="https://www.reddit.com/r/Cartalk/comments/post1/x/"/><updated>2026-08-01T00:00:00+00:00</updated><title>Headlight condensation</title></entry></feed>`);
+      }
+      return textResponse(`<?xml version="1.0"?><feed><entry><author><name>/u/tester</name></author><category term="MechanicAdvice"/><content type="html">&lt;p&gt;My budget is under $100 for H11 bulbs&lt;/p&gt;</content><id>t1_comment1</id><link href="https://www.reddit.com/r/MechanicAdvice/comments/post1/x/comment1/"/><updated>2026-08-02T00:00:00+00:00</updated><title>/u/tester on Headlight condensation</title></entry></feed>`);
+    },
+  });
+
+  const activity = await adapter.fetchAuthorActivity('tester', { limit: 3, afterUtc: '2026-07-01T00:00:00.000Z', timeoutMs: 1000 });
+
+  assert.equal(activity.length, 2);
+  assert.deepEqual(activity.map((item) => item.activity_type), ['comment', 'post']);
+  assert.ok(requested[0].includes('/user/tester/overview.json'));
+  assert.ok(requested.some((url) => url.includes('/user/tester/submitted.rss')));
+  assert.ok(requested.some((url) => url.includes('/user/tester/comments.rss')));
+});
+
 test('public adapter falls back to Reddit RSS when JSON search is blocked', async () => {
   const requested = [];
   const adapter = createPublicJsonAdapter({
@@ -130,6 +154,117 @@ test('pipeline deduplicates candidates, records failures, and continues', async 
   }
   assert.equal(backlog.find((item) => item.id === 'public-json-blocked')?.status, 'mitigated');
   assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).includes('rate limited'), true);
+});
+
+test('pipeline collects relevant author activity, writes checkpoints, and records profile failures without stopping', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-authors-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const authorCalls = [];
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [
+        { id: 'p1', title: 'I installed H11 LEDs on my F-150 and they still flicker', selftext: 'Texas. Which adapter should I buy?', subreddit: 'sub0', score: 25, num_comments: 10, permalink: '/comments/p1/x', author: 'alice' },
+        { id: 'p2', title: 'I replaced my Silverado fog lights but the vent kit failed', selftext: 'Ohio owner here. I checked the dust cap and seal, but condensation came back.', subreddit: 'sub1', score: 18, num_comments: 6, permalink: '/comments/p2/x', author: 'private_user' },
+      ];
+    },
+    async fetchDetails(post) {
+      return {
+        post: { id: post.post_id, title: post.title, selftext: post.body_original, subreddit: post.subreddit, score: post.score, num_comments: post.comment_count, permalink: post.url, author: post.author },
+        comments: [{ id: `c-${post.post_id}`, body: post.post_id === 'p1' ? 'I bought a CANbus adapter and it fixed the issue.' : 'My vent kit reduced the condensation for a month before it came back.', score: 8, permalink: `/comments/${post.post_id}/x/c1`, author: post.author }],
+      };
+    },
+    async fetchAuthorActivity(username, options) {
+      authorCalls.push({ username, limit: options.limit });
+      if (username === 'private_user') {
+        const error = new Error('Reddit HTTP 403: private profile');
+        error.status = 403;
+        throw error;
+      }
+      return [
+        { id: 'a1', kind: 't3', data: { id: 'a1', author: username, subreddit: 'Cartalk', title: 'Headlight protective film', selftext: 'My budget is under $80.', permalink: '/r/Cartalk/comments/a1/x', created_utc: 1_787_529_600 } },
+        { id: 'a2', kind: 't1', data: { id: 'a2', author: username, subreddit: 'travel', body: 'Beach photos', permalink: '/r/travel/comments/a2/x', created_utc: 1_787_529_700 } },
+      ];
+    },
+  };
+  const authorConfig = {
+    ...config,
+    limits: {
+      ...config.limits,
+      posts: 2,
+      deep_dive_posts: 2,
+      profile_users: 2,
+      profile_items_per_user: 3,
+      total_profile_items: 3,
+    },
+    keywords: {
+      ...config.keywords,
+      candidate_only_brands: [],
+    },
+  };
+
+  const result = await runRadarPipeline({ config: authorConfig, adapter, runDir, runId: 'author-run' });
+
+  assert.deepEqual(authorCalls, [
+    { username: 'alice', limit: 3 },
+    { username: 'private_user', limit: 2 },
+  ]);
+  assert.equal(result.authorCandidates.length, 2);
+  assert.equal(result.authorActivity.length, 1);
+  assert.equal(result.authorFailures.length, 1);
+  assert.equal(result.manifest.counts.author_candidates, 2);
+  assert.equal(result.manifest.counts.authors_collected, 1);
+  assert.equal(result.manifest.counts.author_activities, 1);
+  assert.equal(result.manifest.status, 'partial');
+  const saved = JSON.parse(await fs.readFile(path.join(runDir, 'raw', 'authors', 'alice.json'), 'utf8'));
+  assert.equal(saved.retained_activity.length, 1);
+  assert.equal(JSON.stringify(saved).includes('Beach photos'), false);
+  assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).includes('private_user'), true);
+});
+
+test('pipeline resumes existing author checkpoints without refetching retained authors', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-author-resume-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const calls = [];
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [{ id: 'p1', title: 'I installed H11 LEDs on my F-150 and they still flicker', selftext: 'Texas. Which adapter should I buy?', subreddit: 'sub0', score: 25, num_comments: 10, permalink: '/comments/p1/x', author: 'alice' }];
+    },
+    async fetchDetails(post) {
+      return {
+        post: { id: post.post_id, title: post.title, selftext: post.body_original, subreddit: post.subreddit, score: post.score, num_comments: post.comment_count, permalink: post.url, author: post.author },
+        comments: [{ id: `c-${post.post_id}`, body: 'I bought a CANbus adapter and it fixed the issue.', score: 8, permalink: `/comments/${post.post_id}/x/c1`, author: post.author }],
+      };
+    },
+    async fetchAuthorActivity(username) {
+      calls.push(username);
+      return [{ id: 'a1', kind: 't3', data: { id: 'a1', author: username, subreddit: 'Cartalk', title: 'Headlight protective film', selftext: 'My budget is under $80.', permalink: '/r/Cartalk/comments/a1/x', created_utc: 1_787_529_600 } }];
+    },
+  };
+  const authorConfig = {
+    ...config,
+    limits: {
+      ...config.limits,
+      posts: 1,
+      deep_dive_posts: 1,
+      profile_users: 1,
+      profile_items_per_user: 3,
+    },
+    keywords: {
+      ...config.keywords,
+      candidate_only_brands: [],
+    },
+  };
+
+  await runRadarPipeline({ config: authorConfig, adapter, runDir, runId: 'author-resume-run' });
+  const second = { ...adapter, fetchAuthorActivity: async () => { throw new Error('should not refetch author checkpoint'); } };
+
+  const resumed = await runRadarPipeline({ config: authorConfig, adapter: second, runDir, runId: 'author-resume-run' });
+
+  assert.deepEqual(calls, ['alice']);
+  assert.equal(resumed.authorActivity.length, 1);
+  assert.equal(resumed.manifest.counts.authors_collected, 1);
 });
 
 test('pipeline resumes completed detail files without refetching them', async (t) => {

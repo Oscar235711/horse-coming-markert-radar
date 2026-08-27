@@ -9,6 +9,7 @@ import {
   collectDetails,
   dedupePosts,
   loadLightingConfig,
+  normalizeAuthorActivity,
   normalizeComments,
   normalizePost,
   scorePost,
@@ -97,6 +98,41 @@ test('normalizeComments caps output and preserves English evidence links', () =>
   assert.equal(normalized.length, 20);
   assert.equal(normalized[0].body_original, 'Comment 0');
   assert.match(normalized[0].url, /^https:\/\/www\.reddit\.com\//);
+});
+
+test('normalizeAuthorActivity creates a canonical author activity record for posts and comments', () => {
+  const post = normalizeAuthorActivity({
+    kind: 't3',
+    data: {
+      id: 'post1',
+      author: 'writer',
+      subreddit: 'Cartalk',
+      title: 'F-150 headlight condensation',
+      selftext: 'Still comparing vent kits in Texas.',
+      score: 12,
+      permalink: '/r/Cartalk/comments/post1/x',
+      created_utc: 1_700_000_000,
+    },
+  }, { username: 'writer', transport: 'fixture' });
+  const comment = normalizeAuthorActivity({
+    kind: 't1',
+    data: {
+      id: 'comment1',
+      author: 'writer',
+      subreddit: 'Cartalk',
+      body: 'My H11 bulbs still flicker.',
+      score: 5,
+      permalink: '/r/Cartalk/comments/post1/x/comment1',
+      created_utc: 1_700_000_100,
+    },
+  }, { username: 'writer', transport: 'fixture' });
+
+  assert.equal(post.activity_type, 'post');
+  assert.equal(post.username, 'writer');
+  assert.equal(post.body_original, 'Still comparing vent kits in Texas.');
+  assert.equal(comment.activity_type, 'comment');
+  assert.equal(comment.title, '');
+  assert.match(comment.url, /comment1/);
 });
 
 test('collectDetails records an item failure and continues', async () => {

@@ -7,10 +7,13 @@ import {
   classifyUsRelevance,
   dedupePosts,
   flattenRedditComments,
+  normalizeAuthorActivity,
   normalizeComments,
   normalizePost,
   scorePost,
 } from './radar-core.mjs';
+import { applyEvidenceGate } from './evidence-quality.mjs';
+import { collectAuthorActivity, selectAuthors } from './author-deep-dive.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +27,7 @@ const OPTIMIZATION_ITEMS = [
   ['missing-actions', 'remote-execution', 'No GitHub Actions workflow could invoke a remote run', 'The repository was storage-only for remote users', 'Add manual and scheduled workflows with artifacts', 'high', 'resolved'],
   ['public-json-blocked', 'remote-execution', 'Reddit returned HTTP 403 for unauthenticated JSON on the first real pilot', 'A GitHub-hosted or local public run can produce zero candidates', 'Fall back to Reddit Atom RSS while preserving the failure boundary', 'critical', 'mitigated'],
   ['rss-metadata-limited', 'remote-execution', 'Reddit RSS may omit score and comment-count metadata', 'RSS-only opportunity ranking has lower engagement fidelity', 'Prefer JSON/OpenCLI when available and label RSS-derived evidence', 'medium', 'open'],
-  ['author-activity-gap', 'audience-analysis', 'The pilot currently normalizes public author handles but does not fetch author history', 'Behavior segments are based on in-scope post/comment evidence rather than a broader public activity sample', 'Add an adapter-level author activity endpoint with a strict automotive-relevance filter and retention cap', 'medium', 'open'],
+  ['author-activity-gap', 'audience-analysis', 'The pilot currently normalizes public author handles but does not fetch author history', 'Behavior segments are based on in-scope post/comment evidence rather than a broader public activity sample', 'Add an adapter-level author activity endpoint with a strict automotive-relevance filter and retention cap', 'medium', 'resolved'],
 ];
 
 export function buildOpenCliSearchArgs(query, { limit = 15, subreddit = '' } = {}) {
@@ -159,6 +162,38 @@ export function createPublicJsonAdapter({ fetchImpl = fetch, baseUrl = 'https://
         return { post: rawPost, comments: parsed.comments.slice(0, commentLimit) };
       }
     },
+    async fetchAuthorActivity(username, { limit = 50, afterUtc = null, timeoutMs = 30000 } = {}) {
+      const url = new URL(`/user/${encodeURIComponent(username)}/overview.json`, baseUrl);
+      url.searchParams.set('limit', String(limit));
+      url.searchParams.set('raw_json', '1');
+      try {
+        const payload = await requestJson(url, timeoutMs);
+        return finalizeAuthorActivityItems(
+          payload?.data?.children?.map((child) => child.data ? child : { kind: child.kind, data: child.data ?? child }) ?? [],
+          { limit, afterUtc },
+        );
+      } catch (error) {
+        if (!isBlocked(error)) throw error;
+        const [submitted, comments] = await Promise.allSettled([
+          requestText(new URL(`/user/${encodeURIComponent(username)}/submitted.rss`, rssBaseUrl), timeoutMs),
+          requestText(new URL(`/user/${encodeURIComponent(username)}/comments.rss`, rssBaseUrl), timeoutMs),
+        ]);
+        const rows = [];
+        const reasons = [];
+        if (submitted.status === 'fulfilled') {
+          rows.push(...parseRedditAtom(submitted.value).posts.map((post) => ({ kind: 't3', data: post })));
+        } else {
+          reasons.push(submitted.reason);
+        }
+        if (comments.status === 'fulfilled') {
+          rows.push(...parseRedditAtom(comments.value).comments.map((comment) => ({ kind: 't1', data: comment })));
+        } else {
+          reasons.push(comments.reason);
+        }
+        if (!rows.length) throw reasons[0] ?? error;
+        return finalizeAuthorActivityItems(rows, { limit, afterUtc });
+      }
+    },
   };
 }
 
@@ -188,6 +223,30 @@ export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync 
       const rawPost = rows.find((row) => row.kind === 'post' || row.type === 'post' || row.title) ?? post;
       const comments = rows.filter((row) => row !== rawPost && (row.body || row.type === 'comment' || row.kind === 'comment')).slice(0, commentLimit);
       return { post: rawPost, comments };
+    },
+    async fetchAuthorActivity(username, { limit = 50, afterUtc = null } = {}) {
+      const postLimit = Math.max(1, Math.ceil(limit / 2));
+      const commentLimit = Math.max(1, limit - postLimit);
+      const [postsResult, commentsResult] = await Promise.allSettled([
+        invoke(['reddit', 'user-posts', username, '--limit', String(postLimit), '-f', 'json', '--window', 'background', '--site-session', 'persistent']),
+        invoke(['reddit', 'user-comments', username, '--limit', String(commentLimit), '-f', 'json', '--window', 'background', '--site-session', 'persistent']),
+      ]);
+      const rows = [];
+      const reasons = [];
+      if (postsResult.status === 'fulfilled') {
+        const items = Array.isArray(postsResult.value) ? postsResult.value : postsResult.value.items ?? [];
+        rows.push(...items.map((item) => ({ kind: 't3', data: item })));
+      } else {
+        reasons.push(postsResult.reason);
+      }
+      if (commentsResult.status === 'fulfilled') {
+        const items = Array.isArray(commentsResult.value) ? commentsResult.value : commentsResult.value.items ?? [];
+        rows.push(...items.map((item) => ({ kind: 't1', data: item })));
+      } else {
+        reasons.push(commentsResult.reason);
+      }
+      if (!rows.length) throw reasons[0] ?? new Error(`No public activity returned for ${username}`);
+      return finalizeAuthorActivityItems(rows, { limit, afterUtc });
     },
   };
 }
@@ -305,6 +364,34 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
     await delay(config.transport?.request_interval_ms ?? 0);
   }
 
+  const authorSelectionEvidence = buildAuthorSelectionEvidence(details);
+  const gatedAuthorEvidence = applyEvidenceGate(authorSelectionEvidence, {
+    market: config.market,
+    marketRules: config.market_rules,
+  });
+  const authorCandidates = selectAuthors(gatedAuthorEvidence.qualified, {
+    limit: config.limits?.profile_users ?? 60,
+  });
+  const authorActivity = typeof adapter.fetchAuthorActivity === 'function'
+    ? await collectAuthorActivity(authorCandidates, adapter, {
+      runDir,
+      limitAuthors: config.limits?.profile_users ?? 60,
+      limitPerAuthor: config.limits?.profile_items_per_user ?? 50,
+      maxTotalActivities: config.limits?.total_profile_items
+        ?? (config.limits?.profile_users ?? 60) * (config.limits?.profile_items_per_user ?? 50),
+      timeoutMs: config.transport?.timeout_ms ?? 30000,
+      afterUtc: new Date(now().getTime() - 180 * 24 * 60 * 60 * 1000).toISOString(),
+      market: config.market,
+      marketRules: config.market_rules,
+      productTerms: [
+        ...(config.keywords?.anchors ?? []),
+        ...(config.keywords?.expanded ?? []),
+      ],
+      dictionaries: config.market_rules?.dictionaries ?? {},
+    })
+    : { authors: [], failures: [], summary: { selected_authors: authorCandidates.length, authors_collected: 0, retained_activities: 0, excluded_activities: 0 } };
+  failures.push(...authorActivity.failures);
+
   await writeJsonl(path.join(runDir, 'failures.jsonl'), failures);
   const manifest = {
     schema_version: '1.0.0',
@@ -317,9 +404,63 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
       deep_dive_target: deepDiveCandidates.length,
       details: details.length,
       comments: details.reduce((sum, item) => sum + item.comments.length, 0),
+      author_candidates: authorCandidates.length,
+      authors_collected: authorActivity.summary.authors_collected,
+      author_activities: authorActivity.summary.retained_activities,
       failures: failures.length,
     },
   };
   await writeJson(path.join(runDir, 'manifest.json'), manifest);
-  return { candidates, details, failures, manifest, runDir };
+  return {
+    candidates,
+    details,
+    authorCandidates,
+    authorActivity: authorActivity.authors,
+    authorFailures: authorActivity.failures,
+    failures,
+    manifest,
+    runDir,
+  };
+}
+
+function buildAuthorSelectionEvidence(details) {
+  const evidence = [];
+  for (const detail of details ?? []) {
+    const post = detail.post ?? {};
+    evidence.push({
+      id: post.id,
+      type: 'post',
+      post_id: post.post_id,
+      author: post.author ?? null,
+      subreddit: post.subreddit,
+      title: post.title,
+      body_original: post.body_original ?? post.selftext ?? '',
+      url: post.url,
+      score: post.score,
+      comment_count: post.comment_count,
+    });
+    for (const comment of detail.comments ?? []) {
+      evidence.push({
+        id: comment.id,
+        type: 'comment',
+        post_id: post.post_id,
+        author: comment.author ?? null,
+        subreddit: post.subreddit,
+        body_original: comment.body_original ?? comment.body ?? '',
+        url: comment.url,
+        score: comment.score,
+      });
+    }
+  }
+  return evidence.filter((item) => item.id);
+}
+
+function finalizeAuthorActivityItems(items, { limit, afterUtc }) {
+  const cutoff = afterUtc ? Date.parse(afterUtc) : null;
+  return (items ?? [])
+    .map((item) => normalizeAuthorActivity(item))
+    .filter((item) => item.id)
+    .filter((item) => !cutoff || !item.created_at || Date.parse(item.created_at) >= cutoff)
+    .sort((left, right) => Date.parse(right.created_at ?? 0) - Date.parse(left.created_at ?? 0))
+    .slice(0, limit);
 }

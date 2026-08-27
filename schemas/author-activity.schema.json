@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://horse-coming-radar/schemas/author-activity.schema.json",
+  "title": "Reddit Author Activity Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "username",
+    "source_evidence_ids",
+    "retained_count",
+    "excluded_count",
+    "limits",
+    "retained_activity",
+    "privacy_note"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "username": { "type": "string", "minLength": 1 },
+    "source_evidence_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "retained_count": { "type": "integer", "minimum": 0 },
+    "excluded_count": { "type": "integer", "minimum": 0 },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_limit", "applied_after_utc", "max_total_activities"],
+      "properties": {
+        "requested_limit": { "type": "integer", "minimum": 1 },
+        "applied_after_utc": { "type": "string", "format": "date-time" },
+        "max_total_activities": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "retained_activity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "activity_id",
+          "activity_type",
+          "username",
+          "subreddit",
+          "body_original",
+          "created_at",
+          "url",
+          "relevance_reasons",
+          "quality",
+          "product_concepts",
+          "pain_points",
+          "discovered_terms",
+          "self_declared_context"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "activity_id": { "type": "string", "minLength": 1 },
+          "activity_type": { "enum": ["post", "comment"] },
+          "username": { "type": "string", "minLength": 1 },
+          "subreddit": { "type": "string" },
+          "title": { "type": "string" },
+          "body_original": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "url": { "type": "string", "format": "uri" },
+          "relevance_reasons": { "type": "array", "items": { "type": "string" } },
+          "quality": { "type": "object" },
+          "product_concepts": { "type": "array", "items": { "type": "string" } },
+          "pain_points": { "type": "array", "items": { "type": "string" } },
+          "discovered_terms": { "type": "array", "items": { "type": "string" } },
+          "self_declared_context": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "value", "source", "evidence_id", "permalink", "observed_at"],
+              "properties": {
+                "kind": { "type": "string" },
+                "value": { "type": "string" },
+                "source": { "const": "self_declared" },
+                "evidence_id": { "type": "string" },
+                "permalink": { "type": ["string", "null"] },
+                "observed_at": { "type": ["string", "null"], "format": "date-time" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "privacy_note": { "type": "string", "minLength": 1 }
+  }
+}

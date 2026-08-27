@@ -103,6 +103,31 @@ function normalizeComment(comment, postId) {
   };
 }
 
+export function normalizeAuthorActivity(input, { username = null, transport = 'unknown', collectedAt = new Date().toISOString() } = {}) {
+  const item = input?.data ?? input ?? {};
+  const activityType = inferAuthorActivityType(input, item);
+  const id = String(item.id ?? item.activity_id ?? '').replace(/^t[13]_/, '');
+  const createdAt = normalizeTimestamp(item.created_at ?? item.createdAt ?? item.created_utc ?? item.created);
+
+  return {
+    id: input?.activity_type ? String(input.id ?? '') : `${activityType}-${id}`,
+    activity_id: id,
+    activity_type: activityType,
+    username: username ?? (item.author && item.author !== '[deleted]' ? String(item.author) : null),
+    author: item.author && item.author !== '[deleted]' ? String(item.author) : (username ?? null),
+    subreddit: String(item.subreddit ?? '').replace(/^r\//i, ''),
+    title: activityType === 'post' ? String(item.title ?? '').trim() : String(item.title ?? '').replace(/^\/u\/[^ ]+\s+on\s+/i, '').trim(),
+    body_original: String(item.selftext ?? item.body ?? item.body_original ?? '').trim(),
+    score: Number(item.score ?? item.ups ?? 0) || 0,
+    created_at: createdAt,
+    url: asRedditUrl(item.permalink ?? item.url, id),
+    source: {
+      transport,
+      collected_at: collectedAt,
+    },
+  };
+}
+
 export function flattenRedditComments(children, output = []) {
   for (const child of children ?? []) {
     if (!child || child.kind === 'more') continue;
@@ -211,4 +236,23 @@ export function buildAudienceMap(analysis) {
       categories: [...new Set(nodes.filter((node) => node.type === 'product').map((node) => node.category).filter(Boolean))],
     },
   };
+}
+
+function inferAuthorActivityType(input, item) {
+  const kind = String(input?.kind ?? item?.kind ?? item?.name ?? '').toLowerCase();
+  if (kind.startsWith('t1') || item.body || input?.activity_type === 'comment') return 'comment';
+  return 'post';
+}
+
+function normalizeTimestamp(value) {
+  if (!value && value !== 0) return null;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  }
+  if (Number.isFinite(value)) {
+    const milliseconds = value > 9_999_999_999 ? value : value * 1000;
+    return new Date(milliseconds).toISOString();
+  }
+  return null;
 }
