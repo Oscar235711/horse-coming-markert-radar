@@ -34,6 +34,16 @@ from .normalization import normalize_and_deduplicate
 from .scoring import score_shortlist
 from .storage import TopicRegistry, RunPaths, create_run_paths, read_manifest, write_manifest
 from .windowing import window_posts
+from .topics import (
+    EXCEL_SHEET_NAMES,
+    PostSignal,
+    ProTopicProposal,
+    TopicAggregationResult,
+    TopicAggregator,
+    TopicEvidence,
+    TopicExportArtifacts,
+    export_topic_analysis,
+)
 
 __all__ = [
     "Community",
@@ -44,19 +54,26 @@ __all__ = [
     "DeepSeekClient",
     "DeepSeekError",
     "EvidenceClaim",
+    "EXCEL_SHEET_NAMES",
     "FLASH_MODEL",
     "HttpResponse",
     "NormalizedPost",
     "OpenCliCollector",
     "PostWindow",
     "PostAnalysis",
+    "PostSignal",
     "PRO_MODEL",
+    "ProTopicProposal",
     "RadarConfig",
     "RunManifest",
     "RunPaths",
     "ShortlistedPost",
     "TopicRecord",
     "TopicCandidate",
+    "TopicAggregationResult",
+    "TopicAggregator",
+    "TopicEvidence",
+    "TopicExportArtifacts",
     "TopicRegistry",
     "WindowedPost",
     "ThreadComment",
@@ -68,4 +85,5 @@ __all__ = [
     "score_shortlist",
     "window_posts",
     "write_manifest",
+    "export_topic_analysis",
 ]
