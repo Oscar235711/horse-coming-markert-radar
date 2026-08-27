@@ -21,31 +21,35 @@ class DeterministicPro:
 
     def consolidate(self, community, signals):
         ids = tuple(signal.post.post_id for signal in signals)
+        evidence = tuple(
+            opportunity_radar.TopicEvidence(
+                post_id=signal.post.post_id,
+                evidence_id="post",
+                claim="Cracking after winter use.",
+                stance="supporting",
+                translation_zh="冬季使用后开裂。",
+            )
+            for signal in signals
+        )
+        claim_source = evidence[:1]
         return (
             opportunity_radar.ProTopicProposal(
                 canonical_key="winter durability",
                 label_en="Winter durability",
                 label_zh="冬季耐久性",
-                summary="Owners report cracking after freezing weather.",
-                post_ids=ids,
-                evidence=(
-                    opportunity_radar.TopicEvidence(
-                        post_id=signal.post.post_id,
-                        evidence_id="post",
-                        claim="Cracking after winter use.",
-                        stance="supporting",
-                        translation_zh="冬季使用后开裂。",
-                    )
-                    for signal in signals
+                summary=opportunity_radar.EvidenceBackedClaim(
+                    "Owners report cracking after freezing weather.", claim_source
                 ),
+                post_ids=ids,
+                evidence=evidence,
                 vehicles=("Diesel pickup",),
                 platforms=("aftermarket",),
                 scenarios=("winter towing",),
-                pains=("cracking",),
-                needs=("freeze-resistant material",),
-                current_solutions=("installed replacement",),
-                gaps=("current options still crack",),
-                opportunity_hypotheses=("Opportunity hypothesis: cold-weather replacement part.",),
+                pains=(opportunity_radar.EvidenceBackedClaim("cracking", claim_source),),
+                needs=(opportunity_radar.EvidenceBackedClaim("freeze-resistant material", claim_source),),
+                current_solutions=(opportunity_radar.EvidenceBackedClaim("installed replacement", claim_source),),
+                gaps=(opportunity_radar.EvidenceBackedClaim("current options still crack", claim_source),),
+                opportunity_hypotheses=(opportunity_radar.EvidenceBackedClaim("Opportunity hypothesis: cold-weather replacement part.", claim_source),),
                 category_tags=("durability",),
                 brand_tags=("ExampleBrand",),
                 competitor_tags=("CompetitorX",),
@@ -70,7 +74,7 @@ def _post(number: int, *, age_days: int, author: str, comments: int = 2, score: 
     )
 
 
-def _signal(post):
+def _signal(post, *, comment_authors: tuple[str, ...] = ()):
     return opportunity_radar.PostSignal(
         post=post,
         analysis=opportunity_radar.PostAnalysis(
@@ -82,6 +86,7 @@ def _signal(post):
             ),
         ),
         evidence_urls={"post": post.url},
+        comment_authors=comment_authors,
     )
 
 
@@ -98,7 +103,7 @@ def test_topic_aggregation_applies_formal_threshold_trend_heat_and_stable_id(tmp
     assert topic["topic_id"] == registry.records()[0].topic_id
     assert topic["status"] == "formal"
     assert topic["trend"] == "new"
-    assert topic["heat_score"] == 100.0
+    assert topic["heat_score"] == 80.0
     assert topic["post_count"] == 3
     assert topic["author_count"] == 3
     assert topic["model_mode"] == "deterministic_fixture"
@@ -112,7 +117,11 @@ def test_weak_signal_uses_commenter_threshold_and_drops_invalid_evidence(tmp_pat
     )
     pro = DeterministicPro()
     aggregator = opportunity_radar.TopicAggregator(pro=pro, registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF)
-    result = aggregator.aggregate("diesel", tuple(_signal(post) for post in posts))
+    signals = (
+        _signal(posts[0], comment_authors=tuple(f"commenter-{index}" for index in range(10))),
+        _signal(posts[1]),
+    )
+    result = aggregator.aggregate("diesel", signals)
 
     assert result.formal_topics[0]["status"] == "formal"
     assert result.formal_topics[0]["commenter_count"] == 10
@@ -125,7 +134,7 @@ def test_weak_signal_uses_commenter_threshold_and_drops_invalid_evidence(tmp_pat
 
     rejected = opportunity_radar.TopicAggregator(
         pro=InvalidEvidencePro(), registry=opportunity_radar.TopicRegistry(tmp_path / "invalid.json"), as_of=AS_OF
-    ).aggregate("diesel", tuple(_signal(post) for post in posts))
+    ).aggregate("diesel", signals)
     assert rejected.formal_topics == ()
     assert rejected.excluded_records[0]["reason"] == "invalid_evidence"
 
@@ -215,3 +224,97 @@ def test_topic_rejects_evidence_without_a_chinese_translation(tmp_path: Path) ->
 
     assert result.formal_topics == ()
     assert result.excluded_records[0]["reason"] == "invalid_evidence"
+
+
+def test_commenter_threshold_counts_distinct_non_op_authors_only(tmp_path: Path) -> None:
+    """Ten comments by the same person cannot manufacture a formal topic."""
+    posts = (_post(1, age_days=2, author="op-1", comments=10), _post(2, age_days=3, author="op-2", comments=10))
+    result = opportunity_radar.TopicAggregator(
+        pro=DeterministicPro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate("diesel", tuple(_signal(post, comment_authors=("repeat",) * 10) for post in posts))
+
+    assert result.weak_topics[0]["commenter_count"] == 1
+    assert result.formal_topics == ()
+
+
+def test_commenter_threshold_accepts_ten_distinct_non_op_authors(tmp_path: Path) -> None:
+    """Ten distinct non-OP commenters satisfy the explicit alternate formal threshold."""
+    posts = (_post(1, age_days=2, author="op-1"), _post(2, age_days=3, author="op-2"))
+    result = opportunity_radar.TopicAggregator(
+        pro=DeterministicPro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate("diesel", (
+        _signal(posts[0], comment_authors=tuple(f"commenter-{index}" for index in range(10))),
+        _signal(posts[1], comment_authors=("op-2",)),
+    ))
+
+    assert result.formal_topics[0]["commenter_count"] == 10
+
+
+def test_duplicate_post_ids_in_a_proposal_do_not_inflate_counts_or_bypass_limits(tmp_path: Path) -> None:
+    """A malicious Pro response cannot repeat one post to create fake topic volume."""
+    class DuplicatingPro(DeterministicPro):
+        def consolidate(self, community, signals):
+            proposal = next(iter(super().consolidate(community, signals)))
+            post_id = signals[0].post.post_id
+            return (replace(proposal, post_ids=(post_id, post_id, post_id, post_id)),)
+
+    post = _post(1, age_days=2, author="owner", comments=99)
+    result = opportunity_radar.TopicAggregator(
+        pro=DuplicatingPro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate("diesel", (_signal(post, comment_authors=("one",)),))
+
+    assert result.weak_topics[0]["post_count"] == 1
+    assert result.weak_topics[0]["author_count"] == 1
+    assert result.weak_topics[0]["commenter_count"] == 1
+
+
+def test_export_uses_explicit_node_executable_without_a_hard_coded_user_path(tmp_path: Path) -> None:
+    """A caller-controlled Node path keeps export portable across developer machines."""
+    analysis = {"analysis_version": "1.0", "generated_at": AS_OF.isoformat(), "communities": ["diesel"], "topics": [], "excluded_records": []}
+    node = Path(__import__("shutil").which("node"))
+
+    exported = opportunity_radar.export_topic_analysis(analysis, output_dir=tmp_path / "artifacts", node_executable=node)
+
+    assert exported.workbook_path.exists()
+
+
+def test_specific_topic_claims_require_their_own_valid_evidence_and_export_views(tmp_path: Path) -> None:
+    """A topic-level citation cannot launder an unsupported pain or summary claim."""
+    class ClaimEvidencePro(DeterministicPro):
+        def consolidate(self, community, signals):
+            proposal = next(iter(super().consolidate(community, signals)))
+            source = tuple(proposal.evidence)[0]
+            opposing = opportunity_radar.TopicEvidence(
+                source.post_id, source.evidence_id, "Some owners report no crack.", "opposing", "部分车主未发现开裂。"
+            )
+            return (replace(
+                proposal,
+                evidence=(source, opposing),
+                summary=opportunity_radar.EvidenceBackedClaim("Grounded summary.", (source,)),
+                pains=(
+                    opportunity_radar.EvidenceBackedClaim("Grounded pain.", (source,)),
+                    opportunity_radar.EvidenceBackedClaim(
+                        "Unsupported pain.", (opportunity_radar.TopicEvidence("missing", "post", "invented", "supporting", "虚构"),)
+                    ),
+                ),
+                needs=(opportunity_radar.EvidenceBackedClaim("Grounded need.", (source,)),),
+                current_solutions=(opportunity_radar.EvidenceBackedClaim("Grounded solution.", (source,)),),
+                gaps=(opportunity_radar.EvidenceBackedClaim("Grounded gap.", (source,)),),
+                opportunity_hypotheses=(opportunity_radar.EvidenceBackedClaim("Grounded hypothesis.", (source,)),),
+            ),)
+
+    posts = tuple(_post(index, age_days=index + 1, author=f"owner-{index}") for index in range(3))
+    result = opportunity_radar.TopicAggregator(
+        pro=ClaimEvidencePro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate("diesel", tuple(_signal(post) for post in posts))
+    topic = result.formal_topics[0]
+
+    assert topic["summary"] == "Grounded summary."
+    assert topic["pains"] == ["Grounded pain."]
+    assert topic["supporting_views"] == ["Cracking after winter use."]
+    assert topic["opposing_views"] == ["Some owners report no crack."]
+    exported = opportunity_radar.export_topic_analysis(result.analysis, output_dir=tmp_path / "artifacts")
+    with ZipFile(exported.workbook_path) as workbook:
+        xml = "".join(workbook.read(name).decode("utf-8") for name in workbook.namelist() if name.endswith(".xml"))
+    assert "Grounded pain." in xml and "Unsupported pain." not in xml
+    assert "Some owners report no crack." in xml

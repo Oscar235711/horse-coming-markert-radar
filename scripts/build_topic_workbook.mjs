@@ -75,13 +75,13 @@ function columnName(number) {
 
 {
   const sheet = workbook.worksheets.getItem("话题分析卡");
-  title(sheet, "话题分析卡（所有结论均为机会假设）", "L");
-  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "痛点", "需求", "当前解决方案", "缺口", "机会假设", "车辆/平台/场景", "标签", "验证问题"], topics.filter((topic) => topic.status === "formal").map((topic) => [
+  title(sheet, "话题分析卡（所有结论均为机会假设）", "N");
+  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "痛点", "需求", "当前解决方案", "缺口", "机会假设", "车辆/平台/场景", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
     topic.topic_id, topic.label_zh, topic.label_en, topic.summary, values(topic.pains), values(topic.needs),
     values(topic.current_solutions), values(topic.gaps), values(topic.opportunity_hypotheses),
     [values(topic.vehicles), values(topic.platforms), values(topic.scenarios)].filter(Boolean).join(" / "),
-    [values(topic.category_tags), values(topic.brand_tags), values(topic.competitor_tags)].filter(Boolean).join("；"), values(topic.validation_questions),
-  ]), [26, 20, 22, 35, 24, 24, 24, 24, 34, 30, 26, 30]);
+    [values(topic.category_tags), values(topic.brand_tags), values(topic.competitor_tags)].filter(Boolean).join("；"), values(topic.validation_questions), values(topic.supporting_views), values(topic.opposing_views),
+  ]), [26, 20, 22, 35, 24, 24, 24, 24, 34, 30, 26, 30, 30, 30]);
 }
 
 {

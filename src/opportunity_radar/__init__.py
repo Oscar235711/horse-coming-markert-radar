@@ -36,6 +36,7 @@ from .storage import TopicRegistry, RunPaths, create_run_paths, read_manifest, w
 from .windowing import window_posts
 from .topics import (
     EXCEL_SHEET_NAMES,
+    EvidenceBackedClaim,
     PostSignal,
     ProTopicProposal,
     TopicAggregationResult,
@@ -54,6 +55,7 @@ __all__ = [
     "DeepSeekClient",
     "DeepSeekError",
     "EvidenceClaim",
+    "EvidenceBackedClaim",
     "EXCEL_SHEET_NAMES",
     "FLASH_MODEL",
     "HttpResponse",

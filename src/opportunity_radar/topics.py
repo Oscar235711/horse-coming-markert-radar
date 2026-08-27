@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 from math import log1p
+import os
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Any, Protocol
 
@@ -37,6 +39,7 @@ class PostSignal:
     post: NormalizedPost
     analysis: PostAnalysis
     evidence_urls: Mapping[str, str]
+    comment_authors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,23 +54,31 @@ class TopicEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceBackedClaim:
+    """A concrete topic assertion bound to its own source evidence."""
+
+    text: str
+    evidence: Sequence[TopicEvidence]
+
+
+@dataclass(frozen=True, slots=True)
 class ProTopicProposal:
     """Structured Pro result injected at the boundary, never called by this module."""
 
     canonical_key: str
     label_en: str
     label_zh: str
-    summary: str
+    summary: EvidenceBackedClaim
     post_ids: tuple[str, ...]
     evidence: Sequence[TopicEvidence]
     vehicles: tuple[str, ...] = ()
     platforms: tuple[str, ...] = ()
     scenarios: tuple[str, ...] = ()
-    pains: tuple[str, ...] = ()
-    needs: tuple[str, ...] = ()
-    current_solutions: tuple[str, ...] = ()
-    gaps: tuple[str, ...] = ()
-    opportunity_hypotheses: tuple[str, ...] = ()
+    pains: tuple[EvidenceBackedClaim, ...] = ()
+    needs: tuple[EvidenceBackedClaim, ...] = ()
+    current_solutions: tuple[EvidenceBackedClaim, ...] = ()
+    gaps: tuple[EvidenceBackedClaim, ...] = ()
+    opportunity_hypotheses: tuple[EvidenceBackedClaim, ...] = ()
     category_tags: tuple[str, ...] = ()
     brand_tags: tuple[str, ...] = ()
     competitor_tags: tuple[str, ...] = ()
@@ -116,8 +127,9 @@ class TopicAggregator:
         candidates: list[dict[str, Any]] = []
 
         for proposal in self._pro.consolidate(community, tuple(signals)):
+            unique_post_ids = tuple(dict.fromkeys(proposal.post_ids))
             accepted_post_ids = tuple(
-                post_id for post_id in proposal.post_ids
+                post_id for post_id in unique_post_ids
                 if post_id in signal_by_id and selected_per_post[post_id] < 3
             )
             if not accepted_post_ids:
@@ -159,7 +171,16 @@ class TopicAggregator:
         baseline_posts = [post for post in posts if self._is_baseline(post.created_at)]
         current_rate = len(current_posts) / CURRENT_DAYS
         baseline_rate = len(baseline_posts) / BASELINE_DAYS
-        formal = _is_formal(posts)
+        commenter_count = len(_distinct_commenters(post_ids, signal_by_id))
+        formal = _is_formal(posts, commenter_count)
+        summary = _validated_claim(proposal.summary, post_ids, signal_by_id)
+        pains = _validated_claims(proposal.pains, post_ids, signal_by_id)
+        needs = _validated_claims(proposal.needs, post_ids, signal_by_id)
+        current_solutions = _validated_claims(proposal.current_solutions, post_ids, signal_by_id)
+        gaps = _validated_claims(proposal.gaps, post_ids, signal_by_id)
+        opportunity_hypotheses = _validated_claims(
+            proposal.opportunity_hypotheses, post_ids, signal_by_id
+        )
         record = self._registry.get_or_create(
             community=community,
             canonical_key=proposal.canonical_key,
@@ -172,12 +193,12 @@ class TopicAggregator:
             "canonical_key": record.canonical_key,
             "label_en": record.label_en,
             "label_zh": record.label_zh,
-            "summary": proposal.summary,
+            "summary": summary["text"] if summary is not None else "unknown",
             "status": "formal" if formal else "weak_signal",
             "trend": _trend(formal, current_rate, baseline_rate),
             "post_count": len(posts),
             "author_count": len({post.author for post in posts if post.author}),
-            "commenter_count": sum(max(0, post.comment_count) for post in posts),
+            "commenter_count": commenter_count,
             "upvote_count": sum(max(0, post.score) for post in posts),
             "current_post_count": len(current_posts),
             "baseline_post_count": len(baseline_posts),
@@ -187,17 +208,27 @@ class TopicAggregator:
             "vehicles": list(proposal.vehicles),
             "platforms": list(proposal.platforms),
             "scenarios": list(proposal.scenarios),
-            "pains": list(proposal.pains),
-            "needs": list(proposal.needs),
-            "current_solutions": list(proposal.current_solutions),
-            "gaps": list(proposal.gaps),
-            "opportunity_hypotheses": list(proposal.opportunity_hypotheses),
+            "pains": [claim["text"] for claim in pains],
+            "needs": [claim["text"] for claim in needs],
+            "current_solutions": [claim["text"] for claim in current_solutions],
+            "gaps": [claim["text"] for claim in gaps],
+            "opportunity_hypotheses": [claim["text"] for claim in opportunity_hypotheses],
             "category_tags": list(proposal.category_tags),
             "brand_tags": list(proposal.brand_tags),
             "competitor_tags": list(proposal.competitor_tags),
             "confidence": max(0.0, min(1.0, proposal.confidence)),
             "validation_questions": list(proposal.validation_questions),
             "evidence": evidence,
+            "supporting_views": _views(evidence, "supporting"),
+            "opposing_views": _views(evidence, "opposing"),
+            "claim_evidence": {
+                "summary": summary if summary is not None else {"text": "unknown", "evidence": []},
+                "pains": pains,
+                "needs": needs,
+                "current_solutions": current_solutions,
+                "gaps": gaps,
+                "opportunity_hypotheses": opportunity_hypotheses,
+            },
             "model_mode": getattr(self._pro, "mode", "injected_pro"),
         }
 
@@ -208,7 +239,13 @@ class TopicAggregator:
         return self._as_of - timedelta(days=CURRENT_DAYS + BASELINE_DAYS) <= created_at < self._as_of - timedelta(days=CURRENT_DAYS)
 
 
-def export_topic_analysis(analysis: Mapping[str, Any], *, output_dir: str | Path) -> TopicExportArtifacts:
+def export_topic_analysis(
+    analysis: Mapping[str, Any],
+    *,
+    output_dir: str | Path,
+    node_executable: str | Path | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> TopicExportArtifacts:
     """Persist one canonical analysis then derive JSON projection and workbook from it."""
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -223,7 +260,7 @@ def export_topic_analysis(analysis: Mapping[str, Any], *, output_dir: str | Path
         "topics": canonical.get("topics", []),
     })
     builder = Path(__file__).resolve().parents[2] / "scripts" / "build_topic_workbook.mjs"
-    node = Path(r"C:\Users\yaobi\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe")
+    node = _resolve_node_executable(node_executable, environment)
     subprocess.run((str(node), str(builder), str(analysis_json), str(workbook_path)), check=True, capture_output=True, text=True)
     return TopicExportArtifacts(analysis_json, community_topics_json, workbook_path)
 
@@ -255,10 +292,66 @@ def _validated_evidence(
     return result
 
 
-def _is_formal(posts: Sequence[NormalizedPost]) -> bool:
+def _validated_claim(
+    claim: EvidenceBackedClaim, accepted_post_ids: Sequence[str], signal_by_id: Mapping[str, PostSignal]
+) -> dict[str, Any] | None:
+    if not claim.text.strip():
+        return None
+    evidence = _validated_evidence(claim.evidence, accepted_post_ids, signal_by_id)
+    if evidence is None:
+        return None
+    return {"text": claim.text.strip(), "evidence": evidence}
+
+
+def _validated_claims(
+    claims: Sequence[EvidenceBackedClaim], accepted_post_ids: Sequence[str], signal_by_id: Mapping[str, PostSignal]
+) -> list[dict[str, Any]]:
+    return [validated for claim in claims if (validated := _validated_claim(claim, accepted_post_ids, signal_by_id)) is not None]
+
+
+def _views(evidence: Sequence[Mapping[str, str]], stance: str) -> list[str]:
+    return list(dict.fromkeys(item["claim_en"] for item in evidence if item["stance"] == stance))
+
+
+def _is_formal(posts: Sequence[NormalizedPost], commenter_count: int) -> bool:
     authors = {post.author for post in posts if post.author}
-    comments = sum(max(0, post.comment_count) for post in posts)
-    return (len(posts) >= 3 and len(authors) >= 3) or (len(posts) >= 2 and comments >= 10)
+    return (len(posts) >= 3 and len(authors) >= 3) or (len(posts) >= 2 and commenter_count >= 10)
+
+
+def _distinct_commenters(
+    post_ids: Sequence[str], signal_by_id: Mapping[str, PostSignal]
+) -> set[str]:
+    commenters: set[str] = set()
+    for post_id in post_ids:
+        signal = signal_by_id[post_id]
+        op_author = signal.post.author.casefold() if signal.post.author else None
+        commenters.update(
+            author.casefold()
+            for author in signal.comment_authors
+            if author.strip() and author.casefold() != op_author
+        )
+    return commenters
+
+
+def _resolve_node_executable(
+    explicit: str | Path | None, environment: Mapping[str, str] | None
+) -> Path:
+    configured_environment = os.environ if environment is None else environment
+    candidates: list[str | Path | None] = [
+        explicit,
+        configured_environment.get("RADAR_NODE_EXE"),
+        shutil.which("node"),
+        Path.cwd() / ".local" / "artifact-runtime" / "node.exe",
+        Path.cwd() / ".local" / "artifact-runtime" / "bin" / "node.exe",
+    ]
+    for candidate in candidates:
+        if candidate:
+            path = Path(candidate)
+            if path.is_file():
+                return path
+    raise RuntimeError(
+        "Node.js executable not found. Pass node_executable, set RADAR_NODE_EXE, add node to PATH, or configure the project runtime."
+    )
 
 
 def _trend(formal: bool, current_rate: float, baseline_rate: float) -> str:
