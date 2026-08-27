@@ -451,6 +451,237 @@ test('resume retries unresolved search queries and preserves the immutable confi
   assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).trim(), '');
 });
 
+test('pipeline writes a bounded keyword candidate pool, runs one controlled second round, and keeps formal keywords immutable', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-keyword-round-two-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const searchCalls = [];
+  const detailCalls = [];
+  const authorCalls = [];
+  const keywordConfig = {
+    ...config,
+    keywords: {
+      ...config.keywords,
+      expanded: ['headlight condensation', 'canbus adapter'],
+      candidate_only_brands: ['SEALIGHT', 'Sylvania'],
+    },
+    limits: {
+      ...config.limits,
+      posts: 5,
+      deep_dive_posts: 5,
+      profile_users: 3,
+      profile_items_per_user: 4,
+      total_profile_items: 6,
+      round_two_terms: 20,
+      round_two_posts_per_term: 10,
+      round_two_minimum_score: 65,
+      round_two_minimum_users: 2,
+      round_two_minimum_communities: 2,
+    },
+    market_rules: {
+      dictionaries: {
+        products: ['headlight protective film', 'vent membrane', 'canbus adapter'],
+        vehicles: ['f-150', 'silverado'],
+        fitment: ['h11'],
+        competitors: ['sealight'],
+        retailers: ['amazon'],
+        slang: ['condensation', 'flicker'],
+        stopwords: ['light', 'lights', 'car', 'cars'],
+      },
+    },
+    query_groups: ['headlight condensation'],
+  };
+  const before = structuredClone(keywordConfig.keywords);
+  const adapter = {
+    name: 'fixture',
+    async search(query, options = {}) {
+      searchCalls.push({ query, limit: options.limit });
+      if (query === 'headlight condensation') {
+        return [
+          { id: 'p1', title: 'I bought headlight protective film after condensation returned on my F-150', selftext: 'Budget under $80 and the old vent membrane kit failed.', subreddit: 'sub0', score: 25, num_comments: 8, permalink: '/comments/p1/x', author: 'alice' },
+          { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
+        ];
+      }
+      if (query === 'headlight protective film') {
+        return [
+          { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
+        ];
+      }
+      if (query === 'condensation' || query === 'vent membrane') {
+        return [];
+      }
+      throw new Error(`unexpected query: ${query}`);
+    },
+    async fetchDetails(post) {
+      detailCalls.push(post.post_id);
+      const details = {
+        p1: {
+          post: { id: 'p1', title: 'I bought headlight protective film after condensation returned on my F-150', selftext: 'Budget under $80 and the old vent membrane kit failed.', subreddit: 'sub0', score: 25, num_comments: 8, permalink: '/comments/p1/x', author: 'alice' },
+          comments: [{ id: 'c1', body: 'I bought headlight protective film after a vent kit failed.', score: 7, permalink: '/comments/p1/x/c1', author: 'alice' }],
+        },
+        p2: {
+          post: { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
+          comments: [{ id: 'c2', body: 'SEALIGHT bulbs did not solve the condensation, but a vent membrane might.', score: 6, permalink: '/comments/p2/x/c2', author: 'bob' }],
+        },
+        p3: {
+          post: { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
+          comments: [{ id: 'c3', body: 'The film worked better than another assembly for me.', score: 5, permalink: '/comments/p3/x/c3', author: 'carol' }],
+        },
+      };
+      return details[post.post_id];
+    },
+    async fetchAuthorActivity(username, options = {}) {
+      authorCalls.push({ username, limit: options.limit });
+      return [
+        { id: `${username}-activity`, kind: 't3', data: { id: `${username}-activity`, author: username, subreddit: username === 'alice' ? 'F150' : 'Cartalk', title: 'Headlight protective film follow-up', selftext: 'I bought headlight protective film after the condensation returned.', permalink: `/r/Cartalk/comments/${username}-activity/x`, created_utc: 1_787_529_600 } },
+      ];
+    },
+  };
+
+  const result = await runRadarPipeline({ config: keywordConfig, adapter, runDir, runId: 'keyword-round-two-run' });
+
+  assert.deepEqual(keywordConfig.keywords, before);
+  assert.deepEqual(searchCalls, [
+    { query: 'headlight condensation', limit: 15 },
+    { query: 'headlight protective film', limit: 10 },
+    { query: 'condensation', limit: 10 },
+    { query: 'vent membrane', limit: 10 },
+  ]);
+  assert.deepEqual(authorCalls, [
+    { username: 'alice', limit: 4 },
+    { username: 'bob', limit: 4 },
+  ]);
+  assert.equal(detailCalls.includes('p3'), true);
+  assert.equal(result.candidates.some((post) => post.post_id === 'p3'), true);
+
+  const keywordCandidates = JSON.parse(await fs.readFile(path.join(runDir, 'keyword_candidates.json'), 'utf8'));
+  assert.equal(keywordCandidates.candidates.some((candidate) => candidate.term === 'headlight protective film'), true);
+  assert.equal(keywordCandidates.candidates.find((candidate) => candidate.term === 'headlight protective film')?.status, 'exploratory_used');
+  assert.equal(keywordCandidates.candidates.some((candidate) => candidate.term === 'sealight'), false);
+
+  const checkpoint = JSON.parse(await fs.readFile(path.join(runDir, 'round_two_checkpoint.json'), 'utf8'));
+  assert.deepEqual(checkpoint.selected_terms, ['headlight protective film', 'condensation', 'vent membrane']);
+  assert.equal(checkpoint.completed_rounds, 1);
+  assert.equal(checkpoint.failures.length, 0);
+  assert.equal(result.manifest.counts.keyword_candidates >= 2, true);
+  assert.equal(result.manifest.counts.round_two_terms, 3);
+  assert.equal(result.manifest.counts.round_two_additions, 1);
+});
+
+test('pipeline resumes the round-two checkpoint, retries only failed exploratory queries, and keeps the first-round snapshot intact', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-keyword-resume-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  let retryRoundTwo = false;
+  const searchCalls = [];
+  const keywordConfig = {
+    ...config,
+    keywords: {
+      ...config.keywords,
+      expanded: ['headlight condensation'],
+      candidate_only_brands: [],
+    },
+    limits: {
+      ...config.limits,
+      posts: 4,
+      deep_dive_posts: 4,
+      profile_users: 2,
+      profile_items_per_user: 3,
+      total_profile_items: 3,
+      round_two_terms: 20,
+      round_two_posts_per_term: 10,
+      round_two_minimum_score: 65,
+      round_two_minimum_users: 2,
+      round_two_minimum_communities: 2,
+    },
+    market_rules: {
+      dictionaries: {
+        products: ['headlight protective film', 'vent membrane'],
+        vehicles: ['f-150', 'silverado'],
+        fitment: ['h11'],
+        competitors: [],
+        retailers: ['amazon'],
+        slang: ['condensation'],
+        stopwords: ['light', 'lights'],
+      },
+    },
+    query_groups: ['headlight condensation'],
+  };
+  const adapter = {
+    name: 'fixture',
+    async search(query, options = {}) {
+      searchCalls.push({ query, limit: options.limit });
+      if (query === 'headlight condensation') {
+        return [
+          { id: 'p1', title: 'I bought headlight protective film after condensation returned on my F-150', selftext: 'Budget under $80 and the old vent membrane kit failed.', subreddit: 'sub0', score: 25, num_comments: 8, permalink: '/comments/p1/x', author: 'alice' },
+          { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
+        ];
+      }
+      if (query === 'headlight protective film') {
+        if (!retryRoundTwo) throw new Error('temporary round-two throttle');
+        return [
+          { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
+        ];
+      }
+      if (query === 'condensation' || query === 'vent membrane') {
+        return [];
+      }
+      throw new Error(`unexpected query: ${query}`);
+    },
+    async fetchDetails(post) {
+      const details = {
+        p1: {
+          post: { id: 'p1', title: 'I bought headlight protective film after condensation returned on my F-150', selftext: 'Budget under $80 and the old vent membrane kit failed.', subreddit: 'sub0', score: 25, num_comments: 8, permalink: '/comments/p1/x', author: 'alice' },
+          comments: [{ id: 'c1', body: 'I bought headlight protective film after a vent kit failed.', score: 7, permalink: '/comments/p1/x/c1', author: 'alice' }],
+        },
+        p2: {
+          post: { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
+          comments: [{ id: 'c2', body: 'A vent membrane might stop the leak.', score: 6, permalink: '/comments/p2/x/c2', author: 'bob' }],
+        },
+        p3: {
+          post: { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
+          comments: [{ id: 'c3', body: 'The film worked better than another assembly for me.', score: 5, permalink: '/comments/p3/x/c3', author: 'carol' }],
+        },
+      };
+      return details[post.post_id];
+    },
+    async fetchAuthorActivity(username) {
+      return [
+        { id: `${username}-activity`, kind: 't3', data: { id: `${username}-activity`, author: username, subreddit: username === 'alice' ? 'F150' : 'Cartalk', title: 'Headlight protective film follow-up', selftext: 'I bought headlight protective film after the condensation returned.', permalink: `/r/Cartalk/comments/${username}-activity/x`, created_utc: 1_787_529_600 } },
+      ];
+    },
+  };
+
+  const first = await runRadarPipeline({ config: keywordConfig, adapter, runDir, runId: 'keyword-resume-run' });
+  const snapshotBefore = await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8');
+  assert.equal(first.manifest.status, 'partial');
+  assert.equal(first.manifest.counts.round_two_failures, 1);
+
+  retryRoundTwo = true;
+  const resumed = await runRadarPipeline({
+    config: {
+      ...keywordConfig,
+      query_groups: ['a different seed should not replace the stored first-round snapshot'],
+    },
+    adapter,
+    runDir,
+    runId: 'keyword-resume-run',
+  });
+
+  assert.deepEqual(searchCalls, [
+    { query: 'headlight condensation', limit: 15 },
+    { query: 'headlight protective film', limit: 10 },
+    { query: 'condensation', limit: 10 },
+    { query: 'vent membrane', limit: 10 },
+    { query: 'headlight protective film', limit: 10 },
+  ]);
+  assert.equal(resumed.manifest.status, 'complete');
+  assert.equal(resumed.manifest.counts.round_two_failures, 0);
+  assert.equal(resumed.candidates.some((post) => post.post_id === 'p3'), true);
+  assert.deepEqual(await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8'), snapshotBefore);
+  const checkpoint = JSON.parse(await fs.readFile(path.join(runDir, 'round_two_checkpoint.json'), 'utf8'));
+  assert.deepEqual(checkpoint.failures, []);
+  assert.equal(checkpoint.results.some((post) => post.post_id === 'p3'), true);
+});
+
 function jsonResponse(value) {
   return {
     ok: true,

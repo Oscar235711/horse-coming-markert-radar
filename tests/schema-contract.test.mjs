@@ -157,6 +157,79 @@ test('author activity schema is strict about retained payloads and self-declared
   ]);
 });
 
+test('keyword candidate schema and exploratory search defaults are tracked', async () => {
+  const keywordCandidates = await schema('keyword-candidates.schema.json');
+  const pilot = await jsonFile(path.join(repoRoot, 'configs', 'automotive_lighting_us_pilot.json'));
+
+  assert.deepEqual(keywordCandidates.required, [
+    'schema_version',
+    'run_id',
+    'generated_at',
+    'selected_terms',
+    'candidates',
+  ]);
+  assert.equal(keywordCandidates.$defs.candidate.additionalProperties, false);
+  assert.deepEqual(keywordCandidates.$defs.candidate.required, [
+    'term',
+    'normalized_term',
+    'categories',
+    'extraction_methods',
+    'evidence_ids',
+    'source_evidence_ids',
+    'authors',
+    'communities',
+    'parent_formal_terms',
+    'threads',
+    'unique_user_count',
+    'community_count',
+    'purchase_signal_count',
+    'pain_signal_count',
+    'workaround_signal_count',
+    'promotional_signal_count',
+    'source_quality',
+    'average_quality_weight',
+    'score_breakdown',
+    'penalties',
+    'discovery_score',
+    'status',
+  ]);
+  assert.deepEqual(keywordCandidates.$defs.score_breakdown.required, [
+    'unique_users',
+    'cross_community',
+    'specificity',
+    'purchase_intent',
+    'pain_or_workaround',
+    'anchor_cooccurrence',
+    'novelty',
+  ]);
+  assert.deepEqual(keywordCandidates.$defs.penalties.required, [
+    'one_user_dominance',
+    'one_thread_dominance',
+    'brand_only',
+    'promotional_language',
+    'generic_language',
+    'excluded_evidence',
+    'total',
+  ]);
+  assert.deepEqual(keywordCandidates.$defs.source_quality.required, [
+    'high',
+    'medium',
+    'total',
+  ]);
+  assert.deepEqual(keywordCandidates.$defs.candidate.properties.status.enum, [
+    'formal',
+    'exploratory_used',
+    'candidate_review',
+    'rejected',
+    'promoted_by_human',
+  ]);
+  assert.equal(pilot.limits.round_two_terms, 20);
+  assert.equal(pilot.limits.round_two_posts_per_term, 10);
+  assert.equal(pilot.limits.round_two_minimum_score, 65);
+  assert.equal(pilot.limits.round_two_minimum_users, 2);
+  assert.equal(pilot.limits.round_two_minimum_communities, 2);
+});
+
 async function schema(name) {
   return JSON.parse(await fs.readFile(path.join(repoRoot, 'schemas', name), 'utf8'));
 }

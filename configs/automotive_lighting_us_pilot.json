@@ -160,7 +160,12 @@
     "comments_per_post": 20,
     "search_results_per_query": 15,
     "profile_users": 10,
-    "profile_items_per_user": 30
+    "profile_items_per_user": 30,
+    "round_two_terms": 20,
+    "round_two_posts_per_term": 10,
+    "round_two_minimum_score": 65,
+    "round_two_minimum_users": 2,
+    "round_two_minimum_communities": 2
   },
   "analysis": {
     "mode": "rules_with_optional_llm",

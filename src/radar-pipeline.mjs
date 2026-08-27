@@ -14,6 +14,11 @@ import {
 } from './radar-core.mjs';
 import { applyEvidenceGate } from './evidence-quality.mjs';
 import { collectAuthorActivity, selectAuthors } from './author-deep-dive.mjs';
+import {
+  extractKeywordCandidates,
+  scoreKeywordCandidates,
+  selectRoundTwoTerms,
+} from './keyword-discovery.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -305,6 +310,8 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
 
   const candidatePath = path.join(runDir, 'candidates.json');
   const searchFailurePath = path.join(runDir, 'search_failures.json');
+  const keywordCandidatePath = path.join(runDir, 'keyword_candidates.json');
+  const roundTwoCheckpointPath = path.join(runDir, 'round_two_checkpoint.json');
   let candidates = await readJsonIfExists(candidatePath);
   const previousSearchFailures = (await readJsonIfExists(searchFailurePath)) ?? [];
   const failures = [];
@@ -333,36 +340,13 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
   failures.push(...searchFailures.map((item) => ({ stage: 'search', ...item })));
   await writeJson(candidatePath, candidates);
 
-  const details = [];
-  const deepDiveCandidates = candidates.slice(0, config.limits.deep_dive_posts ?? candidates.length);
-  const selectedDetailFiles = new Set(deepDiveCandidates.map((post) => `${post.post_id}.json`));
-  for (const file of await fs.readdir(detailsDir)) {
-    if (file.endsWith('.json') && !selectedDetailFiles.has(file)) await fs.rm(path.join(detailsDir, file), { force: true });
-  }
-  for (const post of deepDiveCandidates) {
-    const detailPath = path.join(detailsDir, `${post.post_id}.json`);
-    const checkpoint = await readJsonIfExists(detailPath);
-    if (checkpoint) {
-      details.push(checkpoint);
-      continue;
-    }
-    try {
-      const raw = await adapter.fetchDetails(post, {
-        commentLimit: config.limits.comments_per_post,
-        timeoutMs: config.transport?.timeout_ms ?? 30000,
-      });
-      const normalizedPost = { ...post, ...normalizePost(raw.post, { query: post.query, transport: adapter.name }), high_signal: post.high_signal, geography: post.geography };
-      const normalized = {
-        post: normalizedPost,
-        comments: normalizeComments(raw.comments ?? [], { postId: post.post_id, limit: config.limits.comments_per_post }),
-      };
-      await writeJson(detailPath, normalized);
-      details.push(normalized);
-    } catch (error) {
-      failures.push({ post_id: post.post_id, stage: 'detail-fetch', error: error instanceof Error ? error.message : String(error) });
-    }
-    await delay(config.transport?.request_interval_ms ?? 0);
-  }
+  let details = await collectCandidateDetails({
+    candidates,
+    adapter,
+    config,
+    detailsDir,
+    failures,
+  });
 
   const authorSelectionEvidence = buildAuthorSelectionEvidence(details);
   const gatedAuthorEvidence = applyEvidenceGate(authorSelectionEvidence, {
@@ -393,6 +377,57 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
     : { authors: [], failures: [], summary: { selected_authors: authorCandidates.length, authors_collected: 0, retained_activities: 0, excluded_activities: 0 } };
   failures.push(...authorActivity.failures);
 
+  const scoredKeywordCandidates = scoreKeywordCandidates(
+    extractKeywordCandidates(gatedAuthorEvidence.qualified, authorActivity.authors, config),
+    config,
+  );
+  const roundTwoTerms = selectRoundTwoTerms(scoredKeywordCandidates, {
+    maxTerms: config.limits?.round_two_terms ?? 20,
+    minimumScore: config.limits?.round_two_minimum_score ?? 65,
+    minimumUsers: config.limits?.round_two_minimum_users ?? 2,
+    minimumCommunities: config.limits?.round_two_minimum_communities ?? 2,
+  });
+  const roundTwo = await runRoundTwoSearch({
+    adapter,
+    config,
+    runId,
+    roundTwoTerms,
+    checkpointPath: roundTwoCheckpointPath,
+  });
+  failures.push(...roundTwo.failures.map((failure) => ({ stage: 'round-two-search', ...failure })));
+
+  const usedTerms = new Set(roundTwo.selected_terms);
+  const keywordCandidateArtifact = {
+    schema_version: '1.0.0',
+    run_id: runId,
+    generated_at: now().toISOString(),
+    selected_terms: roundTwo.selected_terms,
+    candidates: scoredKeywordCandidates.map((candidate) => ({
+      ...candidate,
+      status: usedTerms.has(candidate.term) ? 'exploratory_used' : candidate.status,
+    })),
+  };
+  await writeJson(keywordCandidatePath, keywordCandidateArtifact);
+
+  const roundOneCandidateIds = new Set(candidates.map((post) => post.post_id));
+  const combinedRawPosts = [...rawPosts, ...roundTwo.results];
+  const combinedCandidates = deriveCandidates(combinedRawPosts, config);
+  const candidateListChanged = combinedCandidates.length !== candidates.length
+    || combinedCandidates.some((post, index) => post.post_id !== candidates[index]?.post_id);
+  candidates = combinedCandidates;
+  await writeJson(candidatePath, candidates);
+  if (candidateListChanged) {
+    details = await collectCandidateDetails({
+      candidates,
+      adapter,
+      config,
+      detailsDir,
+      failures,
+    });
+  }
+  const finalDeepDiveTarget = Math.min(candidates.length, config.limits.deep_dive_posts ?? candidates.length);
+  const roundTwoAdditions = candidates.filter((post) => !roundOneCandidateIds.has(post.post_id)).length;
+
   await writeJsonl(path.join(runDir, 'failures.jsonl'), failures);
   const manifest = {
     schema_version: '1.0.0',
@@ -402,12 +437,16 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
     updated_at: now().toISOString(),
     counts: {
       candidates: candidates.length,
-      deep_dive_target: deepDiveCandidates.length,
+      deep_dive_target: finalDeepDiveTarget,
       details: details.length,
       comments: details.reduce((sum, item) => sum + item.comments.length, 0),
       author_candidates: authorCandidates.length,
       authors_collected: authorActivity.summary.authors_collected,
       author_activities: authorActivity.summary.retained_activities,
+      keyword_candidates: keywordCandidateArtifact.candidates.length,
+      round_two_terms: roundTwo.selected_terms.length,
+      round_two_additions: roundTwoAdditions,
+      round_two_failures: roundTwo.failures.length,
       failures: failures.length,
     },
   };
@@ -422,6 +461,46 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
     manifest,
     runDir,
   };
+}
+
+async function collectCandidateDetails({
+  candidates,
+  adapter,
+  config,
+  detailsDir,
+  failures,
+}) {
+  const details = [];
+  const deepDiveCandidates = (candidates ?? []).slice(0, config.limits.deep_dive_posts ?? candidates.length);
+  const selectedDetailFiles = new Set(deepDiveCandidates.map((post) => `${post.post_id}.json`));
+  for (const file of await fs.readdir(detailsDir)) {
+    if (file.endsWith('.json') && !selectedDetailFiles.has(file)) await fs.rm(path.join(detailsDir, file), { force: true });
+  }
+  for (const post of deepDiveCandidates) {
+    const detailPath = path.join(detailsDir, `${post.post_id}.json`);
+    const checkpoint = await readJsonIfExists(detailPath);
+    if (checkpoint) {
+      details.push(checkpoint);
+      continue;
+    }
+    try {
+      const raw = await adapter.fetchDetails(post, {
+        commentLimit: config.limits.comments_per_post,
+        timeoutMs: config.transport?.timeout_ms ?? 30000,
+      });
+      const normalizedPost = { ...post, ...normalizePost(raw.post, { query: post.query, transport: adapter.name }), high_signal: post.high_signal, geography: post.geography };
+      const normalized = {
+        post: normalizedPost,
+        comments: normalizeComments(raw.comments ?? [], { postId: post.post_id, limit: config.limits.comments_per_post }),
+      };
+      await writeJson(detailPath, normalized);
+      details.push(normalized);
+    } catch (error) {
+      failures.push({ post_id: post.post_id, stage: 'detail-fetch', error: error instanceof Error ? error.message : String(error) });
+    }
+    await delay(config.transport?.request_interval_ms ?? 0);
+  }
+  return details;
 }
 
 function buildAuthorSelectionEvidence(details) {
@@ -485,4 +564,57 @@ async function cleanupAuthorCheckpoints(runDir, authorCandidates) {
 
 function safeFilename(value) {
   return String(value).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+}
+
+async function runRoundTwoSearch({
+  adapter,
+  config,
+  runId,
+  roundTwoTerms,
+  checkpointPath,
+}) {
+  const signature = JSON.stringify({
+    selected_terms: [...roundTwoTerms],
+    max_terms: config.limits?.round_two_terms ?? 20,
+    minimum_score: config.limits?.round_two_minimum_score ?? 65,
+    max_posts_per_term: config.limits?.round_two_posts_per_term ?? 10,
+  });
+  const existing = await readJsonIfExists(checkpointPath);
+  const canReuse = existing?.candidate_signature === signature;
+  const results = canReuse ? [...(existing.results ?? [])] : [];
+  const previousFailures = canReuse ? (existing.failures ?? []) : [];
+  const queriesToRun = canReuse
+    ? previousFailures.map((item) => item.query).filter(Boolean)
+    : [...roundTwoTerms];
+  const failures = [];
+
+  for (const query of queriesToRun) {
+    try {
+      const rawResults = await adapter.search(query, {
+        limit: config.limits?.round_two_posts_per_term ?? 10,
+        timeoutMs: config.transport?.timeout_ms ?? 30000,
+      });
+      const normalized = rawResults.map((post) => normalizePost(post, { query, transport: adapter.name }));
+      results.push(...normalized);
+    } catch (error) {
+      failures.push({
+        query,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await delay(config.transport?.request_interval_ms ?? 0);
+  }
+
+  const dedupedResults = dedupePosts(results);
+  const payload = {
+    schema_version: '1.0.0',
+    run_id: runId,
+    candidate_signature: signature,
+    completed_rounds: 1,
+    selected_terms: [...roundTwoTerms],
+    results: dedupedResults,
+    failures,
+  };
+  await writeJson(checkpointPath, payload);
+  return payload;
 }

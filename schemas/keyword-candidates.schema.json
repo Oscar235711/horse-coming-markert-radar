@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/keyword-candidates.schema.json",
+  "title": "Keyword Candidate Pool",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "generated_at",
+    "selected_terms",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "selected_terms": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
+  },
+  "$defs": {
+    "score_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unique_users",
+        "cross_community",
+        "specificity",
+        "purchase_intent",
+        "pain_or_workaround",
+        "anchor_cooccurrence",
+        "novelty"
+      ],
+      "properties": {
+        "unique_users": { "type": "integer", "minimum": 0, "maximum": 25 },
+        "cross_community": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "specificity": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "purchase_intent": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "pain_or_workaround": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "anchor_cooccurrence": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "novelty": { "type": "integer", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "penalties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "one_user_dominance",
+        "one_thread_dominance",
+        "brand_only",
+        "promotional_language",
+        "generic_language",
+        "excluded_evidence",
+        "total"
+      ],
+      "properties": {
+        "one_user_dominance": { "type": "integer", "minimum": 0 },
+        "one_thread_dominance": { "type": "integer", "minimum": 0 },
+        "brand_only": { "type": "integer", "minimum": 0 },
+        "promotional_language": { "type": "integer", "minimum": 0 },
+        "generic_language": { "type": "integer", "minimum": 0 },
+        "excluded_evidence": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "source_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "high",
+        "medium",
+        "total"
+      ],
+      "properties": {
+        "high": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 }
+      }
+    },
+    "candidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "term",
+          "normalized_term",
+          "categories",
+          "extraction_methods",
+          "evidence_ids",
+          "source_evidence_ids",
+          "authors",
+          "communities",
+          "parent_formal_terms",
+          "threads",
+          "unique_user_count",
+          "community_count",
+          "purchase_signal_count",
+          "pain_signal_count",
+          "workaround_signal_count",
+          "promotional_signal_count",
+          "source_quality",
+          "average_quality_weight",
+          "score_breakdown",
+          "penalties",
+          "discovery_score",
+          "status"
+        ],
+        "properties": {
+          "term": { "type": "string" },
+          "normalized_term": { "type": "string" },
+          "categories": { "type": "array", "items": { "type": "string" } },
+          "extraction_methods": { "type": "array", "items": { "type": "string" } },
+          "evidence_ids": { "type": "array", "items": { "type": "string" } },
+          "source_evidence_ids": { "type": "array", "items": { "type": "string" } },
+          "authors": { "type": "array", "items": { "type": "string" } },
+          "communities": { "type": "array", "items": { "type": "string" } },
+          "parent_formal_terms": { "type": "array", "items": { "type": "string" } },
+          "threads": { "type": "array", "items": { "type": "string" } },
+          "unique_user_count": { "type": "integer", "minimum": 0 },
+          "community_count": { "type": "integer", "minimum": 0 },
+          "purchase_signal_count": { "type": "integer", "minimum": 0 },
+          "pain_signal_count": { "type": "integer", "minimum": 0 },
+          "workaround_signal_count": { "type": "integer", "minimum": 0 },
+          "promotional_signal_count": { "type": "integer", "minimum": 0 },
+          "source_quality": { "$ref": "#/$defs/source_quality" },
+          "average_quality_weight": { "type": "number", "minimum": 0 },
+          "score_breakdown": { "$ref": "#/$defs/score_breakdown" },
+          "penalties": { "$ref": "#/$defs/penalties" },
+          "discovery_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "status": {
+            "type": "string",
+            "enum": ["formal", "exploratory_used", "candidate_review", "rejected", "promoted_by_human"]
+          }
+        }
+      }
+    }
+  }
