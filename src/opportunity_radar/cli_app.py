@@ -845,4 +845,41 @@ class DeepSeekTopicConsolidator:
                     confidence=float(item.get("confidence", 0.0) or 0.0),
                 )
             )
+        if not proposals:
+            # Keep the run useful when a gateway model returns a valid but empty
+            # consolidation object. Group the already extracted per-post topic
+            # seeds deterministically; these remain weak signals until reviewed.
+            grouped: dict[str, list[Any]] = {}
+            for signal in signals:
+                for candidate in signal.analysis.topics:
+                    label = " ".join(candidate.label.split()).strip()
+                    if label:
+                        grouped.setdefault(label.casefold(), []).append((label, signal))
+            for values in grouped.values():
+                label = values[0][0]
+                evidence = tuple(
+                    TopicEvidence(
+                        post_id=signal.post.post_id,
+                        evidence_id="post",
+                        claim=signal.post.title,
+                        stance="supporting",
+                        translation_zh="",
+                    )
+                    for _, signal in values
+                )
+                post_ids = tuple(dict.fromkeys(signal.post.post_id for _, signal in values))
+                key = "fallback-" + "-".join(label.casefold().split())[:80]
+                proposals.append(
+                    ProTopicProposal(
+                        canonical_key=key,
+                        label_en=label,
+                        label_zh=label,
+                        summary=EvidenceBackedClaim(label, evidence),
+                        post_ids=post_ids,
+                        evidence=evidence,
+                        category_tags=("fallback_rule",),
+                        brand_tags=(),
+                        confidence=0.2,
+                    )
+                )
         return proposals
