@@ -372,6 +372,7 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
   const authorCandidates = selectAuthors(gatedAuthorEvidence.qualified, {
     limit: config.limits?.profile_users ?? 60,
   });
+  await cleanupAuthorCheckpoints(runDir, authorCandidates);
   const authorActivity = typeof adapter.fetchAuthorActivity === 'function'
     ? await collectAuthorActivity(authorCandidates, adapter, {
       runDir,
@@ -463,4 +464,25 @@ function finalizeAuthorActivityItems(items, { limit, afterUtc }) {
     .filter((item) => !cutoff || !item.created_at || Date.parse(item.created_at) >= cutoff)
     .sort((left, right) => Date.parse(right.created_at ?? 0) - Date.parse(left.created_at ?? 0))
     .slice(0, limit);
+}
+
+async function cleanupAuthorCheckpoints(runDir, authorCandidates) {
+  const authorsDir = path.join(runDir, 'raw', 'authors');
+  await fs.mkdir(authorsDir, { recursive: true });
+  const selectedFiles = new Set((authorCandidates ?? []).map((author) => `${safeFilename(author.username)}.json`));
+  for (const file of await fs.readdir(authorsDir)) {
+    if (!file.endsWith('.json')) continue;
+    if (selectedFiles.has(file)) continue;
+    const filePath = path.join(authorsDir, file);
+    const resolvedDir = path.resolve(authorsDir);
+    const resolvedFile = path.resolve(filePath);
+    if (!resolvedFile.startsWith(`${resolvedDir}${path.sep}`) && resolvedFile !== path.join(resolvedDir, file)) {
+      throw new Error(`Refusing to delete checkpoint outside author directory: ${resolvedFile}`);
+    }
+    await fs.rm(filePath, { force: true });
+  }
+}
+
+function safeFilename(value) {
+  return String(value).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
 }

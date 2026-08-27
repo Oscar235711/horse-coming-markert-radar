@@ -37,16 +37,20 @@
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": true,
+        "additionalProperties": false,
         "required": [
           "id",
           "activity_id",
           "activity_type",
           "username",
+          "author",
           "subreddit",
+          "title",
           "body_original",
+          "score",
           "created_at",
           "url",
+          "source",
           "relevance_reasons",
           "quality",
           "product_concepts",
@@ -59,11 +63,22 @@
           "activity_id": { "type": "string", "minLength": 1 },
           "activity_type": { "enum": ["post", "comment"] },
           "username": { "type": "string", "minLength": 1 },
+          "author": { "type": ["string", "null"] },
           "subreddit": { "type": "string" },
           "title": { "type": "string" },
           "body_original": { "type": "string" },
+          "score": { "type": "integer" },
           "created_at": { "type": "string", "format": "date-time" },
           "url": { "type": "string", "format": "uri" },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["transport", "collected_at"],
+            "properties": {
+              "transport": { "type": "string", "minLength": 1 },
+              "collected_at": { "type": "string", "format": "date-time" }
+            }
+          },
           "relevance_reasons": { "type": "array", "items": { "type": "string" } },
           "quality": { "type": "object" },
           "product_concepts": { "type": "array", "items": { "type": "string" } },
@@ -76,7 +91,7 @@
               "additionalProperties": false,
               "required": ["kind", "value", "source", "evidence_id", "permalink", "observed_at"],
               "properties": {
-                "kind": { "type": "string" },
+                "kind": { "enum": ["age_band", "state", "budget", "vehicle", "diy_ability", "occupation"] },
                 "value": { "type": "string" },
                 "source": { "const": "self_declared" },
                 "evidence_id": { "type": "string" },

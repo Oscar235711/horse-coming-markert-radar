@@ -267,6 +267,48 @@ test('pipeline resumes existing author checkpoints without refetching retained a
   assert.equal(resumed.manifest.counts.authors_collected, 1);
 });
 
+test('pipeline removes author checkpoints for users outside the current selected set', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-author-cleanup-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const authorsDir = path.join(runDir, 'raw', 'authors');
+  await fs.mkdir(authorsDir, { recursive: true });
+  await fs.writeFile(path.join(authorsDir, 'orphan.json'), JSON.stringify({ username: 'orphan', retained_activity: [] }), 'utf8');
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [{ id: 'p1', title: 'I installed H11 LEDs on my F-150 and they still flicker', selftext: 'Texas. Which adapter should I buy?', subreddit: 'sub0', score: 25, num_comments: 10, permalink: '/comments/p1/x', author: 'alice' }];
+    },
+    async fetchDetails(post) {
+      return {
+        post: { id: post.post_id, title: post.title, selftext: post.body_original, subreddit: post.subreddit, score: post.score, num_comments: post.comment_count, permalink: post.url, author: post.author },
+        comments: [{ id: `c-${post.post_id}`, body: 'I bought a CANbus adapter and it fixed the issue.', score: 8, permalink: `/comments/${post.post_id}/x/c1`, author: post.author }],
+      };
+    },
+    async fetchAuthorActivity(username) {
+      return [{ id: 'a1', kind: 't3', data: { id: 'a1', author: username, subreddit: 'Cartalk', title: 'Headlight protective film', selftext: 'I live in Texas and my budget is under $80.', permalink: '/r/Cartalk/comments/a1/x', created_utc: 1_787_529_600 } }];
+    },
+  };
+  const authorConfig = {
+    ...config,
+    limits: {
+      ...config.limits,
+      posts: 1,
+      deep_dive_posts: 1,
+      profile_users: 1,
+      profile_items_per_user: 2,
+    },
+    keywords: {
+      ...config.keywords,
+      candidate_only_brands: [],
+    },
+  };
+
+  await runRadarPipeline({ config: authorConfig, adapter, runDir, runId: 'author-cleanup-run' });
+
+  assert.equal(await fs.access(path.join(authorsDir, 'orphan.json')).then(() => true).catch(() => false), false);
+  assert.equal(await fs.access(path.join(authorsDir, 'alice.json')).then(() => true).catch(() => false), true);
+});
+
 test('pipeline resumes completed detail files without refetching them', async (t) => {
   const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-resume-'));
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));

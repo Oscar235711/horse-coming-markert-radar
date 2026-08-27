@@ -105,6 +105,7 @@ export function selectAuthors(qualifiedEvidence, { limit = DEFAULT_AUTHOR_LIMIT 
       evidence_ids: new Set(),
       source_post_ids: new Set(),
       high_quality_source_post_count: 0,
+      high_quality_evidence_count: 0,
       qualified_record_count: 0,
       score: 0,
     };
@@ -114,14 +115,18 @@ export function selectAuthors(qualifiedEvidence, { limit = DEFAULT_AUTHOR_LIMIT 
     if (record.type === 'post' && record.quality?.quality_band === 'high') {
       entry.high_quality_source_post_count += 1;
     }
+    if (record.quality?.quality_band === 'high') {
+      entry.high_quality_evidence_count += 1;
+    }
     entry.score += scoreAuthorEvidence(record);
     authors.set(username, entry);
   }
 
   return [...authors.values()]
-    .filter((entry) => entry.high_quality_source_post_count > 0 || entry.qualified_record_count >= 2)
+    .filter((entry) => entry.high_quality_evidence_count > 0)
     .sort((left, right) => (
       right.high_quality_source_post_count - left.high_quality_source_post_count
+      || right.high_quality_evidence_count - left.high_quality_evidence_count
       || right.score - left.score
       || right.qualified_record_count - left.qualified_record_count
       || left.username.localeCompare(right.username)
@@ -132,6 +137,7 @@ export function selectAuthors(qualifiedEvidence, { limit = DEFAULT_AUTHOR_LIMIT 
       evidence_ids: [...entry.evidence_ids].sort(),
       source_post_ids: [...entry.source_post_ids].sort(),
       high_quality_source_post_count: entry.high_quality_source_post_count,
+      high_quality_evidence_count: entry.high_quality_evidence_count,
       qualified_record_count: entry.qualified_record_count,
       score: entry.score,
     }));
@@ -211,9 +217,10 @@ export function extractSelfDeclaredContext(activity, evidenceId) {
   const decadeMatch = text.match(/\bin my (\d{2})s\b/i);
   if (!ageMatch && decadeMatch) push('age_band', decadeToBand(Number(decadeMatch[1])));
 
-  if (/\b(?:i am|i'm|im|based|live|living|from|located)\b/i.test(text)) {
+  const explicitLocation = extractExplicitLocationText(text);
+  if (explicitLocation) {
     for (const [state, pattern] of STATE_PATTERNS) {
-      if (pattern.test(text)) {
+      if (pattern.test(explicitLocation)) {
         push('state', state);
         break;
       }
@@ -271,9 +278,20 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
     const checkpointPath = path.join(authorsDir, `${safeFilename(username)}.json`);
     const checkpoint = await readJsonIfExists(checkpointPath);
     if (checkpoint) {
-      retainedAuthors.push(checkpoint);
-      retainedCount += checkpoint.retained_activity?.length ?? 0;
-      excludedCount += checkpoint.excluded_count ?? 0;
+      const remainingBudget = maxTotalActivities - retainedCount;
+      if (remainingBudget <= 0) break;
+      const truncatedCheckpoint = truncateCheckpoint(checkpoint, {
+        username,
+        sourceEvidenceIds: author?.evidence_ids ?? [],
+        limitPerAuthor,
+        remainingBudget,
+        maxTotalActivities,
+        afterUtc,
+      });
+      retainedAuthors.push(truncatedCheckpoint);
+      retainedCount += truncatedCheckpoint.retained_activity.length;
+      excludedCount += truncatedCheckpoint.excluded_count ?? 0;
+      await fs.writeFile(checkpointPath, `${JSON.stringify(truncatedCheckpoint, null, 2)}\n`, 'utf8');
       continue;
     }
 
@@ -344,6 +362,37 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
   };
 }
 
+function truncateCheckpoint(checkpoint, {
+  username,
+  sourceEvidenceIds,
+  limitPerAuthor,
+  remainingBudget,
+  maxTotalActivities,
+  afterUtc,
+}) {
+  const retained = (checkpoint?.retained_activity ?? [])
+    .map((item) => normalizeExistingActivity(item))
+    .filter((item) => item.id)
+    .filter((item) => !afterUtc || !item.created_at || item.created_at >= afterUtc)
+    .sort((left, right) => compareIsoDesc(left.created_at, right.created_at) || right.score - left.score)
+    .slice(0, Math.min(limitPerAuthor, remainingBudget));
+
+  return {
+    schema_version: checkpoint?.schema_version ?? '1.0.0',
+    username,
+    source_evidence_ids: [...new Set(sourceEvidenceIds)].sort(),
+    retained_count: retained.length,
+    excluded_count: Number(checkpoint?.excluded_count ?? 0),
+    limits: {
+      requested_limit: Math.min(limitPerAuthor, remainingBudget),
+      applied_after_utc: afterUtc,
+      max_total_activities: maxTotalActivities,
+    },
+    retained_activity: retained,
+    privacy_note: checkpoint?.privacy_note ?? DEFAULT_PRIVACY_NOTE,
+  };
+}
+
 function classifyActivityQuality(activity, context) {
   return applyEvidenceGate([activity], {
     market: context.market,
@@ -380,6 +429,7 @@ function isExcludedAccount(username) {
 }
 
 function normalizeExistingActivity(activity) {
+  const createdAt = normalizeIsoDate(activity.created_at);
   return {
     ...activity,
     username: normalizeUsername(activity.username ?? activity.author) ?? activity.username ?? activity.author ?? null,
@@ -387,9 +437,10 @@ function normalizeExistingActivity(activity) {
     subreddit: String(activity.subreddit ?? '').replace(/^r\//i, '').trim(),
     title: String(activity.title ?? '').trim(),
     body_original: String(activity.body_original ?? '').trim(),
-    created_at: normalizeIsoDate(activity.created_at),
+    created_at: createdAt,
     url: String(activity.url ?? '').trim(),
     score: Number(activity.score ?? 0) || 0,
+    source: normalizeActivitySource(activity.source, createdAt),
   };
 }
 
@@ -470,6 +521,25 @@ function decadeToBand(value) {
 
 function normalizeVehicle(value) {
   return String(value).toUpperCase().replace('F150', 'F-150');
+}
+
+function normalizeActivitySource(source, fallbackTimestamp) {
+  return {
+    transport: String(source?.transport ?? 'checkpoint'),
+    collected_at: normalizeIsoDate(source?.collected_at) ?? fallbackTimestamp ?? new Date(0).toISOString(),
+  };
+}
+
+function extractExplicitLocationText(text) {
+  const patterns = [
+    /\b(?:i live in|i am based in|i'm based in|im based in|i am from|i'm from|im from)\s+([^.!?\n]+)/i,
+    /\b(?:i am|i'm|im)\b[^.!?\n]{0,40}?\bbased in\s+([^.!?\n]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }
 
 function isOccupationRelevant(text) {

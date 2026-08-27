@@ -113,6 +113,50 @@ test('opportunity schema limits formal opportunities to sellable product types',
   assert.ok(opportunities.required.includes('candidate_signals'));
 });
 
+test('author activity schema is strict about retained payloads and self-declared kinds', async () => {
+  const authorActivity = await schema('author-activity.schema.json');
+
+  assert.deepEqual(authorActivity.required, [
+    'schema_version',
+    'username',
+    'source_evidence_ids',
+    'retained_count',
+    'excluded_count',
+    'limits',
+    'retained_activity',
+    'privacy_note',
+  ]);
+  assert.equal(authorActivity.properties.retained_activity.items.additionalProperties, false);
+  assert.deepEqual(authorActivity.properties.retained_activity.items.required, [
+    'id',
+    'activity_id',
+    'activity_type',
+    'username',
+    'author',
+    'subreddit',
+    'title',
+    'body_original',
+    'score',
+    'created_at',
+    'url',
+    'source',
+    'relevance_reasons',
+    'quality',
+    'product_concepts',
+    'pain_points',
+    'discovered_terms',
+    'self_declared_context',
+  ]);
+  assert.deepEqual(authorActivity.properties.retained_activity.items.properties.self_declared_context.items.properties.kind.enum, [
+    'age_band',
+    'state',
+    'budget',
+    'vehicle',
+    'diy_ability',
+    'occupation',
+  ]);
+});
+
 async function schema(name) {
   return JSON.parse(await fs.readFile(path.join(repoRoot, 'schemas', name), 'utf8'));
 }
