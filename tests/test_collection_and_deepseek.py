@@ -40,7 +40,10 @@ class RecordingRunner:
             if isinstance(response, Exception):
                 raise response
             return str(response)
-        return self.listings[arguments[2] + (":" + arguments[5] if arguments[2] == "top" else "")]
+        surface = arguments[5] if arguments[4] == "--sort" else arguments[2]
+        if surface == "top":
+            surface = f"top:{arguments[7]}"
+        return self.listings[surface]
 
 
 def test_collector_uses_all_listing_surfaces_preserves_raw_and_windows_candidates(tmp_path) -> None:
@@ -61,10 +64,10 @@ def test_collector_uses_all_listing_surfaces_preserves_raw_and_windows_candidate
     )
 
     assert runner.calls == [
-        ("opencli", "reddit", "hot", "diesel", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
-        ("opencli", "reddit", "top", "diesel", "--time", "month", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
-        ("opencli", "reddit", "top", "diesel", "--time", "year", "--limit", "100", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
-        ("opencli", "reddit", "new", "diesel", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
+            ("opencli", "reddit", "subreddit", "diesel", "--sort", "hot", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
+            ("opencli", "reddit", "subreddit", "diesel", "--sort", "top", "--time", "month", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
+            ("opencli", "reddit", "subreddit", "diesel", "--sort", "top", "--time", "year", "--limit", "100", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
+            ("opencli", "reddit", "subreddit", "diesel", "--sort", "new", "--limit", "50", "-f", "json", "--window", "foreground", "--site-session", "persistent"),
     ]
     assert [entry.post.post_id for entry in result.candidates] == ["t3_same", "t3_baseline"]
     assert result.candidates[0].post.source_surfaces == ("hot", "top_month")

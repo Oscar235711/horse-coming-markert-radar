@@ -175,10 +175,10 @@ class OpenCliCollector:
 def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     common = ("-f", "json", "--window", "foreground", "--site-session", "persistent")
     return (
-        ("hot", ("opencli", "reddit", "hot", community, "--limit", "50", *common)),
-        ("top_month", ("opencli", "reddit", "top", community, "--time", "month", "--limit", "50", *common)),
-        ("top_year", ("opencli", "reddit", "top", community, "--time", "year", "--limit", "100", *common)),
-        ("new", ("opencli", "reddit", "new", community, "--limit", "50", *common)),
+        ("hot", ("opencli", "reddit", "subreddit", community, "--sort", "hot", "--limit", "50", *common)),
+        ("top_month", ("opencli", "reddit", "subreddit", community, "--sort", "top", "--time", "month", "--limit", "50", *common)),
+        ("top_year", ("opencli", "reddit", "subreddit", community, "--sort", "top", "--time", "year", "--limit", "100", *common)),
+        ("new", ("opencli", "reddit", "subreddit", community, "--sort", "new", "--limit", "50", *common)),
     )
 
 
