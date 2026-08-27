@@ -10,9 +10,11 @@ export function loadUniversalEvidenceRules(filePath) {
   const raw = fs.readFileSync(filePath, 'utf8');
   const rules = JSON.parse(raw);
 
-  if (!rules?.component_caps || !rules?.quality_bands) {
-    return Promise.reject(new Error('Tracked universal evidence rules must include component_caps and quality_bands'));
-  }
+  validateRuleSection(rules, 'roles', (value) => Array.isArray(value) && value.length > 0);
+  validateRuleSection(rules, 'component_caps', isRecordWithKeys);
+  validateRuleSection(rules, 'quality_bands', isRecordWithKeys);
+  validateRuleSection(rules, 'penalties', isRecordWithKeys);
+  validateRuleSection(rules, 'hard_exclusions', isRecordWithKeys);
 
   return rules;
 }
@@ -217,8 +219,6 @@ function collectSignals(record, text, rules, market) {
   const tokenSet = new Set(tokens);
   const matches = collectDictionaryMatches(text, rules.dictionaries);
   const firstPerson = /\b(i|i'm|i’ve|ive|my|we|our)\b/i.test(text);
-  const practitioner = /\b(as a|i am a|i'm a)\s+(mechanic|technician|installer|shop owner|dealer|electrician)\b/i.test(text)
-    || /\b(mechanic|technician|installer|shop)\b/i.test(String(record?.author ?? ''));
   const experienceVerb = /\b(installed|bought|swapped|replaced|fixed|used|tried|adjusted|added|diagnose|diagnosed|checked)\b/i.test(text);
   const outcome = /\b(fixed|worked|brighter|better|failed|flicker(?:ed)?|hyperflash|warning light|beam|cutoff)\b/i.test(text);
   const request = /\b(what should i buy|what should i get|recommend|looking for|need\b|under \$?\d+|budget|which (?:bulb|brand|light)|preferably)\b/i.test(text)
@@ -226,9 +226,13 @@ function collectSignals(record, text, rules, market) {
   const location = /\b(texas|california|florida|washington|ohio|michigan|pennsylvania|illinois|arizona|georgia|north carolina)\b/i.test(text);
   const situationalConstraint = /\b(night driving|dust cap|limited space|factory|behind|warning light|ground)\b/i.test(text);
   const diagnostic = /\b(canbus|adapter|ground|relay|wiring harness|warning light|beam pattern|cutoff|dust cap|fitment)\b/i.test(text);
+  const procedure = /\b(check|checking|inspect|diagnose|diagnosed|test|trace|verify|measure|start with|look for|clear(?:s)?|usually)\b/i.test(text);
+  const practitioner = diagnostic && procedure && outcome;
+  const marketAvailability = /\b(available at|sold at|carried by|in stock at|found at|auto parts stores?)\b/i.test(text);
   const marketStatus = classifyMarket(text, record?.subreddit, rules, market);
   const relevanceMatches = collectRegexMatches(text, rules.relevance?.required_any ?? []);
   const lowInformation = tokenSet.size <= 6 || (!matches.total && !request && !outcome);
+  const quotedWithoutPersonalContext = !firstPerson && /["“”][^"“”]{3,}["“”]/.test(text);
 
   return {
     firstPerson,
@@ -239,9 +243,11 @@ function collectSignals(record, text, rules, market) {
     location,
     situationalConstraint,
     diagnostic,
+    marketAvailability,
     marketStatus,
     uncertainGeography: Boolean(market?.country) && marketStatus === 'unknown',
     lowInformation,
+    quotedWithoutPersonalContext,
     textLength: tokens.length,
     matches,
     relevanceMatches,
@@ -261,13 +267,13 @@ function scoreComponents(record, signals, rules) {
       0,
       caps.first_person_or_practitioner,
     ),
-    product_specificity: clamp(productSignals * 5, 0, caps.product_specificity),
+    product_specificity: clamp(productSignals * 7, 0, caps.product_specificity),
     context: clamp(contextSignals * 5, 0, caps.context),
-    observable_outcome: clamp((signals.outcome ? 12 : 0) + (signals.experienceVerb ? 4 : 0) + (signals.request ? 0 : 4), 0, caps.observable_outcome),
+    observable_outcome: clamp((signals.outcome ? 12 : 0) + (signals.experienceVerb ? 4 : 0) + (signals.request ? 0 : 4) + (signals.marketAvailability ? 8 : 0), 0, caps.observable_outcome),
     purchase_signal: clamp(purchaseSignal ? (signals.request ? 10 : 5) : 0, 0, caps.purchase_signal),
     diagnostic_detail: clamp(diagnosticSignals * 5, 0, caps.diagnostic_detail),
     corroboration: clamp(
-      signals.matches.competitors.size || signals.matches.retailers.size ? 3 : signals.outcome && signals.matches.products.size ? 2 : 0,
+      signals.matches.competitors.size || signals.matches.retailers.size || signals.marketAvailability ? 5 : signals.outcome && signals.matches.products.size ? 2 : 0,
       0,
       caps.corroboration,
     ),
@@ -280,7 +286,7 @@ function scorePenalties(signals, rules) {
 
   if (signals.lowInformation) penalties.low_information_density = rules.penalties.low_information_density;
   if (signals.uncertainGeography) penalties.uncertain_geography = rules.penalties.uncertain_geography;
-  if (!signals.firstPerson && !signals.practitioner && /\b["“”'].*["“”']/.test('')) {
+  if (signals.quotedWithoutPersonalContext) {
     penalties.quotation_without_personal_context = rules.penalties.quotation_without_personal_context;
   }
 
@@ -312,16 +318,15 @@ function classifyRole(signals, qualityScore) {
 }
 
 function finalizeClassification({ role, qualityScore, hardExclusion, reasonCodes, components, penalties, minimumQualityScore }) {
-  const normalizedScore = normalizeScoreForRole(role, qualityScore);
-  const qualityBand = qualityBandForScore(normalizedScore, UNIVERSAL_RULES.quality_bands);
+  const qualityBand = qualityBandForScore(qualityScore, UNIVERSAL_RULES.quality_bands);
   const eligible = !hardExclusion
     && !['contextual_demand', 'weak', 'noise'].includes(role)
-    && normalizedScore >= minimumQualityScore;
+    && qualityScore >= minimumQualityScore;
 
   return {
     evidence_role: role,
     quality_band: qualityBand,
-    quality_score: normalizedScore,
+    quality_score: qualityScore,
     eligible,
     hard_exclusion: hardExclusion,
     components,
@@ -412,10 +417,12 @@ function loadPilotMarketRules(filePath) {
   return config.market_rules ?? {};
 }
 
-function normalizeScoreForRole(role, qualityScore) {
-  if (role === 'noise') return 0;
-  if (role === 'weak' || role === 'market_observation' || role === 'contextual_demand') {
-    return Math.max(30, qualityScore);
+function validateRuleSection(rules, key, predicate) {
+  if (!predicate(rules?.[key])) {
+    throw new Error(`Tracked universal evidence rules must include ${key}`);
   }
-  return qualityScore;
+}
+
+function isRecordWithKeys(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
 }

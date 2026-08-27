@@ -45,8 +45,8 @@ test('direct experience receives a high auditable quality result', () => {
 test('practitioner detail is separated from a generic recommendation', () => {
   const result = classifyEvidence({
     id: 'practitioner-1',
-    author: 'shop_tech',
-    body_original: 'As a mechanic, I diagnose H11 LED flicker on Silverado installs by checking the ground and CANbus adapter; the adapter fixed the warning light.',
+    author: 'reader123',
+    body_original: 'Check the ground and CANbus adapter when an H11 LED flickers on a Silverado; if the adapter clears the warning light, the issue is usually the load signal.',
     subreddit: 'AskMechanics',
     url: 'https://www.reddit.com/r/AskMechanics/comments/practitioner-1',
     score: 4,
@@ -56,6 +56,20 @@ test('practitioner detail is separated from a generic recommendation', () => {
   assert.equal(result.hard_exclusion, false);
   assert.ok(result.components.diagnostic_detail >= 5);
   assert.ok(result.reason_codes.includes('qualified_practitioner'));
+});
+
+test('self-declared identity alone does not elevate a generic recommendation to practitioner evidence', () => {
+  const result = classifyEvidence({
+    id: 'identity-only-1',
+    author: 'shop_tech',
+    body_original: 'As a mechanic, I would just buy brighter LED headlights for your Silverado.',
+    subreddit: 'AskMechanics',
+    url: 'https://www.reddit.com/r/AskMechanics/comments/identity-only-1',
+    score: 9,
+  }, { market: { country: 'US' } });
+
+  assert.notEqual(result.evidence_role, 'qualified_practitioner');
+  assert.ok(result.components.diagnostic_detail < 5);
 });
 
 test('detailed request without an outcome is contextual demand', () => {
@@ -91,6 +105,35 @@ test('weak reaction stays out of the evidence library', () => {
   assert.equal(result.hard_exclusion, false);
   assert.ok(result.components.engagement <= 5);
   assert.ok(result.reason_codes.includes('low_information_density'));
+});
+
+test('quality score stays exactly recomputable from components minus penalties', () => {
+  const result = classifyEvidence({
+    id: 'score-1',
+    author: 'buyer',
+    title: 'What should I buy for my Tacoma?',
+    body_original: 'I need an H11 LED headlight upgrade for night driving in Washington, preferably under $100, and I have limited space behind the factory dust cap.',
+    subreddit: 'ToyotaTacoma',
+    url: 'https://www.reddit.com/r/ToyotaTacoma/comments/score-1',
+    score: 1,
+  }, { market: { country: 'US' } });
+
+  const recomputed = Object.values(result.components).reduce((sum, value) => sum + value, 0) - result.penalties.total;
+  assert.equal(result.quality_score, Math.max(0, Math.min(100, Math.round(recomputed))));
+});
+
+test('quoted recommendation without personal context receives the quotation penalty', () => {
+  const result = classifyEvidence({
+    id: 'quote-1',
+    author: 'reader',
+    body_original: '"Buy these LED headlights" was the entire advice in the thread.',
+    subreddit: 'Automotive',
+    url: 'https://www.reddit.com/r/Automotive/comments/quote-1',
+    score: 3,
+  }, { market: { country: 'US' } });
+
+  assert.equal(result.penalties.quotation_without_personal_context, 5);
+  assert.ok(result.quality_score < Object.values(result.components).reduce((sum, value) => sum + value, 0));
 });
 
 test('hard exclusions cannot be rescued by engagement or market overrides', () => {
@@ -182,9 +225,30 @@ test('tracked universal rules expose the documented caps and bands', async () =>
 
 test('universal rules loader rejects malformed tracked rule files', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'evidence-rules-'));
-  const filePath = path.join(directory, 'bad.json');
-  await fs.writeFile(filePath, JSON.stringify({ schema_version: '1.0.0' }), 'utf8');
-  await assert.rejects(() => loadUniversalEvidenceRules(filePath), /component_caps|quality_bands/i);
+  const baseRules = loadUniversalEvidenceRules(rulesPath);
+  const missingComponentCaps = path.join(directory, 'missing-component-caps.json');
+  const missingHardExclusions = path.join(directory, 'missing-hard-exclusions.json');
+  const missingRoles = path.join(directory, 'missing-roles.json');
+  const missingPenalties = path.join(directory, 'missing-penalties.json');
+
+  const withoutComponentCaps = { ...baseRules };
+  const withoutHardExclusions = { ...baseRules };
+  const withoutRoles = { ...baseRules };
+  const withoutPenalties = { ...baseRules };
+
+  delete withoutComponentCaps.component_caps;
+  delete withoutHardExclusions.hard_exclusions;
+  delete withoutRoles.roles;
+  delete withoutPenalties.penalties;
+
+  await fs.writeFile(missingComponentCaps, JSON.stringify(withoutComponentCaps), 'utf8');
+  await fs.writeFile(missingHardExclusions, JSON.stringify(withoutHardExclusions), 'utf8');
+  await fs.writeFile(missingRoles, JSON.stringify(withoutRoles), 'utf8');
+  await fs.writeFile(missingPenalties, JSON.stringify(withoutPenalties), 'utf8');
+
+  assert.throws(() => loadUniversalEvidenceRules(missingComponentCaps), /component_caps/i);
+  assert.throws(() => loadUniversalEvidenceRules(missingHardExclusions), /hard_exclusions/i);
+  assert.throws(() => loadUniversalEvidenceRules(missingRoles), /roles/i);
+  assert.throws(() => loadUniversalEvidenceRules(missingPenalties), /penalties/i);
   await fs.rm(directory, { recursive: true, force: true });
 });
-
