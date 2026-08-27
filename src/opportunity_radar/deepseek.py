@@ -73,6 +73,8 @@ class DeepSeekClient:
             "model": model,
             "messages": [dict(message) for message in messages],
             "response_format": {"type": "json_object"},
+            "stream": False,
+            "max_tokens": 4096,
         }
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         last_error: DeepSeekError | None = None

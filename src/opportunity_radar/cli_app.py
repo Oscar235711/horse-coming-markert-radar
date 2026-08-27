@@ -593,7 +593,13 @@ class RadarCliApp:
             document = json.loads(checkpoint.read_text(encoding="utf-8"))
             if document.get("status") != "success":
                 continue
-            analyses[str(document["post_id"])] = self._post_analysis_from_dict(document["analysis"])
+            analysis_document = document.get("analysis")
+            if not isinstance(analysis_document, Mapping):
+                continue
+            if not analysis_document.get("topics") and not analysis_document.get("claims"):
+                # Empty model responses are retryable; do not permanently checkpoint them as success.
+                continue
+            analyses[str(document["post_id"])] = self._post_analysis_from_dict(analysis_document)
         return analyses
 
     def _write_analysis_checkpoint(self, paths: Any, post_id: str, analysis: PostAnalysis) -> None:
