@@ -82,6 +82,7 @@ class OpenCliCollector:
         """Preserve all list surfaces, then optionally deep-read up to 30 posts/community."""
         if shortlist_limit < 1:
             raise ValueError("shortlist_limit must be at least one")
+        communities = tuple(communities)
         records_by_community: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         failures: list[CollectionFailure] = []
         for community in communities:

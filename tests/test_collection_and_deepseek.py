@@ -120,6 +120,27 @@ def test_collector_caps_each_community_deep_read_at_thirty_posts(tmp_path) -> No
     assert len([call for call in runner.calls if call[2] == "read"]) == 30
 
 
+def test_collector_materializes_generator_communities_before_reusing_them(tmp_path) -> None:
+    """Generator inputs must survive the second pass that windows, shortlists, and deep-reads posts."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    runner = RecordingRunner(
+        {surface: json.dumps([_listing("one", created_at=as_of - timedelta(days=2))]) for surface in ("hot", "top:month", "top:year", "new")},
+        {"one": [json.dumps([{"id": "c1", "body": "Still broken."}])]},
+    )
+    paths = opportunity_radar.create_run_paths(tmp_path, "run-generator")
+
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (community for community in (opportunity_radar.Community("diesel"),)),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+    )
+
+    assert [entry.post.post_id for entry in result.candidates] == ["t3_one"]
+    assert [entry.post.post_id for entry in result.shortlisted] == ["t3_one"]
+    assert [entry.post.post_id for entry in result.deep_reads] == ["t3_one"]
+
+
 def test_collector_caps_deep_reads_per_requested_community_even_when_records_share_a_subreddit(tmp_path) -> None:
     """Collector limits must be scoped to the approved communities being queried."""
     as_of = datetime(2026, 8, 26, tzinfo=UTC)
