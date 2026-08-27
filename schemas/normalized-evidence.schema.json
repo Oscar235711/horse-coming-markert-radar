@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/normalized-evidence.schema.json",
+  "title": "Normalized Reddit Evidence Detail",
+  "type": "object",
+  "required": ["post", "comments"],
+  "properties": {
+    "post": {
+      "type": "object",
+      "required": ["id", "post_id", "subreddit", "title", "body_original", "url", "geography"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^post-" },
+        "post_id": { "type": "string", "minLength": 1 },
+        "subreddit": { "type": "string" },
+        "title": { "type": "string" },
+        "body_original": { "type": "string" },
+        "author": { "type": ["string", "null"] },
+        "score": { "type": "number" },
+        "comment_count": { "type": "number", "minimum": 0 },
+        "created_at": { "type": ["string", "null"] },
+        "url": { "type": "string", "format": "uri" },
+        "geography": {
+          "type": "object",
+          "required": ["status"],
+          "properties": { "status": { "enum": ["us", "unknown", "non_us"] }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 } }
+        }
+      }
+    },
+    "comments": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["id", "comment_id", "post_id", "body_original", "url"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^comment-" },
+          "comment_id": { "type": "string" },
+          "post_id": { "type": "string" },
+          "author": { "type": ["string", "null"] },
+          "body_original": { "type": "string" },
+          "score": { "type": "number" },
+          "created_at": { "type": ["string", "null"] },
+          "url": { "type": "string", "format": "uri" }
+        }
+      }
+    }
+  }
+}

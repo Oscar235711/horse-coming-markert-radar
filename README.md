@@ -15,6 +15,38 @@
 
 所有电脑专属路径写入被Git忽略的`.env`；仓库代码不包含个人用户名、固定盘符、Cookie或API Key。完整说明见[基线使用指南](docs/BASELINE_GUIDE.md)。
 
+## 美国车灯 Reddit 产品机会试跑
+
+当前可执行入口覆盖美国全车灯品类，不做季节性分析。默认配置保留原研究的14个车灯锚点词，并扩展雾灯、尾灯、刹车灯、转向灯、DRL、辅助灯、总成、透镜、线束、继电器和CANbus适配等词族。
+
+本地优先使用OpenCLI：
+
+```powershell
+.\scripts\radar.ps1 run `
+  -ResearchConfig "configs\automotive_lighting_us_pilot.json" `
+  -Transport opencli
+```
+
+也可直接测试无需登录态的公开JSON通道：
+
+```powershell
+.\scripts\radar.ps1 run -Transport public-json
+```
+
+输出保存在`.local/runs/<run_id>/`：
+
+- `manifest.json`：运行状态、通道、数量和产物索引；
+- `candidates.json`：去重并完成高信号评分的候选帖子；
+- `raw/details/*.json`：标准化帖子和最多20条高分评论；
+- `analysis.json`与`evidence.jsonl`：规则分析和英文原文证据；
+- `audience_map.json`：产品/解决方案—Reddit社区二部图；
+- `report.html`：可离线打开的中文卖家报告和Audience Map；
+- `optimization_backlog.jsonl`与`failures.jsonl`：优化项和单项失败记录。
+
+使用相同`-RunId`重跑会跳过已完成详情并重试失败项。Qwen或DeepSeek可通过`.env.example`所列OpenAI-compatible环境变量选择性启用；失败时自动保留规则结果。
+
+GitHub Actions工作流支持手动触发和每月1日、15日定时运行，远程默认使用公开JSON通道并上传报告与证据artifact。工作流只读仓库，不执行push。
+
 Opportunity Radar GitHub + Skill MVP 实施计划
 1. 项目目标与边界
 建设公司私有仓库 suncentauto/opportunity-radar，为北美柴油皮卡改装新品探索提供：

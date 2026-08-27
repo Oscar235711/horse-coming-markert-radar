@@ -1,0 +1,62 @@
+name: US Lighting Reddit Radar
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Research config path
+        required: true
+        default: configs/automotive_lighting_us_pilot.json
+        type: string
+      use_llm:
+        description: Enable optional OpenAI-compatible enrichment
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "0 1 1,15 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RADAR_LLM_ENABLED: ${{ inputs.use_llm && '1' || '0' }}
+      RADAR_LLM_BASE_URL: ${{ secrets.RADAR_LLM_BASE_URL }}
+      RADAR_LLM_API_KEY: ${{ secrets.RADAR_LLM_API_KEY }}
+      RADAR_LLM_MODEL: ${{ secrets.RADAR_LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify contracts
+        run: node --test tests/*.test.mjs
+
+      - name: Run public Reddit pilot
+        id: radar
+        continue-on-error: true
+        run: >-
+          node scripts/run-radar.mjs
+          --config "${{ inputs.config || 'configs/automotive_lighting_us_pilot.json' }}"
+          --transport public-json
+          --run-id "github-${{ github.run_id }}-${{ github.run_attempt }}"
+          --output-root .local/runs
+
+      - name: Upload report and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-lighting-reddit-radar-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local/runs/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Surface fatal collection failure
+        if: steps.radar.outcome == 'failure'
+        run: exit 1

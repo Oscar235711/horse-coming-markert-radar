@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { runLightingRadar } from '../src/radar-runner.mjs';
+
+const config = {
+  schema_version: '1.0.0',
+  name: 'runner-fixture',
+  market: { country: 'US' },
+  keywords: { anchors: Array.from({ length: 14 }, (_, index) => `anchor-${index}`), expanded: ['fog light'], candidate_only_brands: [] },
+  query_groups: ['headlight issue'],
+  subreddits: Array.from({ length: 10 }, (_, index) => `sub${index}`),
+  limits: { posts: 30, comments_per_post: 20, search_results_per_query: 15 },
+  transport: { request_interval_ms: 0, timeout_ms: 1000 },
+};
+
+test('runner produces normalized data, analysis, graph, and offline report in one run directory', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runner-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [{ id: 'p1', title: 'H11 LED headlight flicker on F-150', selftext: 'Texas. What should I buy under $100?', subreddit: 'sub0', score: 20, num_comments: 10, permalink: '/comments/p1/x' }];
+    },
+    async fetchDetails(post) {
+      return { post: { id: post.post_id, title: post.title, selftext: post.body_original, subreddit: post.subreddit, score: post.score, num_comments: post.comment_count, permalink: post.url }, comments: [{ id: 'c1', body: 'CANbus fixed the flicker', score: 4, permalink: '/comments/p1/x/c1' }] };
+    },
+  };
+
+  const result = await runLightingRadar({ config, adapter, runDir, runId: 'runner-run' });
+
+  for (const name of ['manifest.json', 'candidates.json', 'analysis.json', 'evidence.jsonl', 'audience_map.json', 'optimization_backlog.jsonl', 'report.html']) {
+    assert.equal(await exists(path.join(runDir, name)), true, name);
+  }
+  assert.equal(result.analysis.run_id, 'runner-run');
+  assert.ok(result.audienceMap.nodes.length >= 2);
+  assert.equal(result.manifest.status, 'complete');
+});
+
+async function exists(filePath) {
+  try { await fs.access(filePath); return true; } catch { return false; }
+}

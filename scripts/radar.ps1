@@ -1,13 +1,17 @@
 param(
   [Parameter(Position = 0, Mandatory = $true)]
-  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report")]
+  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report", "run")]
   [string]$Command,
   [string]$EvidenceCsv,
   [string]$OutputDir,
   [string]$Users,
   [string]$DataRoot,
   [string]$OutputRoot,
-  [string]$ConfigPath
+  [string]$ConfigPath,
+  [string]$RunsRoot,
+  [string]$ResearchConfig = "configs\automotive_lighting_us_pilot.json",
+  [ValidateSet("auto", "opencli", "public-json")][string]$Transport = "auto",
+  [string]$RunId
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +23,7 @@ $radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
 
 $DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { Get-RadarSetting -Name "RADAR_DATA_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
 $OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { Get-RadarSetting -Name "RADAR_OUTPUT_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
+$RunsRoot = Resolve-RadarPath -Value $(if ($RunsRoot) { $RunsRoot } else { Get-RadarSetting -Name "RADAR_RUNS_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\runs"
 $toolsRoot = Resolve-RadarPath -Value (Get-RadarSetting -Name "RADAR_TOOLS_ROOT" -Config $radarConfig) -RepoRoot $repoRoot -DefaultRelative ".tools"
 $agentReachHome = Resolve-RadarPath -Value (Get-RadarSetting -Name "RADAR_AGENT_REACH_HOME" -Config $radarConfig) -RepoRoot $repoRoot -DefaultRelative ".local\agent-reach"
 $agentReachFallbacks = @(
@@ -46,10 +51,11 @@ switch ($Command) {
     $configDir = Split-Path -Parent $ConfigPath
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $repoRoot ".env.example") -Destination $ConfigPath
-    New-Item -ItemType Directory -Force -Path $DataRoot, $OutputRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $DataRoot, $OutputRoot, $RunsRoot | Out-Null
     Write-Host "CONFIG_READY $ConfigPath"
     Write-Host "DATA_READY $DataRoot"
     Write-Host "OUTPUT_READY $OutputRoot"
+    Write-Host "RUNS_READY $RunsRoot"
   }
   "paths" {
     [ordered]@{
@@ -57,6 +63,7 @@ switch ($Command) {
       config_path = $ConfigPath
       data_root = $DataRoot
       output_root = $OutputRoot
+      runs_root = $RunsRoot
       tools_root = $toolsRoot
       agent_reach_home = $agentReachHome
       agent_reach_exe = $agentReachExe
@@ -97,5 +104,20 @@ switch ($Command) {
       $env:RADAR_DATA_ROOT = $previousDataRoot
       $env:RADAR_OUTPUT_ROOT = $previousOutputRoot
     }
+  }
+  "run" {
+    if (-not $nodeExe) { throw "Node.js not found. Install Node.js or set RADAR_NODE_EXE in $ConfigPath" }
+    $researchConfigPath = Resolve-RadarPath -Value $ResearchConfig -RepoRoot $repoRoot -DefaultRelative "configs\automotive_lighting_us_pilot.json"
+    if (-not (Test-Path -LiteralPath $researchConfigPath)) { throw "Research config not found: $researchConfigPath" }
+    $runnerArgs = @(
+      (Join-Path $PSScriptRoot "run-radar.mjs"),
+      "--config", $researchConfigPath,
+      "--transport", $Transport,
+      "--output-root", $RunsRoot
+    )
+    if ($RunId) { $runnerArgs += @("--run-id", $RunId) }
+    if ($openCliExe) { $runnerArgs += @("--opencli", $openCliExe) }
+    & $nodeExe @runnerArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
 }

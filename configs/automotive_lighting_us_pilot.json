@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0.0",
+  "name": "US Automotive Lighting Reddit Pilot",
+  "market": {
+    "country": "US",
+    "language": "en",
+    "unknown_geography_policy": "retain_as_unknown_exclude_from_us_conclusions"
+  },
+  "keywords": {
+    "anchors": [
+      "headlight bulb",
+      "led headlight bulb",
+      "headlight bulb replacement",
+      "dim headlights",
+      "headlight upgrade",
+      "halogen headlight bulb",
+      "hid headlight bulb",
+      "h11 headlight bulb",
+      "9005 headlight bulb",
+      "9006 headlight bulb",
+      "h7 headlight bulb",
+      "h4 headlight bulb",
+      "9012 headlight bulb",
+      "h13 headlight bulb"
+    ],
+    "expanded": [
+      "fog light",
+      "tail light",
+      "brake light",
+      "turn signal light",
+      "daytime running light DRL",
+      "auxiliary driving light",
+      "off road light bar",
+      "headlight assembly",
+      "projector retrofit",
+      "headlight wiring harness",
+      "headlight relay",
+      "CANbus adapter",
+      "headlight glare",
+      "headlight condensation",
+      "headlight flicker",
+      "headlight overheating",
+      "headlight fitment"
+    ],
+    "candidate_only_brands": ["SEALIGHT", "Sylvania", "Philips", "AUXITO"]
+  },
+  "query_groups": [
+    "(\"headlight bulb\" OR \"led headlight bulb\" OR \"headlight upgrade\")",
+    "(\"headlight bulb replacement\" OR \"dim headlights\" OR \"halogen headlight bulb\" OR \"hid headlight bulb\")",
+    "(\"h11 headlight bulb\" OR \"9005 headlight bulb\" OR \"9006 headlight bulb\" OR \"h7 headlight bulb\")",
+    "(\"h4 headlight bulb\" OR \"9012 headlight bulb\" OR \"h13 headlight bulb\")",
+    "(\"fog light\" OR \"tail light\" OR \"brake light\" OR \"turn signal light\")",
+    "(\"daytime running light\" OR DRL OR \"auxiliary driving light\" OR \"off road light bar\")",
+    "(\"headlight assembly\" OR \"projector retrofit\" OR \"headlight wiring harness\" OR \"CANbus adapter\")",
+    "(\"headlight glare\" OR \"headlight condensation\" OR \"headlight flicker\" OR \"headlight fitment\")"
+  ],
+  "subreddits": [
+    "MechanicAdvice",
+    "AskMechanics",
+    "Cartalk",
+    "Automotive",
+    "projectcar",
+    "CarModification",
+    "Trucks",
+    "Jeep",
+    "f150",
+    "Silverado",
+    "ToyotaTacoma",
+    "Wrangler"
+  ],
+  "limits": {
+    "posts": 40,
+    "deep_dive_posts": 12,
+    "comments_per_post": 20,
+    "search_results_per_query": 15,
+    "profile_users": 10,
+    "profile_items_per_user": 30
+  },
+  "analysis": {
+    "mode": "rules_with_optional_llm",
+    "language": "zh-CN",
+    "evidence_language": "original",
+    "llm": {
+      "enabled_by_default": false,
+      "compatible_providers": ["Qwen", "DeepSeek"],
+      "base_url_env": "RADAR_LLM_BASE_URL",
+      "api_key_env": "RADAR_LLM_API_KEY",
+      "model_env": "RADAR_LLM_MODEL"
+    }
+  },
+  "transport": {
+    "local": "opencli",
+    "remote": "public-json",
+    "request_interval_ms": 1200,
+    "timeout_ms": 30000
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/audience-map.schema.json",
+  "title": "Product Community Audience Map",
+  "type": "object",
+  "required": ["schema_version", "nodes", "edges", "filters"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "label", "size", "evidence_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "enum": ["product", "community"] },
+          "label": { "type": "string" },
+          "size": { "type": "number", "minimum": 0 },
+          "evidence_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "source", "source_type", "target", "target_type", "evidence_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "source": { "type": "string" },
+          "source_type": { "enum": ["product"] },
+          "target": { "type": "string" },
+          "target_type": { "enum": ["community"] },
+          "evidence_ids": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "required": ["categories"],
+      "properties": { "categories": { "type": "array", "items": { "type": "string" } } }
+    }
+  }
+}

@@ -48,6 +48,22 @@ RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
 
 ## 继续采集
 
+### 美国车灯统一试跑（推荐）
+
+```powershell
+.\scripts\radar.ps1 run -Transport opencli
+```
+
+如果本机没有可用的Reddit浏览器登录态，可改用：
+
+```powershell
+.\scripts\radar.ps1 run -Transport public-json
+```
+
+报告位于`.local\runs\<run_id>\report.html`。同一`RunId`重复执行时，已完成帖子直接读取检查点，只重试失败项。运行中发现的仓库问题写入`optimization_backlog.jsonl`，不会阻止后续帖子抓取。
+
+### 历史CSV详情采集
+
 ```powershell
 .\scripts\radar.ps1 fetch-details `
   -EvidenceCsv ".local\data\evidence_candidates.csv" `
@@ -70,10 +86,10 @@ RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
 - 与研究无关或敏感的主页历史不进入画像；
 - 排放相关讨论可以作为需求信号，但系统不生成违规操作教程。
 
-## 下一阶段
+## 后续方向
 
-1. 生成统一`analysis.json`；
-2. 接入千问/DeepSeek结构化分析；
+1. 用更大样本校准机会评分和美国地域识别；
+2. 补充可审计的供应链、价格和退货证据；
 3. 封装Codex Skill；
-4. 生成HTML和DOCX；
-5. 接入Hermes周期运行。
+4. 继续补充DOCX静态报告；
+5. 根据GitHub Actions运行效果决定是否接入Hermes。

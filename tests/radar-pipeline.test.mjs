@@ -1,0 +1,315 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  buildOpenCliSearchArgs,
+  createPublicJsonAdapter,
+  parseRedditAtom,
+  runRadarPipeline,
+} from '../src/radar-pipeline.mjs';
+
+const config = {
+  schema_version: '1.0.0',
+  name: 'fixture',
+  market: { country: 'US' },
+  keywords: { anchors: Array.from({ length: 14 }, (_, index) => `anchor-${index}`), expanded: ['fog light'] },
+  query_groups: ['headlight problem'],
+  subreddits: Array.from({ length: 10 }, (_, index) => `sub${index}`),
+  limits: { posts: 30, comments_per_post: 20, search_results_per_query: 15 },
+  transport: { request_interval_ms: 0, timeout_ms: 1000 },
+};
+
+test('OpenCLI search arguments keep the executable path external and constrain the scan', () => {
+  const args = buildOpenCliSearchArgs('headlight flicker', { limit: 15 });
+
+  assert.deepEqual(args.slice(0, 3), ['reddit', 'search', 'headlight flicker']);
+  assert.ok(args.includes('--limit'));
+  assert.ok(args.includes('15'));
+  assert.ok(args.includes('--time'));
+  assert.ok(args.includes('year'));
+  assert.ok(!args.includes('opencli'));
+});
+
+test('public JSON adapter normalizes Reddit search and caps comments', async () => {
+  const requested = [];
+  const fakeFetch = async (url) => {
+    requested.push(String(url));
+    if (String(url).includes('/search.json')) {
+      return jsonResponse({ data: { children: [{ data: { id: 'p1', title: 'Headlight issue', subreddit: 'sub0', permalink: '/comments/p1/x' } }] } });
+    }
+    const comments = Array.from({ length: 25 }, (_, index) => ({ kind: 't1', data: { id: `c${index}`, body: `Body ${index}`, score: index, permalink: `/comments/p1/x/c${index}` } }));
+    return jsonResponse([
+      { data: { children: [{ data: { id: 'p1', title: 'Headlight issue', subreddit: 'sub0', permalink: '/comments/p1/x' } }] } },
+      { data: { children: comments } },
+    ]);
+  };
+  const adapter = createPublicJsonAdapter({ fetchImpl: fakeFetch, baseUrl: 'https://www.reddit.com' });
+
+  const posts = await adapter.search('headlight problem', { limit: 15, timeoutMs: 1000 });
+  const detail = await adapter.fetchDetails({ post_id: 'p1' }, { commentLimit: 20, timeoutMs: 1000 });
+
+  assert.equal(posts.length, 1);
+  assert.equal(detail.comments.length, 20);
+  assert.ok(requested[0].includes('raw_json=1'));
+  assert.ok(requested[1].includes('limit=20'));
+});
+
+test('public adapter falls back to Reddit RSS when JSON search is blocked', async () => {
+  const requested = [];
+  const adapter = createPublicJsonAdapter({
+    baseUrl: 'https://old.reddit.com',
+    rssBaseUrl: 'https://www.reddit.com',
+    fetchImpl: async (url) => {
+      requested.push(String(url));
+      if (String(url).includes('search.json')) return errorResponse(404, 'Not Found');
+      return textResponse(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><author><name>/u/tester</name></author><category term="MechanicAdvice" label="r/MechanicAdvice"/><content type="html">&lt;div&gt;My H11 headlights flicker on an F-150&lt;/div&gt;</content><id>t3_p1</id><link href="https://www.reddit.com/r/MechanicAdvice/comments/p1/headlight/"/><updated>2026-08-01T00:00:00+00:00</updated><title>H11 headlight flicker</title></entry></feed>`);
+    },
+  });
+
+  const posts = await adapter.search('headlight flicker', { limit: 15, timeoutMs: 1000 });
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].id, 'p1');
+  assert.equal(posts[0].subreddit, 'MechanicAdvice');
+  assert.match(posts[0].selftext, /F-150/);
+  assert.ok(requested[0].startsWith('https://old.reddit.com/search.json'));
+  assert.ok(requested[1].startsWith('https://www.reddit.com/search.rss'));
+});
+
+test('Atom parser ignores subreddit entries and returns post/comment records', () => {
+  const xml = `<?xml version="1.0"?><feed><entry><id>t5_sub</id><title>A community</title></entry><entry><author><name>/u/op</name></author><category term="Cartalk"/><content type="html">&lt;p&gt;Post&#32;body&#39;s text&lt;/p&gt;</content><id>t3_abc</id><link href="https://www.reddit.com/r/Cartalk/comments/abc/x/"/><updated>2026-08-01T00:00:00+00:00</updated><title>Headlight problem</title></entry><entry><author><name>/u/helper</name></author><content type="html">&lt;p&gt;Use a relay harness&lt;/p&gt;</content><id>t1_comment</id><link href="https://www.reddit.com/r/Cartalk/comments/abc/x/comment/"/><updated>2026-08-02T00:00:00+00:00</updated><title>/u/helper on Headlight problem</title></entry></feed>`;
+
+  const parsed = parseRedditAtom(xml);
+
+  assert.equal(parsed.posts.length, 1);
+  assert.equal(parsed.comments.length, 1);
+  assert.equal(parsed.posts[0].id, 'abc');
+  assert.equal(parsed.posts[0].selftext, "Post body's text");
+  assert.equal(parsed.comments[0].body, 'Use a relay harness');
+});
+
+test('RSS fallback retries one 429 response before failing the query', async () => {
+  let rssAttempts = 0;
+  const adapter = createPublicJsonAdapter({
+    baseUrl: 'https://old.reddit.com',
+    rssBaseUrl: 'https://www.reddit.com',
+    retryDelayMs: 0,
+    fetchImpl: async (url) => {
+      if (String(url).includes('.json')) return errorResponse(404, 'Not Found');
+      rssAttempts += 1;
+      if (rssAttempts === 1) return errorResponse(429, '');
+      return textResponse(`<?xml version="1.0"?><feed><entry><id>t3_retry</id><category term="Cartalk"/><title>Headlight retry</title><content type="html">body</content><link href="https://www.reddit.com/r/Cartalk/comments/retry/x/"/></entry></feed>`);
+    },
+  });
+
+  const posts = await adapter.search('headlight', { limit: 5, timeoutMs: 1000 });
+
+  assert.equal(rssAttempts, 2);
+  assert.equal(posts[0].id, 'retry');
+});
+
+test('pipeline deduplicates candidates, records failures, and continues', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-pipeline-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const adapter = fixtureAdapter();
+
+  const result = await runRadarPipeline({ config, adapter, runDir, runId: 'fixture-run' });
+
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.details.length, 1);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.manifest.status, 'partial');
+  assert.deepEqual(adapter.visited, ['p1', 'bad']);
+  const backlog = (await fs.readFile(path.join(runDir, 'optimization_backlog.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(backlog.length >= 7, true);
+  for (const id of ['missing-html', 'schema-gap', 'missing-actions']) {
+    assert.equal(backlog.find((item) => item.id === id)?.status, 'resolved');
+  }
+  assert.equal(backlog.find((item) => item.id === 'public-json-blocked')?.status, 'mitigated');
+  assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).includes('rate limited'), true);
+});
+
+test('pipeline resumes completed detail files without refetching them', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-resume-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const first = fixtureAdapter();
+  await runRadarPipeline({ config, adapter: first, runDir, runId: 'resume-run' });
+  const second = fixtureAdapter({ failBad: false });
+
+  const resumed = await runRadarPipeline({ config, adapter: second, runDir, runId: 'resume-run' });
+
+  assert.deepEqual(second.visited, ['bad']);
+  assert.equal(resumed.details.length, 2);
+  assert.equal(resumed.manifest.status, 'complete');
+});
+
+test('pipeline can discover automotive lighting communities outside the seed list', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-discovery-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [
+        { id: 'auto', title: 'F-150 headlight housing problem', selftext: 'Texas truck fitment', subreddit: 'FordTrucks', permalink: '/comments/auto/x' },
+        { id: 'home', title: 'Indoor grow light bulb problem', selftext: 'House plant', subreddit: 'gardening', permalink: '/comments/home/x' },
+        { id: 'cat', title: 'My cat chose the headlight upgrade', selftext: 'Standard issue cat markings', subreddit: 'standardissuecat', permalink: '/comments/cat/x' },
+        { id: 'race', title: 'Formula 1 tail lights fell off', selftext: 'Race chassis vibration', subreddit: 'formula1', permalink: '/comments/race/x' },
+      ];
+    },
+    async fetchDetails(post) { return { post, comments: [] }; },
+  };
+
+  const result = await runRadarPipeline({ config, adapter, runDir, runId: 'discovery-run' });
+
+  assert.deepEqual(result.candidates.map((post) => post.post_id), ['auto']);
+});
+
+test('pipeline scans the full candidate pool but deep-dives only the configured winners', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-deep-limit-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const visited = [];
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [
+        { id: 'top', title: 'F-150 headlight flicker what should I buy', selftext: 'Texas', subreddit: 'sub0', score: 20, num_comments: 15, permalink: '/comments/top/x' },
+        { id: 'second', title: 'Silverado headlight bulb', selftext: 'Ohio', subreddit: 'sub1', score: 2, num_comments: 1, permalink: '/comments/second/x' },
+      ];
+    },
+    async fetchDetails(post) { visited.push(post.post_id); return { post, comments: [] }; },
+  };
+  const limitedConfig = { ...config, limits: { ...config.limits, deep_dive_posts: 1 } };
+
+  const result = await runRadarPipeline({ config: limitedConfig, adapter, runDir, runId: 'deep-limit-run' });
+
+  assert.equal(result.candidates.length, 2);
+  assert.deepEqual(visited, ['top']);
+  assert.equal(result.manifest.counts.deep_dive_target, 1);
+});
+
+test('pipeline removes orphaned detail checkpoints after candidate ranking changes', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-orphan-detail-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const detailsDir = path.join(runDir, 'raw', 'details');
+  await fs.mkdir(detailsDir, { recursive: true });
+  await fs.writeFile(path.join(detailsDir, 'orphan.json'), JSON.stringify({ post: { post_id: 'orphan' }, comments: [] }), 'utf8');
+  const adapter = {
+    name: 'fixture',
+    async search() { return [{ id: 'current', title: 'F-150 headlight issue', selftext: 'Texas', subreddit: 'sub0', permalink: '/comments/current/x' }]; },
+    async fetchDetails(post) { return { post, comments: [] }; },
+  };
+  await runRadarPipeline({ config, adapter, runDir, runId: 'orphan-run' });
+  assert.equal(await fs.access(path.join(detailsDir, 'orphan.json')).then(() => true).catch(() => false), false);
+  assert.equal(await fs.access(path.join(detailsDir, 'current.json')).then(() => true).catch(() => false), true);
+});
+
+test('deep-dive ranking places explicit US evidence before higher-scoring unknown geography', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-us-priority-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const visited = [];
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [
+        { id: 'unknown', title: 'Headlight flicker what should I buy', selftext: 'No location', subreddit: 'CarTalk', score: 100, num_comments: 100, permalink: '/comments/unknown/x' },
+        { id: 'us', title: 'Headlight bulb issue in Texas', selftext: 'F-150', subreddit: 'f150', score: 1, num_comments: 1, permalink: '/comments/us/x' },
+      ];
+    },
+    async fetchDetails(post) { visited.push(post.post_id); return { post, comments: [] }; },
+  };
+  const limitedConfig = { ...config, limits: { ...config.limits, deep_dive_posts: 1 } };
+
+  await runRadarPipeline({ config: limitedConfig, adapter, runDir, runId: 'us-priority-run' });
+
+  assert.deepEqual(visited, ['us']);
+});
+
+test('resume recalculates derived geography and noise filters for stored candidates', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-rederive-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  await fs.writeFile(path.join(runDir, 'candidates.json'), JSON.stringify([
+    { id: 'post-us', post_id: 'us', title: 'Headlight issue in Pensacola', body_original: 'Toyota dealer', subreddit: 'COROLLA', score: 2, comment_count: 1, url: 'https://www.reddit.com/comments/us', geography: { status: 'unknown' }, high_signal: { total: 1, reasons: [] } },
+    { id: 'post-cat', post_id: 'cat', title: 'Cat headlight upgrade', body_original: 'markings', subreddit: 'standardissuecat', score: 50, comment_count: 20, url: 'https://www.reddit.com/comments/cat', geography: { status: 'unknown' }, high_signal: { total: 90, reasons: [] } },
+  ]), 'utf8');
+  const visited = [];
+  const adapter = { name: 'fixture', async search() { throw new Error('search should not run'); }, async fetchDetails(post) { visited.push(post.post_id); return { post, comments: [] }; } };
+
+  const result = await runRadarPipeline({ config, adapter, runDir, runId: 'rederive-run' });
+
+  assert.deepEqual(result.candidates.map((post) => post.post_id), ['us']);
+  assert.equal(result.candidates[0].geography.status, 'us');
+  assert.deepEqual(visited, ['us']);
+});
+
+test('resume retries unresolved search queries and preserves the immutable config snapshot', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-search-resume-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const firstConfig = { ...config, query_groups: ['headlight problem', 'headlight replacement'] };
+  let retry = false;
+  const adapter = {
+    name: 'fixture',
+    async search(query) {
+      if (query === 'headlight problem') return [{ id: 'p1', title: 'F-150 headlight flicker', selftext: 'Texas', subreddit: 'sub0', permalink: '/comments/p1/x' }];
+      if (!retry) throw new Error('search rate limited');
+      return [{ id: 'p2', title: 'Silverado headlight replacement', selftext: 'Ohio', subreddit: 'sub1', permalink: '/comments/p2/x' }];
+    },
+    async fetchDetails(post) { return { post, comments: [] }; },
+  };
+
+  const first = await runRadarPipeline({ config: firstConfig, adapter, runDir, runId: 'search-resume-run' });
+  assert.equal(first.manifest.status, 'partial');
+  assert.equal(first.manifest.counts.failures, 1);
+  const snapshotBefore = await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8');
+
+  retry = true;
+  const changedConfig = { ...firstConfig, query_groups: ['headlight problem', 'new query not in snapshot'] };
+  const resumed = await runRadarPipeline({ config: changedConfig, adapter, runDir, runId: 'search-resume-run' });
+
+  assert.equal(resumed.manifest.status, 'complete');
+  assert.deepEqual(resumed.candidates.map((post) => post.post_id), ['p1', 'p2']);
+  assert.deepEqual(await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8'), snapshotBefore);
+  assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).trim(), '');
+});
+
+function jsonResponse(value) {
+  return {
+    ok: true,
+    status: 200,
+    async json() { return value; },
+    async text() { return JSON.stringify(value); },
+  };
+}
+
+function errorResponse(status, value) {
+  return { ok: false, status, async text() { return value; } };
+}
+
+function textResponse(value) {
+  return { ok: true, status: 200, async text() { return value; }, async json() { throw new Error('not json'); } };
+}
+
+function fixtureAdapter({ failBad = true } = {}) {
+  const adapter = {
+    name: 'fixture',
+    visited: [],
+    async search() {
+      return [
+        { id: 'p1', title: 'F-150 headlight flicker', selftext: 'Texas, what should I buy?', subreddit: 'sub0', score: 20, num_comments: 12, permalink: '/comments/p1/x' },
+        { id: 'p1', title: 'F-150 headlight flicker', selftext: 'duplicate', subreddit: 'sub0', score: 1, num_comments: 1, permalink: '/comments/p1/x' },
+        { id: 'bad', title: 'Silverado fog light problem', selftext: 'Ohio install issue', subreddit: 'sub1', score: 8, num_comments: 4, permalink: '/comments/bad/x' },
+      ];
+    },
+    async fetchDetails(post) {
+      adapter.visited.push(post.post_id);
+      if (post.post_id === 'bad' && failBad) throw new Error('rate limited');
+      return {
+        post: { id: post.post_id, title: post.title, selftext: post.body_original, subreddit: post.subreddit, score: post.score, num_comments: post.comment_count, permalink: post.url },
+        comments: [{ id: `c-${post.post_id}`, body: 'The adapter solved my flicker issue', score: 10, permalink: `/comments/${post.post_id}/x/c1` }],
+      };
+    },
+  };
+  return adapter;
+}
