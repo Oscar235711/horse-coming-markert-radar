@@ -35,6 +35,8 @@ The exact OpenCLI command forms are based on the repository's established `reddi
 
 ## Fix round 1 — collector follow-ups
 
+Committed behavioral fix as `582ff6a3d406ba19775f70b30d7adcbf7260e594` (`fix: harden collector checkpoint and failure handling`).
+
 ### RED / GREEN evidence
 
 1. Per-requested-community shortlist cap
