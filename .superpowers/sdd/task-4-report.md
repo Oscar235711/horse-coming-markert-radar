@@ -45,3 +45,43 @@
 ## Commit
 
 - Pending local commit.
+
+## Independent review follow-up on 2026-08-27
+
+- Reproduced three RED failures introduced by the first Task 4 cut:
+  - multi-method extraction (`activity` + `dictionary` + `ngram`) was counting quality and intent signals multiple times for the same record/canonical term;
+  - author activity candidates still used `activity.id` as `source_evidence_ids`, and ineligible author activity could still leak exploratory candidates;
+  - phrases containing candidate-only brand tokens such as `sealight h11` were not being filtered.
+
+### Follow-up root causes
+
+- `extractKeywordCandidates` aggregated per method hit, not per `(record, canonical_term)`, so one retained activity could add `purchase_signal_count`, `pain_signal_count`, `workaround_signal_count`, and `source_quality` multiple times.
+- `flattenAuthorActivity` treated any non-hard-excluded activity as eligible and did not carry author checkpoint `source_evidence_ids` forward into the candidate aggregation layer.
+- Brand filtering only rejected exact brand terms, not phrases containing a brand token inside a longer candidate.
+
+### Follow-up fixes
+
+- `src/keyword-discovery.mjs`
+  - collapsed term extraction to one contribution per record/canonical term while preserving the merged `extraction_methods`;
+  - tightened author-activity candidate eligibility to `quality.eligible === true`;
+  - propagated author checkpoint `source_evidence_ids` into candidate provenance while preserving `evidence_ids` as the activity record ids;
+  - filtered any candidate phrase containing a candidate-only brand term, not just exact brand matches.
+- `tests/keyword-discovery.test.mjs`
+  - added regression coverage for multi-method de-duplication, author-activity eligibility, brand-token phrase rejection, and provenance separation.
+- `tests/radar-pipeline.test.mjs`
+  - updated Task 4 round-two fixtures to reflect the corrected scoring semantics and asserted integrated `source_evidence_ids` behavior.
+
+### Follow-up verification
+
+- RED reproduction:
+  - `node --test tests/keyword-discovery.test.mjs`
+  - Result before fix: `3` failing review regressions.
+- Focused GREEN:
+  - `node --test tests/keyword-discovery.test.mjs tests/radar-pipeline.test.mjs tests/schema-contract.test.mjs`
+  - Result: `30` passing, `0` failing.
+- Full GREEN:
+  - `node --test`
+  - Result: `83` passing, `0` failing.
+- Diff check:
+  - `git diff --check`
+  - Result: only LF/CRLF conversion warnings on working-copy files; no diff-check errors.

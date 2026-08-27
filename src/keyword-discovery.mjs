@@ -115,8 +115,8 @@ export function extractKeywordCandidates(evidence, authorActivity, config = {}) 
       existing.unique_user_count = 0;
       existing.community_count = 0;
       existing.categories = union(existing.categories, inferCategories(normalizedTerm, termInfo.categories));
-      existing.extraction_methods = union(existing.extraction_methods, [termInfo.method]);
-      existing.source_evidence_ids = union(existing.source_evidence_ids, [record.record_id]);
+      existing.extraction_methods = union(existing.extraction_methods, termInfo.methods);
+      existing.source_evidence_ids = union(existing.source_evidence_ids, record.source_evidence_ids);
       existing.evidence_ids = union(existing.evidence_ids, [record.record_id]);
       existing.authors = union(existing.authors, record.author ? [record.author] : []);
       existing.communities = union(existing.communities, record.community ? [record.community] : []);
@@ -218,6 +218,7 @@ export function selectRoundTwoTerms(candidates, options = {}) {
 function flattenEvidence(evidence) {
   return (evidence ?? []).map((record) => ({
     record_id: record.id,
+    source_evidence_ids: record.id ? [record.id] : [],
     thread_id: record.post_id ?? record.id,
     author: normalizeActor(record.author),
     community: normalizeCommunity(record.subreddit),
@@ -239,12 +240,13 @@ function flattenAuthorActivity(authorActivity) {
     for (const activity of author?.retained_activity ?? []) {
       rows.push({
         record_id: activity.id,
+        source_evidence_ids: [...new Set((author?.source_evidence_ids ?? []).filter(Boolean))],
         thread_id: activity.activity_id ?? activity.id,
         author: normalizeActor(activity.author ?? author.username),
         community: normalizeCommunity(activity.subreddit),
         text: [activity.title, activity.body_original].filter(Boolean).join(' ').trim(),
-        eligible: activity?.quality?.hard_exclusion !== true,
-        quality_band: String(activity?.quality?.quality_band ?? 'medium'),
+        eligible: activity?.quality?.eligible === true,
+        quality_band: String(activity?.quality?.quality_band ?? 'noise'),
         pain_signal: PAIN_PATTERN.test([activity.title, activity.body_original].filter(Boolean).join(' ')),
         workaround_signal: WORKAROUND_PATTERN.test([activity.title, activity.body_original].filter(Boolean).join(' ')),
         purchase_signal: PURCHASE_PATTERN.test([activity.title, activity.body_original].filter(Boolean).join(' ')),
@@ -259,13 +261,18 @@ function flattenAuthorActivity(authorActivity) {
 
 function collectTermsFromRecord(record, context) {
   const text = record.text;
-  const terms = [];
-  const termKeys = new Set();
+  const terms = new Map();
   const push = (term, method, categories = []) => {
     const normalized = normalizeTerm(term);
-    if (!normalized || termKeys.has(`${method}:${normalized}`)) return;
-    termKeys.add(`${method}:${normalized}`);
-    terms.push({ term: normalized, method, categories });
+    if (!normalized) return;
+    const existing = terms.get(normalized) ?? {
+      term: normalized,
+      methods: [],
+      categories: [],
+    };
+    existing.methods = union(existing.methods, [method]);
+    existing.categories = union(existing.categories, categories);
+    terms.set(normalized, existing);
   };
 
   for (const term of record.discovered_terms ?? []) {
@@ -283,7 +290,8 @@ function collectTermsFromRecord(record, context) {
     push(term, 'ngram');
   }
 
-  return terms;
+  return [...terms.values()]
+    .sort((left, right) => left.term.localeCompare(right.term));
 }
 
 function collectNgrams(text, context) {
@@ -428,15 +436,20 @@ function shouldKeepTerm(term, context) {
   const normalized = normalizeTerm(term);
   if (!normalized) return false;
   if (context.formalTerms.has(normalized)) return false;
-  if (context.brandTerms.has(normalized)) return false;
+  if (containsBrandTerm(normalized, context)) return false;
   if (context.stopwords.has(normalized)) return false;
   if (tokenize(normalized).every((token) => context.stopwords.has(token))) return false;
   return true;
 }
 
 function isBrandOnly(candidate, context) {
-  return context.brandTerms.has(candidate.normalized_term)
+  return containsBrandTerm(candidate.normalized_term, context)
     || (candidate.categories.length === 1 && candidate.categories[0] === 'competitor_brand');
+}
+
+function containsBrandTerm(term, context) {
+  const normalized = normalizeTerm(term);
+  return [...context.brandTerms].some((brandTerm) => containsTerm(normalized, brandTerm));
 }
 
 function isGenericTerm(candidate, context) {

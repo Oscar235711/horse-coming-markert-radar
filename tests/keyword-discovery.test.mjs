@@ -146,6 +146,118 @@ test('selectRoundTwoTerms enforces bounded score, user, and community gates and 
   assert.equal(selected.includes('candidate-20'), false);
 });
 
+test('a single record contributes quality and intent signals only once even when multiple extraction methods hit the same canonical term', () => {
+  const candidates = extractKeywordCandidates(
+    [],
+    [{
+      username: 'alice',
+      source_evidence_ids: ['seed-post-1'],
+      retained_activity: [{
+        id: 'activity-multi',
+        activity_type: 'post',
+        author: 'alice',
+        subreddit: 'F150',
+        title: 'Headlight protective film follow-up',
+        body_original: 'I bought protective film from Amazon after the condensation came back.',
+        quality: { eligible: true, quality_band: 'high', evidence_role: 'direct_experience', quality_score: 80 },
+        discovered_terms: ['protective film'],
+      }],
+    }],
+    config,
+  );
+  const protectiveFilm = candidates.find((candidate) => candidate.term === 'headlight protective film');
+
+  assert.ok(protectiveFilm);
+  assert.deepEqual(protectiveFilm.extraction_methods, ['activity', 'dictionary', 'ngram']);
+  assert.equal(protectiveFilm.purchase_signal_count, 1);
+  assert.equal(protectiveFilm.pain_signal_count, 1);
+  assert.equal(protectiveFilm.workaround_signal_count, 1);
+  assert.equal(protectiveFilm.promotional_signal_count, 0);
+  assert.deepEqual(protectiveFilm.evidence_ids, ['activity-multi']);
+  assert.deepEqual(protectiveFilm.source_evidence_ids, ['seed-post-1']);
+  assert.deepEqual(protectiveFilm.threads, ['activity-multi']);
+  assert.deepEqual(protectiveFilm.authors, ['alice']);
+  assert.equal(protectiveFilm.source_quality.high, 1);
+  assert.equal(protectiveFilm.source_quality.medium, 0);
+  assert.equal(protectiveFilm.source_quality.total, 1);
+  assert.equal(protectiveFilm.average_quality_weight, 1);
+});
+
+test('author activities must be eligible to produce exploratory candidates and keep source evidence separate from activity ids', () => {
+  const candidates = extractKeywordCandidates(
+    [],
+    [
+      {
+        username: 'alice',
+        source_evidence_ids: ['seed-post-1', 'seed-post-2'],
+        retained_activity: [{
+          id: 'activity-eligible',
+          activity_type: 'comment',
+          author: 'alice',
+          subreddit: 'Cartalk',
+          body_original: 'I bought vent membrane after another condensation leak.',
+          quality: { eligible: true, quality_band: 'medium', evidence_role: 'contextual_demand', quality_score: 64 },
+          discovered_terms: ['vent membrane'],
+        }],
+      },
+      {
+        username: 'bob',
+        source_evidence_ids: ['seed-post-3'],
+        retained_activity: [{
+          id: 'activity-ineligible',
+          activity_type: 'comment',
+          author: 'bob',
+          subreddit: 'Cartalk',
+          body_original: 'My relay harness fix finally worked after another leak.',
+          quality: { eligible: false, quality_band: 'weak', evidence_role: 'weak', quality_score: 24 },
+          discovered_terms: ['relay harness fix'],
+        }],
+      },
+      {
+        username: 'carol',
+        source_evidence_ids: ['seed-post-4'],
+        retained_activity: [{
+          id: 'activity-low',
+          activity_type: 'comment',
+          author: 'carol',
+          subreddit: 'Cartalk',
+          body_original: 'weather stripping idea',
+          quality: { eligible: false, quality_band: 'noise', evidence_role: 'noise', quality_score: 0 },
+          discovered_terms: ['weather stripping idea'],
+        }],
+      },
+    ],
+    config,
+  );
+  const byTerm = new Map(candidates.map((candidate) => [candidate.term, candidate]));
+  const ventMembrane = byTerm.get('vent membrane');
+
+  assert.ok(ventMembrane);
+  assert.deepEqual(ventMembrane.evidence_ids, ['activity-eligible']);
+  assert.deepEqual(ventMembrane.source_evidence_ids, ['seed-post-1', 'seed-post-2']);
+  assert.equal(byTerm.has('relay harness fix'), false);
+  assert.equal(byTerm.has('weather stripping idea'), false);
+  assert.equal(candidates.some((candidate) => candidate.evidence_ids.includes('activity-ineligible')), false);
+});
+
+test('candidate phrases containing a candidate-only brand token are rejected even when extra product tokens are present', () => {
+  const candidates = extractKeywordCandidates([
+    {
+      id: 'brand-post-1',
+      type: 'post',
+      author: 'alice',
+      subreddit: 'MechanicAdvice',
+      title: 'Need a better h11 sealight bulb',
+      body_original: 'My sealight h11 bulb kept flickering, so I am comparing other options.',
+      quality: { eligible: true, quality_band: 'high', evidence_role: 'direct_experience', quality_score: 80 },
+    },
+  ], [], config);
+
+  assert.equal(candidates.some((candidate) => candidate.term === 'h11 sealight bulb'), false);
+  assert.equal(candidates.some((candidate) => candidate.term === 'sealight h11'), false);
+  assert.equal(candidates.some((candidate) => candidate.term.includes('sealight')), false);
+});
+
 function makeEvidence() {
   return [
     {

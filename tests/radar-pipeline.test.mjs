@@ -501,12 +501,12 @@ test('pipeline writes a bounded keyword candidate pool, runs one controlled seco
           { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
         ];
       }
-      if (query === 'headlight protective film') {
+      if (query === 'condensation') {
         return [
           { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
         ];
       }
-      if (query === 'condensation' || query === 'vent membrane') {
+      if (query === 'vent membrane') {
         return [];
       }
       throw new Error(`unexpected query: ${query}`);
@@ -542,7 +542,6 @@ test('pipeline writes a bounded keyword candidate pool, runs one controlled seco
   assert.deepEqual(keywordConfig.keywords, before);
   assert.deepEqual(searchCalls, [
     { query: 'headlight condensation', limit: 15 },
-    { query: 'headlight protective film', limit: 10 },
     { query: 'condensation', limit: 10 },
     { query: 'vent membrane', limit: 10 },
   ]);
@@ -555,15 +554,21 @@ test('pipeline writes a bounded keyword candidate pool, runs one controlled seco
 
   const keywordCandidates = JSON.parse(await fs.readFile(path.join(runDir, 'keyword_candidates.json'), 'utf8'));
   assert.equal(keywordCandidates.candidates.some((candidate) => candidate.term === 'headlight protective film'), true);
-  assert.equal(keywordCandidates.candidates.find((candidate) => candidate.term === 'headlight protective film')?.status, 'exploratory_used');
+  assert.equal(keywordCandidates.candidates.find((candidate) => candidate.term === 'headlight protective film')?.status, 'candidate_review');
+  assert.equal(keywordCandidates.candidates.find((candidate) => candidate.term === 'condensation')?.status, 'exploratory_used');
   assert.equal(keywordCandidates.candidates.some((candidate) => candidate.term === 'sealight'), false);
+  assert.deepEqual(keywordCandidates.candidates.find((candidate) => candidate.term === 'condensation')?.source_evidence_ids, [
+    'comment-c1',
+    'post-p1',
+    'post-p2',
+  ]);
 
   const checkpoint = JSON.parse(await fs.readFile(path.join(runDir, 'round_two_checkpoint.json'), 'utf8'));
-  assert.deepEqual(checkpoint.selected_terms, ['headlight protective film', 'condensation', 'vent membrane']);
+  assert.deepEqual(checkpoint.selected_terms, ['condensation', 'vent membrane']);
   assert.equal(checkpoint.completed_rounds, 1);
   assert.equal(checkpoint.failures.length, 0);
   assert.equal(result.manifest.counts.keyword_candidates >= 2, true);
-  assert.equal(result.manifest.counts.round_two_terms, 3);
+  assert.equal(result.manifest.counts.round_two_terms, 2);
   assert.equal(result.manifest.counts.round_two_additions, 1);
 });
 
@@ -615,13 +620,13 @@ test('pipeline resumes the round-two checkpoint, retries only failed exploratory
           { id: 'p2', title: 'I bought a vent membrane for my Silverado headlight leak', selftext: 'The condensation came back after I installed new bulbs, so I need a better vent membrane before I replace the assembly again. Budget is under $120.', subreddit: 'sub1', score: 18, num_comments: 5, permalink: '/comments/p2/x', author: 'bob' },
         ];
       }
-      if (query === 'headlight protective film') {
+      if (query === 'condensation') {
         if (!retryRoundTwo) throw new Error('temporary round-two throttle');
         return [
           { id: 'p3', title: 'Protective film kept my headlights clear', selftext: 'F-150 owner here. Bought it after another condensation leak.', subreddit: 'sub2', score: 19, num_comments: 6, permalink: '/comments/p3/x', author: 'carol' },
         ];
       }
-      if (query === 'condensation' || query === 'vent membrane') {
+      if (query === 'vent membrane') {
         return [];
       }
       throw new Error(`unexpected query: ${query}`);
@@ -668,10 +673,9 @@ test('pipeline resumes the round-two checkpoint, retries only failed exploratory
 
   assert.deepEqual(searchCalls, [
     { query: 'headlight condensation', limit: 15 },
-    { query: 'headlight protective film', limit: 10 },
     { query: 'condensation', limit: 10 },
     { query: 'vent membrane', limit: 10 },
-    { query: 'headlight protective film', limit: 10 },
+    { query: 'condensation', limit: 10 },
   ]);
   assert.equal(resumed.manifest.status, 'complete');
   assert.equal(resumed.manifest.counts.round_two_failures, 0);
