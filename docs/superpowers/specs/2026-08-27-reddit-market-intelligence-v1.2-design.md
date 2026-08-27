@@ -26,7 +26,7 @@ V1.2 is market-generic. Automotive lighting remains the first test configuration
 
 - No seasonality prediction.
 - No private Reddit data or login credential export.
-- No inference of age, income, race, health, precise location, or other sensitive attributes.
+- No model inference of age, income, race, health, precise location, or other sensitive attributes from usernames, avatars, language, communities, or behavior. Explicit self-declarations may be retained only under the aggregation rules in Section 7.
 - No automatic promotion of discovered terms into the formal keyword pool.
 - No automatic marketplace ordering, supplier contact, purchasing, repository push, merge, or release by Hermes.
 - No claim of market size from Reddit frequency alone.
@@ -190,6 +190,16 @@ The selector prioritizes evidence quality, product specificity, purchase/ownersh
 For each selected author, adapters may read up to 50 public Reddit activities from the most recent 180 days. Only activity relevant to the configured market, product ecosystem, purchase behavior, usage scenario, installation, repair, accessories, adjacent categories, or community vocabulary is retained. Irrelevant personal history is discarded immediately and never written to run artifacts.
 
 The canonical author-activity record includes public username, activity type, subreddit, timestamp, permalink, original text, relevance reasons, quality result, product concepts, pain points, and discovered terms. No sensitive demographic inference is permitted.
+
+Explicit self-declarations may contribute to aggregate persona context under these rules:
+
+- age is converted to an age band and never displayed as an exact age;
+- an explicitly stated US state or broad region may be retained, but city-level or more precise location is discarded;
+- income is never inferred; explicit budgets, price bands, price sensitivity, purchase frequency, and product/vehicle ownership are retained instead;
+- race and health are not used as product-opportunity or persona variables even when incidentally mentioned;
+- occupation, vehicle, DIY ability, and household/use context may be retained only when explicitly stated and relevant to the research;
+- every retained declaration stores `source: self_declared`, evidence ID, permalink, and observation timestamp;
+- demographic aggregates are displayed only when at least 10 qualified users support the group; representative-user cards do not expose individual sensitive attributes.
 
 ### 7.3 Persona gate
 
