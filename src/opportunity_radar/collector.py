@@ -1,10 +1,12 @@
 """Injectable OpenCLI collection with resumable, local post checkpoints."""
 
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 from .models import CollectionSettings, Community, ShortlistedPost, WindowedPost
@@ -37,6 +39,7 @@ class ThreadDocument:
 class CollectionFailure:
     """Secret-free structured failure information for a resumable target."""
 
+    community: str
     post_id: str | None
     stage: str
     message: str
@@ -64,7 +67,8 @@ class OpenCliCollector:
     ) -> None:
         self._runner = runner
         self._settings = settings or CollectionSettings()
-        self._sleeper = sleeper or _no_sleep
+        self._sleeper = sleeper or time.sleep
+        self._successful_checkpoints: dict[Path, Mapping[str, Any]] = {}
 
     def collect(
         self,
@@ -78,32 +82,52 @@ class OpenCliCollector:
         """Preserve all list surfaces, then optionally deep-read up to 30 posts/community."""
         if shortlist_limit < 1:
             raise ValueError("shortlist_limit must be at least one")
-        all_records: list[Mapping[str, Any]] = []
+        records_by_community: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         failures: list[CollectionFailure] = []
         for community in communities:
             for surface, arguments in _listing_commands(community.name):
                 try:
                     raw_text = self._runner(arguments)
-                    records = _parse_records(raw_text)
                     _write_raw_listing(paths.raw_dir, community.name, surface, raw_text)
+                    records = _parse_records(raw_text)
                     for record in records:
                         item = dict(record)
                         item["source_surface"] = surface
-                        all_records.append(item)
+                        records_by_community[community.name].append(item)
                 except Exception as error:
-                    failures.append(CollectionFailure(None, f"listing:{community.name}:{surface}", _safe_error(error)))
+                    failures.append(
+                        CollectionFailure(
+                            community=community.name,
+                            post_id=None,
+                            stage=f"listing:{community.name}:{surface}",
+                            message=_safe_error(error),
+                        )
+                    )
 
-        candidates = window_posts(normalize_and_deduplicate(all_records), as_of=as_of)
-        shortlisted = score_shortlist(candidates, limit=min(shortlist_limit, 30))
+        candidates: list[WindowedPost] = []
+        shortlisted_targets: list[tuple[str, ShortlistedPost]] = []
+        for community in communities:
+            normalized = normalize_and_deduplicate(records_by_community.get(community.name, ()))
+            community_candidates = window_posts(normalized, as_of=as_of)
+            candidates.extend(community_candidates)
+            shortlisted_targets.extend(
+                (community.name, entry)
+                for entry in score_shortlist(community_candidates, limit=min(shortlist_limit, 30))
+            )
+        shortlisted = [entry for _, entry in shortlisted_targets]
         if not deep_read:
-            return CollectionResult(candidates, shortlisted, (), tuple(failures))
+            return CollectionResult(tuple(candidates), tuple(shortlisted), (), tuple(failures))
 
         deep_reads: list[ThreadDocument] = []
-        for position, entry in enumerate(shortlisted):
+        for position, (community_name, entry) in enumerate(shortlisted_targets):
             if position:
                 self._sleeper(self._settings.request_interval_seconds)
             checkpoint = paths.checkpoints_dir / f"{entry.post.post_id}.json"
-            prior = _read_checkpoint(checkpoint)
+            prior = self._successful_checkpoints.get(checkpoint)
+            if prior is None:
+                prior = _read_checkpoint(checkpoint)
+                if prior is not None and prior.get("status") == "success":
+                    self._successful_checkpoints[checkpoint] = prior
             if prior is not None and prior.get("status") == "success":
                 deep_reads.append(_thread_from_checkpoint(prior, entry.post))
                 continue
@@ -111,16 +135,30 @@ class OpenCliCollector:
                 raw_text = self._runner(_read_command(entry.post.post_id, self._settings))
                 raw_thread = _parse_json(raw_text)
                 thread = _thread_from_raw(raw_thread, entry.post)
-                _write_checkpoint(checkpoint, {"status": "success", "thread": raw_thread})
+                success_document = {"status": "success", "thread": raw_thread}
+                _write_checkpoint(checkpoint, success_document)
+                self._successful_checkpoints[checkpoint] = success_document
                 deep_reads.append(thread)
             except Exception as error:
-                failure = CollectionFailure(entry.post.post_id, "deep_read", _safe_error(error))
+                failure = CollectionFailure(
+                    community=community_name,
+                    post_id=entry.post.post_id,
+                    stage="deep_read",
+                    message=_safe_error(error),
+                )
+                self._successful_checkpoints.pop(checkpoint, None)
                 _write_checkpoint(
                     checkpoint,
-                    {"status": "failed", "post_id": entry.post.post_id, "stage": failure.stage, "message": failure.message},
+                    {
+                        "community": failure.community,
+                        "status": "failed",
+                        "post_id": entry.post.post_id,
+                        "stage": failure.stage,
+                        "message": failure.message,
+                    },
                 )
                 failures.append(failure)
-        return CollectionResult(candidates, shortlisted, tuple(deep_reads), tuple(failures))
+        return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures))
 
 
 def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -210,7 +248,3 @@ def _safe_path_component(value: str) -> str:
 
 def _safe_error(error: BaseException) -> str:
     return f"{type(error).__name__}: external operation failed"
-
-
-def _no_sleep(_: float) -> None:
-    return None

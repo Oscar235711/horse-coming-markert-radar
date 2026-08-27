@@ -32,3 +32,52 @@
 ## Follow-up concern
 
 The exact OpenCLI command forms are based on the repository's established `reddit read` invocation; a live acceptance run is still appropriate once the user provides a controlled Chrome session. No live calls were made here.
+
+## Fix round 1 — collector follow-ups
+
+### RED / GREEN evidence
+
+1. Per-requested-community shortlist cap
+   - RED: `python -m pytest tests/test_collection_and_deepseek.py::test_collector_caps_deep_reads_per_requested_community_even_when_records_share_a_subreddit -v` — failed with `assert 30 == 60`; collector merged two requested communities into one 30-post bucket when the returned records shared a `subreddit` value.
+   - GREEN: reran the same command — `1 passed in 0.12s`.
+   - Full verification after the fix: `python -m pytest -q` — `27 passed`.
+
+2. Production default sleeper and interval injection
+   - RED: `python -m pytest tests/test_collection_and_deepseek.py::test_collector_uses_time_sleep_by_default_and_honors_default_and_configured_intervals -v` — failed with `ImportError: import error in opportunity_radar.collector.time`; the collector never bound `time.sleep`.
+   - GREEN: reran the same command — `1 passed in 0.10s`; the default path now sleeps `3.0` seconds and injected test sleepers still record configured intervals such as `1.25`.
+   - Full verification after the fix: `python -m pytest -q` — `27 passed`.
+
+3. Raw listing persistence before JSON parsing
+   - RED: in a temporary worktree pinned to `d7d0df8`, `python -m pytest -c pyproject.toml D:/zuop/malai/opportunity-radar-community-radar/tests/test_collection_and_deepseek.py::test_collector_preserves_raw_listing_text_before_json_parsing_failures -v` — failed with `FileNotFoundError` for `raw/listings/diesel__hot.json`; malformed JSON was not preserved.
+   - GREEN: on the current branch, reran `python -m pytest tests/test_collection_and_deepseek.py::test_collector_preserves_raw_listing_text_before_json_parsing_failures -v` — `1 passed in 0.07s`.
+   - Full verification after the fix: `python -m pytest -q` — `27 passed`.
+
+4. Successful checkpoint reuse on a third run
+   - RED: in a temporary worktree pinned to `d7d0df8`, `python -m pytest -c pyproject.toml D:/zuop/malai/opportunity-radar-community-radar/tests/test_collection_and_deepseek.py::test_collector_skips_successful_checkpoints_on_third_run_and_retries_failures -v` — failed with `assert ['t3_one.json', 't3_two.json'] == []`; successful checkpoints were still read again on the third pass.
+   - GREEN: on the current branch, reran `python -m pytest tests/test_collection_and_deepseek.py::test_collector_skips_successful_checkpoints_on_third_run_and_retries_failures -v` — `1 passed in 0.15s`.
+   - Full verification after the fix: `python -m pytest -q` — `27 passed`.
+
+5. Explicit failure community field and failed-checkpoint serialization
+   - RED: in a temporary worktree pinned to `d7d0df8`, `python -m pytest -c pyproject.toml D:/zuop/malai/opportunity-radar-community-radar/tests/test_collection_and_deepseek.py::test_collector_failure_records_and_failed_checkpoints_include_the_community -v` — failed with `TypeError: CollectionFailure.__init__() got an unexpected keyword argument 'community'`.
+   - GREEN: on the current branch, reran `python -m pytest tests/test_collection_and_deepseek.py::test_collector_failure_records_and_failed_checkpoints_include_the_community -v` — `1 passed in 0.07s`.
+   - Full verification after the fix: `python -m pytest -q` — `27 passed`.
+
+### Final verification
+
+- `python -m pytest tests/test_collection_and_deepseek.py -q` — `12 passed`.
+- `python -m pytest -q` — `27 passed`.
+- `git diff --check` — exit 0; Git emitted only LF->CRLF working-copy warnings for `src/opportunity_radar/collector.py` and `tests/test_collection_and_deepseek.py`.
+
+### Changed files
+
+- `src/opportunity_radar/collector.py`
+- `tests/test_collection_and_deepseek.py`
+- `.superpowers/sdd/task-2-report.md`
+
+### Behavior delivered in this round
+
+- Collector shortlisting is now explicitly scoped to each requested community, even when listing payloads share the same `subreddit` metadata.
+- The default deep-read pacing path uses production `time.sleep`, while tests can still inject recording or no-op sleepers and verify the default `3.0` second interval.
+- Raw listing text is written before JSON parsing so malformed payloads remain available for diagnosis.
+- Successful checkpoints are cached after a successful retry and are not re-read on a third pass through the same collector instance; failed checkpoints still retry.
+- Structured failures now carry an explicit `community` field, and failed checkpoint JSON stores that same community value.

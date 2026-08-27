@@ -7,11 +7,17 @@ import opportunity_radar
 import pytest
 
 
-def _listing(post_id: str, *, created_at: datetime, title: str = "Need a better part") -> dict:
+def _listing(
+    post_id: str,
+    *,
+    created_at: datetime,
+    title: str = "Need a better part",
+    subreddit: str = "diesel",
+) -> dict:
     return {
         "id": post_id,
         "permalink": f"/r/diesel/comments/{post_id}/example/",
-        "subreddit": "diesel",
+        "subreddit": subreddit,
         "title": title,
         "selftext": "The installed option failed after one winter.",
         "author": "owner",
@@ -112,6 +118,249 @@ def test_collector_caps_each_community_deep_read_at_thirty_posts(tmp_path) -> No
 
     assert len(result.shortlisted) == 30
     assert len([call for call in runner.calls if call[2] == "read"]) == 30
+
+
+def test_collector_caps_deep_reads_per_requested_community_even_when_records_share_a_subreddit(tmp_path) -> None:
+    """Collector limits must be scoped to the approved communities being queried."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    shared_subreddit = "shared"
+    diesel_records = [
+        _listing(
+            f"diesel{number}",
+            created_at=as_of - timedelta(days=1),
+            title=f"Diesel {number}",
+            subreddit=shared_subreddit,
+        )
+        for number in range(31)
+    ]
+    powerstroke_records = [
+        _listing(
+            f"powerstroke{number}",
+            created_at=as_of - timedelta(days=1),
+            title=f"Powerstroke {number}",
+            subreddit=shared_subreddit,
+        )
+        for number in range(31)
+    ]
+    runner = RecordingRunner(
+        {
+            "hot": json.dumps(powerstroke_records),
+            "top:month": json.dumps(powerstroke_records),
+            "top:year": json.dumps(powerstroke_records),
+            "new": json.dumps(powerstroke_records),
+        },
+        {record["id"]: [json.dumps([])] for record in diesel_records + powerstroke_records},
+    )
+    community_surfaces = {
+        "diesel": diesel_records,
+        "powerstroke": powerstroke_records,
+    }
+
+    def per_community_runner(arguments: tuple[str, ...]) -> str:
+        if arguments[2] == "read":
+            return runner(arguments)
+        community = arguments[3]
+        runner.calls.append(arguments)
+        return json.dumps(community_surfaces[community])
+
+    paths = opportunity_radar.create_run_paths(tmp_path, "run-3b")
+
+    result = opportunity_radar.OpenCliCollector(runner=per_community_runner, sleeper=lambda _: None).collect(
+        (
+            opportunity_radar.Community("diesel"),
+            opportunity_radar.Community("powerstroke"),
+        ),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        shortlist_limit=99,
+    )
+
+    shortlisted_ids = [entry.post.post_id for entry in result.shortlisted]
+    assert len(shortlisted_ids) == 60
+    assert len([post_id for post_id in shortlisted_ids if post_id.startswith("t3_diesel")]) == 30
+    assert len([post_id for post_id in shortlisted_ids if post_id.startswith("t3_powerstroke")]) == 30
+    assert len([call for call in runner.calls if call[2] == "read"]) == 60
+
+
+def test_collector_uses_time_sleep_by_default_and_honors_default_and_configured_intervals(tmp_path, monkeypatch) -> None:
+    """Default production pacing must sleep three seconds unless a test injects its own sleeper."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    listings = {
+        surface: json.dumps(
+            [
+                _listing("one", created_at=as_of - timedelta(days=2)),
+                _listing("two", created_at=as_of - timedelta(days=3)),
+            ]
+        )
+        for surface in ("hot", "top:month", "top:year", "new")
+    }
+    reads = {
+        "one": [json.dumps([])],
+        "two": [json.dumps([])],
+    }
+    default_sleeps: list[float] = []
+    monkeypatch.setattr("opportunity_radar.collector.time.sleep", default_sleeps.append)
+
+    default_paths = opportunity_radar.create_run_paths(tmp_path, "run-4a")
+    opportunity_radar.OpenCliCollector(runner=RecordingRunner(listings, reads.copy())).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=default_paths,
+        as_of=as_of,
+        deep_read=True,
+    )
+
+    configured_sleeps: list[float] = []
+    configured_paths = opportunity_radar.create_run_paths(tmp_path, "run-4b")
+    opportunity_radar.OpenCliCollector(
+        runner=RecordingRunner(
+            listings,
+            {
+                "one": [json.dumps([])],
+                "two": [json.dumps([])],
+            },
+        ),
+        settings=opportunity_radar.CollectionSettings(request_interval_seconds=1.25),
+        sleeper=configured_sleeps.append,
+    ).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=configured_paths,
+        as_of=as_of,
+        deep_read=True,
+    )
+
+    assert default_sleeps == [3.0]
+    assert configured_sleeps == [1.25]
+
+
+def test_collector_preserves_raw_listing_text_before_json_parsing_failures(tmp_path) -> None:
+    """Malformed OpenCLI listing JSON must still be written to disk for diagnosis."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    malformed = "{not valid json"
+    runner = RecordingRunner(
+        {
+            "hot": malformed,
+            "top:month": json.dumps([]),
+            "top:year": json.dumps([]),
+            "new": json.dumps([]),
+        }
+    )
+    paths = opportunity_radar.create_run_paths(tmp_path, "run-4c")
+
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+    )
+
+    assert len(result.failures) == 1
+    assert result.failures[0].post_id is None
+    assert result.failures[0].stage == "listing:diesel:hot"
+    assert result.failures[0].message == "JSONDecodeError: external operation failed"
+    assert (paths.raw_dir / "listings" / "diesel__hot.json").read_text(encoding="utf-8") == malformed
+
+
+def test_collector_skips_successful_checkpoints_on_third_run_and_retries_failures(tmp_path, monkeypatch) -> None:
+    """Successful deep reads should stop calling OpenCLI on later runs while failed checkpoints can recover."""
+    import importlib
+
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    listings = {
+        surface: json.dumps(
+            [
+                _listing("one", created_at=as_of - timedelta(days=2)),
+                _listing("two", created_at=as_of - timedelta(days=3)),
+            ]
+        )
+        for surface in ("hot", "top:month", "top:year", "new")
+    }
+    runner = RecordingRunner(
+        listings,
+        {
+            "one": [RuntimeError("temporary failure"), json.dumps([{"id": "c1", "body": "Recovered."}])],
+            "two": [json.dumps([{"id": "c2", "body": "Succeeded first."}])],
+        },
+    )
+    paths = opportunity_radar.create_run_paths(tmp_path, "run-4d")
+    collector = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None)
+    collector_module = importlib.import_module("opportunity_radar.collector")
+    original_read_checkpoint = collector_module._read_checkpoint
+    checkpoint_reads: list[str] = []
+
+    def recording_read_checkpoint(path):
+        checkpoint_reads.append(path.name)
+        return original_read_checkpoint(path)
+
+    monkeypatch.setattr(collector_module, "_read_checkpoint", recording_read_checkpoint)
+
+    first = collector.collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        shortlist_limit=2,
+    )
+    second = collector.collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        shortlist_limit=2,
+    )
+    checkpoint_reads.clear()
+    third = collector.collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        shortlist_limit=2,
+    )
+
+    read_calls = [call for call in runner.calls if call[2] == "read"]
+    assert [entry.post.post_id for entry in first.deep_reads] == ["t3_two"]
+    assert [failure.post_id for failure in first.failures] == ["t3_one"]
+    assert [entry.post.post_id for entry in second.deep_reads] == ["t3_one", "t3_two"]
+    assert [entry.post.post_id for entry in third.deep_reads] == ["t3_one", "t3_two"]
+    assert checkpoint_reads == []
+    assert read_calls == [
+        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "reddit", "read", "two", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
+    ]
+
+
+def test_collector_failure_records_and_failed_checkpoints_include_the_community(tmp_path) -> None:
+    """Failures need explicit community attribution both in memory and on disk."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    listings = {
+        surface: json.dumps([_listing("one", created_at=as_of - timedelta(days=2), subreddit="shared")])
+        for surface in ("hot", "top:month", "top:year", "new")
+    }
+    runner = RecordingRunner(listings, {"one": [RuntimeError("temporary failure")]})
+    paths = opportunity_radar.create_run_paths(tmp_path, "run-4e")
+
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+    )
+
+    assert result.failures == (
+        opportunity_radar.CollectionFailure(
+            community="diesel",
+            post_id="t3_one",
+            stage="deep_read",
+            message="RuntimeError: external operation failed",
+        ),
+    )
+    assert json.loads((paths.checkpoints_dir / "t3_one.json").read_text(encoding="utf-8")) == {
+        "community": "diesel",
+        "message": "RuntimeError: external operation failed",
+        "post_id": "t3_one",
+        "stage": "deep_read",
+        "status": "failed",
+    }
 
 
 class FakeTransport:
