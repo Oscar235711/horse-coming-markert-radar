@@ -30,7 +30,7 @@ test('lighting pilot config preserves 14 anchors and full-category limits', asyn
   assert.ok(config.keywords.expanded.includes('CANbus adapter'));
   const queryText = config.query_groups.join(' ').toLowerCase();
   for (const anchor of config.keywords.anchors) assert.ok(queryText.includes(anchor.toLowerCase()), anchor);
-  assert.ok(config.limits.posts >= 30 && config.limits.posts <= 50);
+  assert.ok(config.limits.posts >= 30 && config.limits.posts <= 200);
   assert.equal(config.limits.deep_dive_posts, 12);
   assert.equal(config.limits.comments_per_post, 20);
   assert.ok(config.subreddits.length >= 10 && config.subreddits.length <= 15);

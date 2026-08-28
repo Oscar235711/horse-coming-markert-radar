@@ -13,8 +13,8 @@ export async function loadLightingConfig(configPath) {
   if (!Array.isArray(config.keywords.anchors) || config.keywords.anchors.length !== 14) {
     throw new Error('Lighting pilot config must preserve exactly 14 anchor keywords');
   }
-  if (config.limits.posts < 30 || config.limits.posts > 50) {
-    throw new Error('Pilot post limit must be between 30 and 50');
+  if (config.limits.posts < 30 || config.limits.posts > 200) {
+    throw new Error('Pilot post limit must be between 30 and 200');
   }
   if (config.limits.comments_per_post > 20) {
     throw new Error('Pilot comment limit must not exceed 20');
