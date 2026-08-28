@@ -89,18 +89,25 @@ export function scorePost(post) {
 
 function normalizeComment(comment, postId) {
   const item = comment?.data ?? comment ?? {};
-  const id = String(item.id ?? '').replace(/^t1_/, '');
+  const id = String(item.id ?? item.comment_id ?? '').replace(/^t1_/, '');
   const created = Number(item.created_utc ?? item.created ?? 0);
-  return {
+  const normalized = {
     id: `comment-${id}`,
     comment_id: id,
     post_id: postId,
     author: item.author && item.author !== '[deleted]' ? String(item.author) : null,
-    body_original: String(item.body ?? '').trim(),
+    body_original: String(item.body ?? item.body_original ?? '').trim(),
     score: Number(item.score ?? item.ups ?? 0) || 0,
     created_at: created > 0 ? new Date(created * 1000).toISOString() : null,
     url: asRedditUrl(item.permalink ?? item.url, postId),
   };
+  if (typeof item.precision === 'string' && item.precision.trim()) {
+    normalized.precision = item.precision.trim();
+  }
+  if (typeof item.link_precision === 'string' && item.link_precision.trim()) {
+    normalized.link_precision = item.link_precision.trim();
+  }
+  return normalized;
 }
 
 export function normalizeAuthorActivity(input, { username = null, transport = 'unknown', collectedAt = new Date().toISOString() } = {}) {

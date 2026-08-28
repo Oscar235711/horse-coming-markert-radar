@@ -247,6 +247,29 @@ test('collectAuthorActivity enforces author and total limits, writes checkpoints
   assert.equal(result.failures.length, 1);
   assert.equal(result.failures[0].username, 'private_user');
   assert.equal(result.summary.retained_activities, 3);
+  const failureAttempts = (await fs.readFile(path.join(runDir, 'failure_attempts.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(failureAttempts.length, 1);
+  assert.deepEqual(Object.keys(failureAttempts[0]).sort(), [
+    'attempt',
+    'error_category',
+    'message',
+    'occurred_at',
+    'retryable',
+    'stage',
+    'transport',
+    'username',
+  ]);
+  assert.equal(failureAttempts[0].stage, 'author-activity');
+  assert.equal(failureAttempts[0].username, 'private_user');
+  assert.equal(failureAttempts[0].attempt, 1);
+  assert.equal(failureAttempts[0].transport, 'unknown');
+  assert.equal(failureAttempts[0].error_category, 'access');
+  assert.equal(failureAttempts[0].retryable, true);
+  assert.match(failureAttempts[0].occurred_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(failureAttempts[0].message, /private profile/i);
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'alice.json')), true);
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'charlie.json')), true);
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'private_user.json')), false);

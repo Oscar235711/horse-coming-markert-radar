@@ -258,6 +258,7 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
   );
   const afterUtc = normalizeIsoDate(options.afterUtc) ?? new Date(Date.now() - DEFAULT_ACTIVITY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const timeoutMs = clampPositiveInteger(options.timeoutMs, 30000);
+  const now = typeof options.now === 'function' ? options.now : () => new Date();
   const authorsDir = path.join(runDir, 'raw', 'authors');
   const failureAttemptsPath = path.join(runDir, 'failure_attempts.jsonl');
   const historicalAttempts = await readJsonlIfExists(failureAttemptsPath);
@@ -345,8 +346,9 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
         attemptsPath: failureAttemptsPath,
         attemptCounts,
         stage: 'author-activity',
+        transport: adapter.name ?? 'unknown',
+        now,
         username,
-        evidence_ids: [...new Set(author?.evidence_ids ?? [])].sort(),
         error,
       }));
     }
@@ -671,8 +673,9 @@ async function recordFailureAttempt({
   attemptsPath,
   attemptCounts,
   stage,
+  transport,
+  now,
   username,
-  evidence_ids,
   error,
 }) {
   const key = failureKey({ stage, username });
@@ -681,12 +684,26 @@ async function recordFailureAttempt({
   const message = error instanceof Error ? error.message : String(error);
   const failure = {
     stage,
-    username,
-    evidence_ids,
     attempt,
-    error: message,
-    retryable: isRetryable(error),
+    transport,
+    occurred_at: now().toISOString(),
+    error_category: classifyFailure(message, error),
+    retryable: isRetryableFailure(error, message),
+    message,
+    username,
   };
   await appendJsonl(attemptsPath, [failure]);
   return failure;
+}
+
+function classifyFailure(message, error) {
+  const text = `${message} ${error?.status ?? ''}`.toLowerCase();
+  if (/\b(429|rate limit(?:ed)?|throttle|timeout|temporar)/.test(text)) return 'transient';
+  if (/\b(403|404|private|deleted|suspended)\b/.test(text)) return 'access';
+  return 'runtime';
+}
+
+function isRetryableFailure(error, message) {
+  if (typeof error?.status === 'number') return error.status === 403 || error.status === 404 || error.status === 429;
+  return /\b(rate limit(?:ed)?|throttle|timeout|temporar|private|deleted|suspended|403|404|429)\b/i.test(message);
 }

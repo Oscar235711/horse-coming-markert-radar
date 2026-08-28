@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { runLightingRadar } from '../src/radar-runner.mjs';
+import { validateAgainstSchemaFile } from './helpers/schema-validator.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const config = {
   schema_version: '1.0.0',
@@ -50,6 +54,8 @@ test('runner produces normalized data, analysis, graph, and offline report in on
   assert.equal(result.manifest.artifacts.quality_evidence, 'quality_evidence.jsonl');
   assert.equal(manifest.artifacts.opportunities, 'opportunities.json');
   assert.equal(manifest.counts.keyword_cloud_terms, result.keywordCloud.terms.length);
+  assert.deepEqual(await validateAgainstSchemaFile(repoRoot, 'run-manifest.schema.json', result.manifest), []);
+  assert.deepEqual(await validateAgainstSchemaFile(repoRoot, 'run-manifest.schema.json', manifest), []);
   assert.equal(opportunitiesArtifact.run_id, 'runner-run');
   assert.ok(Array.isArray(opportunitiesArtifact.candidate_signals));
 });

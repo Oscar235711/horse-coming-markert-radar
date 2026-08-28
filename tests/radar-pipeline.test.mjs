@@ -3,13 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildOpenCliSearchArgs,
+  createOpenCliAdapter,
   createPublicJsonAdapter,
   parseRedditAtom,
   runRadarPipeline,
 } from '../src/radar-pipeline.mjs';
+import { validateAgainstSchemaFile } from './helpers/schema-validator.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const config = {
   schema_version: '1.0.0',
@@ -31,6 +36,44 @@ test('OpenCLI search arguments keep the executable path external and constrain t
   assert.ok(args.includes('--time'));
   assert.ok(args.includes('year'));
   assert.ok(!args.includes('opencli'));
+});
+
+test('OpenCLI detail parsing keeps synthetic comment IDs stable across row-order changes and uses post-level links only', async () => {
+  const post = { post_id: 'abc123', subreddit: 'Cartalk' };
+  const payloads = [
+    [
+      { type: 'POST', subreddit: 'Cartalk', title: 'Headlight condensation', text: 'Need help' },
+      { type: 'L0', author: 'alice', text: '  Vent membrane fixed mine. ', score: 8 },
+      { type: 'L1', author: 'bob', text: 'Protective film helped my F-150.', score: 5 },
+      { type: 'L1', author: 'carol', text: '   [+1 more replies]   ', score: 0 },
+    ],
+    [
+      { type: 'POST', subreddit: 'Cartalk', title: 'Headlight condensation', text: 'Need help' },
+      { type: 'L1', author: 'bob', text: 'Protective film helped my F-150.', score: 5 },
+      { type: 'L0', author: 'alice', text: 'Vent membrane fixed mine.', score: 8 },
+    ],
+  ];
+  let callIndex = 0;
+  const adapter = createOpenCliAdapter({
+    executablePath: 'ignored',
+    async execImpl() {
+      return { stdout: JSON.stringify(payloads[callIndex++]) };
+    },
+  });
+
+  const first = await adapter.fetchDetails(post, { commentLimit: 10 });
+  const second = await adapter.fetchDetails(post, { commentLimit: 10 });
+
+  const firstIdsByBody = new Map(first.comments.map((comment) => [comment.body_original, comment.comment_id]));
+  const secondIdsByBody = new Map(second.comments.map((comment) => [comment.body_original, comment.comment_id]));
+  assert.equal(first.comments.length, 2);
+  assert.deepEqual([...secondIdsByBody.entries()], [...firstIdsByBody.entries()]);
+  for (const comment of first.comments) {
+    assert.match(comment.comment_id, /^abc123-cmt-[a-f0-9]{12}(?:-\d+)?$/);
+    assert.equal(comment.url, 'https://www.reddit.com/r/Cartalk/comments/abc123/');
+    assert.equal(comment.precision, 'limited');
+    assert.equal(comment.link_precision, 'post');
+  }
 });
 
 test('public JSON adapter normalizes Reddit search and caps comments', async () => {
@@ -216,10 +259,33 @@ test('pipeline collects relevant author activity, writes checkpoints, and record
   assert.equal(result.manifest.counts.authors_collected, 1);
   assert.equal(result.manifest.counts.author_activities, 1);
   assert.equal(result.manifest.status, 'partial');
+  assert.equal(result.manifest.unresolved_failures, 1);
+  assert.equal(result.manifest.cumulative_attempts, 1);
   const saved = JSON.parse(await fs.readFile(path.join(runDir, 'raw', 'authors', 'alice.json'), 'utf8'));
   assert.equal(saved.retained_activity.length, 1);
   assert.equal(JSON.stringify(saved).includes('Beach photos'), false);
   assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).includes('private_user'), true);
+  const failureAttempts = (await fs.readFile(path.join(runDir, 'failure_attempts.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(Object.keys(failureAttempts[0]).sort(), [
+    'attempt',
+    'error_category',
+    'message',
+    'occurred_at',
+    'retryable',
+    'stage',
+    'transport',
+    'username',
+  ]);
+  assert.equal(failureAttempts[0].stage, 'author-activity');
+  assert.equal(failureAttempts[0].username, 'private_user');
+  assert.equal(failureAttempts[0].transport, 'fixture');
+  assert.equal(failureAttempts[0].error_category, 'access');
+  assert.equal(failureAttempts[0].retryable, true);
+  assert.match(failureAttempts[0].occurred_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(failureAttempts[0].message, /private profile/i);
 });
 
 test('pipeline resumes existing author checkpoints without refetching retained authors', async (t) => {
@@ -356,6 +422,24 @@ test('pipeline appends failure attempts, retries only unresolved details, and cl
     .map((line) => JSON.parse(line));
   assert.equal(attemptsAfterResume.length, 1);
   assert.equal(attemptsAfterResume[0].post_id, 'bad');
+});
+
+test('pipeline writes a manifest instance that already satisfies the tracked run-manifest schema', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-manifest-schema-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const result = await runRadarPipeline({ config, adapter: fixtureAdapter({ failBad: false }), runDir, runId: 'manifest-schema-run' });
+  const manifest = JSON.parse(await fs.readFile(path.join(runDir, 'manifest.json'), 'utf8'));
+
+  assert.equal(manifest.run_id, 'manifest-schema-run');
+  assert.equal(manifest.counts.opportunities, 0);
+  assert.equal(manifest.counts.candidate_signals, 0);
+  assert.equal(manifest.counts.audience_nodes, 0);
+  assert.equal(manifest.counts.audience_edges, 0);
+  assert.equal(manifest.counts.keyword_cloud_terms, 0);
+  assert.equal(manifest.artifacts.report, 'report.html');
+  assert.equal(manifest.artifacts.failures, 'failures.jsonl');
+  assert.equal(result.manifest.artifacts.analysis, 'analysis.json');
+  assert.deepEqual(await validateAgainstSchemaFile(repoRoot, 'run-manifest.schema.json', manifest), []);
 });
 
 test('pipeline can discover automotive lighting communities outside the seed list', async (t) => {

@@ -100,6 +100,31 @@ test('normalizeComments caps output and preserves English evidence links', () =>
   assert.match(normalized[0].url, /^https:\/\/www\.reddit\.com\//);
 });
 
+test('normalizeComments preserves limited-precision synthetic OpenCLI comment metadata', () => {
+  const normalized = normalizeComments([
+    {
+      id: 'abc123-cmt-0123456789ab',
+      comment_id: 'abc123-cmt-0123456789ab',
+      post_id: 'abc123',
+      author: 'alice',
+      body: 'Vent membrane fixed mine.',
+      body_original: 'Vent membrane fixed mine.',
+      score: 8,
+      created_at: null,
+      url: 'https://www.reddit.com/r/Cartalk/comments/abc123/',
+      precision: 'limited',
+      link_precision: 'post',
+    },
+  ], { postId: 'abc123', limit: 20 });
+
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].id, 'comment-abc123-cmt-0123456789ab');
+  assert.equal(normalized[0].comment_id, 'abc123-cmt-0123456789ab');
+  assert.equal(normalized[0].precision, 'limited');
+  assert.equal(normalized[0].link_precision, 'post');
+  assert.equal(normalized[0].url, 'https://www.reddit.com/r/Cartalk/comments/abc123/');
+});
+
 test('normalizeAuthorActivity creates a canonical author activity record for posts and comments', () => {
   const post = normalizeAuthorActivity({
     kind: 't3',

@@ -281,6 +281,7 @@ export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync 
             created_at: null,
             url: `https://www.reddit.com/r/${String(post.subreddit ?? '').replace(/^r\//i, '')}/comments/${post.post_id}/`,
             precision: 'limited',
+            link_precision: 'post',
           };
         });
       return { post: rawPost, comments: comments.slice(0, commentLimit) };
@@ -748,6 +749,8 @@ function buildAuthorSelectionEvidence(details) {
         body_original: comment.body_original ?? comment.body ?? '',
         url: comment.url,
         score: comment.score,
+        ...(comment.precision ? { precision: comment.precision } : {}),
+        ...(comment.link_precision ? { link_precision: comment.link_precision } : {}),
       });
     }
   }
