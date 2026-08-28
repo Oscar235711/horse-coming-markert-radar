@@ -5,7 +5,8 @@ import { createOpenAiCompatibleAnalyzer, validateEnrichment } from '../src/llm-c
 
 test('validateEnrichment accepts merge-safe updates with cited facts', () => {
   const result = validateEnrichment({
-    executive_summary: 'LLM enriched summary',
+    executive_summary: { text: 'LLM enriched summary', evidence_ids: ['ev-1'] },
+    seller_verdict: { text: 'LLM verdict', evidence_ids: ['ev-2'] },
     candidate_signals: [
       {
         id: 'protective-headlight-film',
@@ -28,7 +29,8 @@ test('validateEnrichment accepts merge-safe updates with cited facts', () => {
 
   assert.equal(result.valid, true);
   assert.deepEqual(result.errors, []);
-  assert.equal(result.value.executive_summary, 'LLM enriched summary');
+  assert.equal(result.value.executive_summary.text, 'LLM enriched summary');
+  assert.equal(result.value.seller_verdict.text, 'LLM verdict');
   assert.equal(result.value.candidate_signals[0].claims.facts[0].text, '公开样本已出现安装与购买场景。');
 });
 
@@ -83,22 +85,53 @@ test('validateEnrichment rejects unknown evidence ids', () => {
   assert.match(result.errors.join('\n'), /unknown evidence id/i);
 });
 
-test('OpenAI-compatible analyzer uses dsv4pro, merges safe updates, and preserves rule fields', async () => {
+test('validateEnrichment drops unauditable summary overrides but keeps valid merge-safe patches', () => {
+  const result = validateEnrichment({
+    executive_summary: 'legacy uncited summary',
+    seller_verdict: { text: 'unsupported evidence', evidence_ids: ['invented-id'] },
+    candidate_signals: [
+      {
+        id: 'protective-headlight-film',
+        label: '车灯保护膜方向',
+        claims: {
+          facts: [{ text: '公开样本已出现安装与购买场景。', evidence_ids: ['ev-1'] }],
+        },
+      },
+    ],
+  }, ['ev-1']);
+
+  assert.equal(result.valid, true);
+  assert.equal('executive_summary' in result.value, false);
+  assert.equal('seller_verdict' in result.value, false);
+  assert.equal(result.value.candidate_signals[0].claims.facts[0].text, '公开样本已出现安装与购买场景。');
+});
+
+test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire model, and preserves rule fallbacks', async () => {
   let requestedUrl = '';
   let requestedBody = null;
+  let requestedTimeoutMs = null;
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => {
+    requestedTimeoutMs = ms;
+    return Symbol('timeout-signal');
+  };
+
+  try {
   const analyzer = createOpenAiCompatibleAnalyzer({
     baseUrl: 'https://example.test/v1',
     apiKey: 'test-key',
-    model: 'ignored-model-name',
+    model: 'IGNORED-MODEL-NAME',
     fetchImpl: async (url, options) => {
       requestedUrl = String(url);
       requestedBody = JSON.parse(String(options.body));
       assert.equal(options.headers.Authorization, 'Bearer test-key');
+      assert.equal(typeof options.signal, 'symbol');
       return createJsonResponse({
         choices: [{
           message: {
             content: JSON.stringify({
-              executive_summary: 'LLM enriched',
+              executive_summary: { text: 'LLM enriched', evidence_ids: ['ev-1'] },
+              seller_verdict: 'legacy uncited verdict',
               candidate_signals: [
                 {
                   id: 'protective-headlight-film',
@@ -126,12 +159,24 @@ test('OpenAI-compatible analyzer uses dsv4pro, merges safe updates, and preserve
 
   assert.equal(requestedUrl, 'https://example.test/v1/chat/completions');
   assert.equal(requestedBody.model, 'dsv4pro');
+  assert.equal(requestedTimeoutMs, 30000);
+  assert.equal(requestedBody.response_format.type, 'json_schema');
+  assert.equal(requestedBody.response_format.json_schema.name, 'dsv4pro_enrichment_patch');
+  assert.equal(requestedBody.response_format.json_schema.strict, true);
+  assert.equal(
+    requestedBody.response_format.json_schema.schema.$id,
+    'https://example.invalid/schemas/dsv4pro-enrichment.schema.json',
+  );
   assert.equal(result.executive_summary, 'LLM enriched');
+  assert.equal(result.seller_verdict, 'rules verdict');
   assert.equal(result.candidate_signals[0].id, 'protective-headlight-film');
   assert.equal(result.candidate_signals[0].label, '车灯保护膜方向');
   assert.equal(result.candidate_signals[0].opportunity_score, 42);
   assert.deepEqual(result.candidate_signals[0].claims.facts, ['公开样本已出现购买与安装反馈。']);
   assert.deepEqual(result.candidate_signals[0].claims.unknowns, ['制造成本']);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
 });
 
 test('OpenAI-compatible analyzer retries once after malformed JSON using the 30-second wait', async () => {
@@ -148,7 +193,11 @@ test('OpenAI-compatible analyzer retries once after malformed JSON using the 30-
         });
       }
       return createJsonResponse({
-        choices: [{ message: { content: JSON.stringify({ executive_summary: 'Recovered summary' }) } }],
+        choices: [{
+          message: {
+            content: JSON.stringify({ executive_summary: { text: 'Recovered summary', evidence_ids: ['ev-1'] } }),
+          },
+        }],
       });
     },
     sleepImpl: async (ms) => {
@@ -175,7 +224,11 @@ test('OpenAI-compatible analyzer caps Retry-After at 120 seconds', async () => {
         return createErrorResponse(429, 'slow down', { 'retry-after': '300' });
       }
       return createJsonResponse({
-        choices: [{ message: { content: JSON.stringify({ seller_verdict: 'Recovered verdict' }) } }],
+        choices: [{
+          message: {
+            content: JSON.stringify({ seller_verdict: { text: 'Recovered verdict', evidence_ids: ['ev-2'] } }),
+          },
+        }],
       });
     },
     sleepImpl: async (ms) => {

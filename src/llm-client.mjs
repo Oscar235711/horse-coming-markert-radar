@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 const DSV4PRO_MODEL = 'dsv4pro';
-const DEFAULT_TIMEOUT_MS = 60000;
+const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_RETRY_DELAY_MS = 30000;
 const MAX_RETRY_AFTER_MS = 120000;
 const MAX_ATTEMPTS = 2;
@@ -47,7 +47,14 @@ export function createOpenAiCompatibleAnalyzer({
           body: JSON.stringify({
             model: DSV4PRO_MODEL,
             temperature: 0.1,
-            response_format: { type: 'json_object' },
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: 'dsv4pro_enrichment_patch',
+                strict: true,
+                schema: ENRICHMENT_SCHEMA,
+              },
+            },
             messages: [
               {
                 role: 'system',
@@ -96,23 +103,24 @@ export function createOpenAiCompatibleAnalyzer({
 }
 
 export function validateEnrichment(result, allowedEvidenceIds) {
-  const errors = validateWithSchema(result, ENRICHMENT_SCHEMA, '$');
+  const allowedIds = new Set(uniqueStrings(allowedEvidenceIds));
+  const normalized = normalizeTopLevelOverrides(result, allowedIds);
+  const errors = validateWithSchema(normalized, ENRICHMENT_SCHEMA, '$');
   if (errors.length) {
     return { valid: false, errors, value: null };
   }
 
-  const allowedIds = new Set(uniqueStrings(allowedEvidenceIds));
-  validateUpdateCollection(result?.opportunities, '$.opportunities', allowedIds, errors);
-  validateUpdateCollection(result?.candidate_signals, '$.candidate_signals', allowedIds, errors);
+  validateUpdateCollection(normalized?.opportunities, '$.opportunities', allowedIds, errors);
+  validateUpdateCollection(normalized?.candidate_signals, '$.candidate_signals', allowedIds, errors);
 
-  for (const [index, competitor] of (result?.competitors ?? []).entries()) {
+  for (const [index, competitor] of (normalized?.competitors ?? []).entries()) {
     validateEvidenceIds(competitor.evidence_ids, `$.competitors[${index}].evidence_ids`, allowedIds, errors);
   }
 
   return {
     valid: errors.length === 0,
     errors,
-    value: errors.length === 0 ? structuredClone(result) : null,
+    value: errors.length === 0 ? structuredClone(normalized) : null,
   };
 }
 
@@ -162,13 +170,15 @@ function validateEvidenceIds(evidenceIds, path, allowedIds, errors) {
 }
 
 function applyEnrichment(ruleAnalysis, enrichment) {
-  const result = {};
+  const result = {
+    ...structuredClone(ruleAnalysis ?? {}),
+  };
 
-  if (typeof enrichment.executive_summary === 'string') {
-    result.executive_summary = enrichment.executive_summary;
+  if (typeof enrichment.executive_summary?.text === 'string') {
+    result.executive_summary = enrichment.executive_summary.text;
   }
-  if (typeof enrichment.seller_verdict === 'string') {
-    result.seller_verdict = enrichment.seller_verdict;
+  if (typeof enrichment.seller_verdict?.text === 'string') {
+    result.seller_verdict = enrichment.seller_verdict.text;
   }
   if (Array.isArray(enrichment.opportunities)) {
     result.opportunities = mergeRuleCollection(
@@ -235,6 +245,38 @@ function mergeCompetitors(baseCompetitors, updates) {
     });
   }
   return [...merged.values()];
+}
+
+function normalizeTopLevelOverrides(result, allowedIds) {
+  const normalized = {};
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return result;
+  }
+
+  for (const [key, value] of Object.entries(result)) {
+    if (key === 'executive_summary' || key === 'seller_verdict') continue;
+    normalized[key] = value;
+  }
+
+  const executiveSummary = normalizeCitedTextOverride(result.executive_summary, allowedIds);
+  if (executiveSummary) normalized.executive_summary = executiveSummary;
+
+  const sellerVerdict = normalizeCitedTextOverride(result.seller_verdict, allowedIds);
+  if (sellerVerdict) normalized.seller_verdict = sellerVerdict;
+
+  return normalized;
+}
+
+function normalizeCitedTextOverride(value, allowedIds) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const text = String(value.text ?? '').trim();
+  if (!text) return null;
+
+  const evidenceIds = uniqueStrings(value.evidence_ids);
+  if (!evidenceIds.length) return null;
+  if (evidenceIds.some((evidenceId) => !allowedIds.has(evidenceId))) return null;
+
+  return { text, evidence_ids: evidenceIds };
 }
 
 function createHttpError(status, body, headers) {

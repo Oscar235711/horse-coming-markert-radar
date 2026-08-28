@@ -5,8 +5,8 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "executive_summary": { "type": "string", "minLength": 1 },
-    "seller_verdict": { "type": "string", "minLength": 1 },
+    "executive_summary": { "$ref": "#/$defs/cited_text" },
+    "seller_verdict": { "$ref": "#/$defs/cited_text" },
     "opportunities": {
       "type": "array",
       "items": { "$ref": "#/$defs/update" }
