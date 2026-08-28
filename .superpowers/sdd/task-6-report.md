@@ -52,3 +52,29 @@ Resume Task 6 in-place on top of the existing V1.2 worktree without `reset`, `ch
 - Focused review-fix suite:
   - `node --test tests/radar-report.test.mjs tests/radar-core.test.mjs tests/radar-runner.test.mjs tests/schema-contract.test.mjs`
 - Then full suite, offline dependency check, and `git diff --check` were re-run before the follow-up commit.
+
+## Final Critical Fix
+
+- Root cause: `src/radar-report.mjs` normalized sparse `candidate_signals[*].threshold_check` payloads into `{ checks: {}, required: {} }`, but `schemas/opportunity-artifact.schema.json` intentionally reuses the stricter `opportunities.schema.json#/$defs/threshold_check` contract that requires a complete boolean `checks` object plus numeric `required` thresholds.
+- Fix: introduced artifact-level threshold normalization so report artifacts now emit a complete, internally consistent `threshold_check` object even when upstream fixture data is sparse.
+- The artifact normalizer now:
+  - expands every threshold gate in `checks`;
+  - reconstructs `failures` from the normalized booleans;
+  - backfills `required` with auditable per-type defaults for `validated_entry`, `emerging_product`, and `adjacent_bundle`.
+- Added a regression in `tests/radar-report.test.mjs` that generates a real `opportunities.json`, asserts the normalized candidate payload shape, and validates the full artifact against the tracked opportunity-artifact schema.
+
+## Final Verification
+
+- Focused regression suite:
+  - `node --test tests/radar-report.test.mjs tests/schema-contract.test.mjs tests/radar-runner.test.mjs`
+- Full suite:
+  - `node --test`
+- Diff hygiene:
+  - `git diff --check`
+  - Result: no whitespace errors; only CRLF conversion warnings from Git on Windows working-copy normalization.
+- Offline self-contained check:
+  - a freshly generated fixture `report.html` still contains no external `<script src>`, no stylesheet `<link href>`, and no `fetch(` usage.
+- `file://` browser check:
+  - attempted on 2026-08-28 with the browser tool against a generated local `report.html`;
+  - blocked by browser URL security policy for local `file://` navigation;
+  - no workaround or policy bypass was attempted.

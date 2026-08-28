@@ -1,6 +1,47 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+const THRESHOLD_CHECK_KEYS = [
+  'qualified_evidence',
+  'unique_users',
+  'communities',
+  'direct_experience',
+  'contexts',
+  'core_contexts',
+  'score',
+  'concrete_product',
+  'existing_market',
+  'entry_gap',
+  'solution_validation',
+];
+
+const THRESHOLD_REQUIRED_DEFAULTS = {
+  validated_entry: {
+    unique_users: 8,
+    communities: 2,
+    direct_experience: 3,
+    contexts: 0,
+    core_contexts: 0,
+    score: 55,
+  },
+  emerging_product: {
+    unique_users: 5,
+    communities: 0,
+    direct_experience: 0,
+    contexts: 2,
+    core_contexts: 0,
+    score: 50,
+  },
+  adjacent_bundle: {
+    unique_users: 5,
+    communities: 0,
+    direct_experience: 0,
+    contexts: 0,
+    core_contexts: 2,
+    score: 50,
+  },
+};
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -656,7 +697,7 @@ function normalizeCandidateSignal(item = {}) {
     label: String(item.label ?? ''),
     category: String(item.category ?? 'candidate_signal'),
     opportunity_type: String(item.opportunity_type ?? 'emerging_product'),
-    threshold_check: normalizeThresholdCheck(item.threshold_check),
+    threshold_check: normalizeThresholdCheck(item.threshold_check, item),
     evidence_ids: uniqueStrings(item.evidence_ids ?? []),
     qualified_evidence_ids: uniqueStrings(item.qualified_evidence_ids ?? item.evidence_ids ?? []),
     claims: normalizeClaims(item.claims),
@@ -691,12 +732,29 @@ function normalizePainPoints(analysis, formalOpportunities, candidateSignals) {
   });
 }
 
-function normalizeThresholdCheck(value = {}) {
+function normalizeThresholdCheck(value = {}, item = {}) {
+  const explicitChecks = isRecord(value?.checks) ? value.checks : {};
+  const explicitFailures = new Set(uniqueStrings(value?.failures ?? []).filter((name) => THRESHOLD_CHECK_KEYS.includes(name)));
+  const hasExplicitCheckData = Object.keys(explicitChecks).length > 0 || explicitFailures.size > 0;
+  const rawPassed = value?.passed === true;
+  const fallbackCheckValue = hasExplicitCheckData ? true : rawPassed;
+  const checks = Object.fromEntries(THRESHOLD_CHECK_KEYS.map((name) => {
+    if (typeof explicitChecks[name] === 'boolean') return [name, explicitChecks[name]];
+    if (explicitFailures.has(name)) return [name, false];
+    return [name, fallbackCheckValue];
+  }));
+  const failures = THRESHOLD_CHECK_KEYS.filter((name) => checks[name] === false);
+  const requiredDefaults = THRESHOLD_REQUIRED_DEFAULTS[item?.opportunity_type] ?? THRESHOLD_REQUIRED_DEFAULTS.emerging_product;
+  const explicitRequired = isRecord(value?.required) ? value.required : {};
+  const required = Object.fromEntries(Object.entries(requiredDefaults).map(([name, fallback]) => [
+    name,
+    normalizeInteger(explicitRequired[name], fallback),
+  ]));
   return {
-    passed: Boolean(value.passed),
-    failures: uniqueStrings(value.failures ?? []),
-    checks: { ...(value.checks ?? {}) },
-    required: { ...(value.required ?? {}) },
+    passed: failures.length === 0 ? (hasExplicitCheckData ? true : rawPassed) : false,
+    failures,
+    checks,
+    required,
   };
 }
 
@@ -750,4 +808,14 @@ function normalizeSignalList(items) {
 
 function uniqueStrings(values) {
   return [...new Set((values ?? []).filter(Boolean).map((value) => String(value)))];
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeInteger(value, fallback = 0) {
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric >= 0) return numeric;
+  return fallback;
 }
