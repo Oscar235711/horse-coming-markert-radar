@@ -68,6 +68,7 @@ from .topics import (
     TopicExportArtifacts,
     export_topic_analysis,
 )
+from .report import build_topic_map, render_html
 
 __all__ = [
     "Community",
@@ -130,6 +131,8 @@ __all__ = [
     "write_manifest",
     "write_community_catalog",
     "export_topic_analysis",
+    "build_topic_map",
+    "render_html",
     "apply_diesel_evidence_gate",
     "classify_diesel_evidence",
 ]

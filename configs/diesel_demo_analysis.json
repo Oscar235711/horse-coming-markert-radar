@@ -1,0 +1,80 @@
+{
+  "analysis_version": "2.0-demo",
+  "generated_at": "2026-08-28T12:00:00+08:00",
+  "communities": ["r/Cummins", "r/Duramax", "r/powerstroke", "r/FordDiesels"],
+  "model_mode": "offline_demo_fixture",
+  "product_output_label": "机会假设，不是开品结论",
+  "keyword_candidates": [
+    {"term": "cold weather regen", "discovery_score": 78},
+    {"term": "egr cooler leak", "discovery_score": 74},
+    {"term": "downpipe fitment", "discovery_score": 69}
+  ],
+  "topics": [
+    {
+      "topic_id": "topic_cummins_cold_regen",
+      "community": "r/Cummins",
+      "canonical_key": "cold-weather-regen",
+      "label_en": "Cold-weather regen reliability",
+      "label_zh": "低温再生与冬季可靠性",
+      "summary": "车主在低温拖挂和短途通勤时反复讨论再生中断、故障灯和时间成本。",
+      "status": "formal", "trend": "rising", "heat_score": 86,
+      "post_count": 12, "author_count": 10, "commenter_count": 34, "upvote_count": 486,
+      "vehicles": ["Ram 2500/3500"], "platforms": ["6.7 Cummins"], "scenarios": ["冬季拖挂", "短途通勤"],
+      "pains": ["再生在低温短途场景中频繁中断", "故障排查依赖多个零散部件"],
+      "needs": ["更容易判断再生状态的监测方案", "适合冬季拖挂的可靠配套件"],
+      "current_solutions": ["延长高速行驶完成再生", "更换传感器并清除故障码"],
+      "gaps": ["现有方案需要反复试错，无法明确判断根因", "安装和适配说明不够清楚"],
+      "opportunity_hypotheses": ["机会假设：面向6.7 Cummins冬季拖挂的监测与安装配套组合"],
+      "category_tags": ["DPF/排放相关", "PCV/CCV配套观察"], "brand_tags": ["Ram", "Cummins"], "competitor_tags": ["OEM replacement"],
+      "validation_questions": ["低温中断是否在不同年份车型重复出现？", "用户可接受的配套组合价格带是多少？"],
+      "supporting_views": ["多位车主在冬季拖挂和短途场景报告同类中断"], "opposing_views": ["部分长途用户表示正常完成再生"],
+      "evidence": [
+        {"evidence_id": "p1:post", "post_id": "p1", "stance": "supporting", "claim_en": "My 6.7 keeps interrupting regen on short winter trips; towing is fine once I get it on the highway.", "claim_zh": "我的6.7在冬季短途行驶时总是中断再生；上高速拖挂后才正常。", "url": "https://www.reddit.com/r/Cummins/"},
+        {"evidence_id": "p2:c1", "post_id": "p2", "stance": "opposing", "claim_en": "No issue on long highway commutes, even below freezing.", "claim_zh": "即使低于冰点，长途高速通勤也没有问题。", "url": "https://www.reddit.com/r/Cummins/"}
+      ]
+    },
+    {
+      "topic_id": "topic_duramax_egr_leak",
+      "community": "r/Duramax",
+      "canonical_key": "egr-cooler-leak",
+      "label_en": "EGR cooler leak and replacement fitment",
+      "label_zh": "EGR冷却器渗漏与替换适配",
+      "summary": "Duramax用户关注冷却液渗漏、安装空间和替换件夹具可靠性，已有方案常被认为需要二次返工。",
+      "status": "formal", "trend": "stable", "heat_score": 79,
+      "post_count": 9, "author_count": 8, "commenter_count": 26, "upvote_count": 362,
+      "vehicles": ["Silverado/Sierra 2500HD"], "platforms": ["Duramax L5P/LML"], "scenarios": ["维修", "重载拖挂"],
+      "pains": ["冷却液渗漏难以定位", "狭小空间安装耗时，夹具容易再次渗漏"],
+      "needs": ["明确年份适配的替换组件", "包含可靠夹具和安装说明的组合包"],
+      "current_solutions": ["更换OEM冷却器", "购买通用替换件后自行补夹具"],
+      "gaps": ["通用套件的适配表和安装步骤不完整", "返工成本高"],
+      "opportunity_hypotheses": ["机会假设：按L5P/LML年份区分的EGR冷却器安装组合包"],
+      "category_tags": ["EGR配套", "维修/适配"], "brand_tags": ["Chevrolet", "GMC", "Duramax"], "competitor_tags": ["OEM", "aftermarket kit"],
+      "validation_questions": ["用户最常见的返工环节是夹具、密封还是空间？", "按年份拆分SKU是否能降低退货？"],
+      "supporting_views": ["多条帖子描述更换后短期再次渗漏"], "opposing_views": ["部分用户使用OEM件一次安装成功"],
+      "evidence": [
+        {"evidence_id": "p3:post", "post_id": "p3", "stance": "supporting", "claim_en": "The replacement cooler fit, but the supplied clamps seeped again after towing.", "claim_zh": "替换冷却器本体能装上，但随附夹具拖挂后又出现渗漏。", "url": "https://www.reddit.com/r/Duramax/"},
+        {"evidence_id": "p4:post", "post_id": "p4", "stance": "supporting", "claim_en": "Which kit actually fits an L5P without removing half the intake?", "claim_zh": "哪个套件能在不拆掉大半进气系统的情况下适配L5P？", "url": "https://www.reddit.com/r/Duramax/"}
+      ]
+    },
+    {
+      "topic_id": "topic_powerstroke_downpipe",
+      "community": "r/powerstroke",
+      "canonical_key": "downpipe-fitment",
+      "label_en": "Downpipe fitment and installation complexity",
+      "label_zh": "下降管适配与安装复杂度",
+      "summary": "Powerstroke车主讨论下降管安装空间、年份差异和与现有排气组合的兼容性。",
+      "status": "weak_signal", "trend": "new", "heat_score": 58,
+      "post_count": 3, "author_count": 3, "commenter_count": 7, "upvote_count": 81,
+      "vehicles": ["Ford Super Duty"], "platforms": ["6.7 Powerstroke"], "scenarios": ["改装安装"],
+      "pains": ["不同年份法兰位置和安装空间差异明显"], "needs": ["按年份明确适配并降低安装返工"],
+      "current_solutions": ["参考论坛安装帖子并自行修改"], "gaps": ["适配信息分散，缺少实车照片和尺寸说明"],
+      "opportunity_hypotheses": ["机会假设：带年份适配表和尺寸图的下降管安装包"],
+      "category_tags": ["下降管", "排气改装"], "brand_tags": ["Ford", "Powerstroke"], "competitor_tags": [],
+      "validation_questions": ["是否能在更多作者和车型上复现？"], "supporting_views": ["三位作者均提到安装空间问题"], "opposing_views": [],
+      "evidence": [
+        {"evidence_id": "p5:post", "post_id": "p5", "stance": "supporting", "claim_en": "The downpipe is advertised as bolt-on, but my 2017 Super Duty needed extra clearance.", "claim_zh": "下降管宣传为直接安装，但我的2017款Super Duty还需要额外留出空间。", "url": "https://www.reddit.com/r/powerstroke/"}
+      ]
+    }
+  ],
+  "excluded_records": []
+}

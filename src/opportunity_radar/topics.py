@@ -120,6 +120,7 @@ class TopicExportArtifacts:
     analysis_json: Path
     community_topics_json: Path
     workbook_path: Path
+    report_path: Path | None = None
 
 
 class TopicAggregator:
@@ -289,6 +290,7 @@ def export_topic_analysis(
     analysis_json = directory / "analysis.json"
     community_topics_json = directory / "community_topics.json"
     workbook_path = directory / "community_topics.xlsx"
+    report_path: Path | None = None
     requested_formats = tuple(dict.fromkeys(formats))
     _write_json(analysis_json, canonical)
     _write_json(community_topics_json, {
@@ -300,7 +302,22 @@ def export_topic_analysis(
         builder = Path(__file__).resolve().parents[2] / "scripts" / "build_topic_workbook.mjs"
         node = _resolve_node_executable(node_executable, environment)
         subprocess.run((str(node), str(builder), str(analysis_json), str(workbook_path)), check=True, capture_output=True, text=True)
-    return TopicExportArtifacts(analysis_json, community_topics_json, workbook_path)
+    if "html" in requested_formats:
+        from .report import render_html
+        report_path = render_html(canonical, directory / "report.html")
+        _write_json(directory / "community_topic_map.json", _community_topic_map(canonical))
+    return TopicExportArtifacts(analysis_json, community_topics_json, workbook_path, report_path)
+
+
+def _community_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    """Tiny graph-ready projection for future WhatToSell-style visualization."""
+    topics = [item for item in analysis.get("topics", []) if isinstance(item, Mapping)]
+    communities = [str(item) for item in analysis.get("communities", []) if item]
+    return {
+        "nodes": ([{"id": f"community:{name}", "type": "community", "label": name} for name in communities]
+                  + [{"id": str(item.get("topic_id", "")), "type": "topic", "label": item.get("label_zh", item.get("label_en", "")), "community": item.get("community")} for item in topics]),
+        "edges": [{"source": f"community:{item.get('community')}", "target": item.get("topic_id")} for item in topics if item.get("topic_id")],
+    }
 
 
 def _validated_evidence(

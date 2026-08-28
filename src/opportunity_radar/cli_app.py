@@ -43,6 +43,7 @@ from .topics import (
     TopicExportArtifacts,
     export_topic_analysis,
 )
+from .report import render_html
 
 
 ToolRunner = Callable[[tuple[str, ...]], str]
@@ -81,6 +82,7 @@ class RadarCliApp:
         )
         self._tool_runner = tool_runner or self._default_tool_runner
         self._has_custom_tool_runner = tool_runner is not None
+        self._has_custom_exporter = exporter is not None
         self._collector = collector or OpenCliCollector(
             runner=lambda arguments: self._tool_runner(self._rewrite_opencli(arguments))
         )
@@ -347,6 +349,9 @@ class RadarCliApp:
         analysis = self._aggregate_run(config, eligible_threads, analyses_by_post)
         exported = self._invoke_exporter(paths.artifacts_dir, analysis, ("json", "xlsx"))
         state["artifacts"] = self._artifact_map(exported, ("json", "xlsx"))
+        report_path = render_html(analysis, paths.artifacts_dir / "report.html")
+        state["artifacts"]["report_html"] = str(report_path)
+        state["artifacts"]["community_topic_map_json"] = str(report_path.parent / "community_topic_map.json")
         state["artifacts"]["evidence_gate_json"] = str(audit_path)
         state["stage"] = "exported"
         state["status"] = "completed"
@@ -769,6 +774,11 @@ class RadarCliApp:
         }
         if "xlsx" in formats:
             artifact_map["community_topics_xlsx"] = str(exported.workbook_path)
+        if "html" in formats and exported.report_path is not None:
+            artifact_map["report_html"] = str(exported.report_path)
+            map_path = exported.report_path.parent / "community_topic_map.json"
+            if map_path.exists():
+                artifact_map["community_topic_map_json"] = str(map_path)
         return artifact_map
 
     def _failure_to_dict(self, failure: CollectionFailure) -> dict[str, str | None]:
@@ -792,9 +802,11 @@ class RadarCliApp:
         requested = tuple(dict.fromkeys(value.strip().lower() for value in formats if value and value.strip()))
         if not requested:
             raise ValueError("At least one export format is required")
-        unsupported = [value for value in requested if value not in {"json", "xlsx"}]
+        unsupported = [value for value in requested if value not in {"json", "xlsx", "html"}]
         if unsupported:
             raise ValueError(f"Unsupported export format: {unsupported[0]}")
+        if "html" in requested and self._has_custom_exporter:
+            raise ValueError("Unsupported export format for a custom exporter: html")
         return requested
 
     def _find_executable(self, env_name: str, command_name: str) -> Path | None:
