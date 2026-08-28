@@ -222,12 +222,44 @@ export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync 
       return Array.isArray(payload) ? payload : payload.items ?? [];
     },
     async fetchDetails(post, { commentLimit = 20 } = {}) {
-      const args = ['reddit', 'read', post.post_id, '-f', 'json', '--window', 'background', '--site-session', 'persistent', '--limit', String(commentLimit), '--depth', '4', '--replies', '10', '--expand-more', 'true', '--expand-rounds', '3', '--max-length', '5000'];
+      const args = ['reddit', 'read', post.post_id, '-f', 'json', '--window', 'background', '--site-session', 'persistent', '--limit', String(commentLimit), '--depth', '4', '--replies', '10', '--expand-more', 'false', '--max-length', '5000'];
       const payload = await invoke(args);
       const rows = Array.isArray(payload) ? payload : payload.items ?? [];
-      const rawPost = rows.find((row) => row.kind === 'post' || row.type === 'post' || row.title) ?? post;
-      const comments = rows.filter((row) => row !== rawPost && (row.body || row.type === 'comment' || row.kind === 'comment')).slice(0, commentLimit);
-      return { post: rawPost, comments };
+      const openCliPost = rows.find((row) => {
+        const type = String(row.type ?? row.kind ?? '').toLowerCase();
+        return type === 'post' || row.title || row.selftext;
+      });
+      const rawPost = openCliPost
+        ? { ...post, ...openCliPost, body: openCliPost.text ?? post.selftext ?? post.body ?? '', subreddit: openCliPost.subreddit ?? post.subreddit ?? '' }
+        : post;
+      const postSubreddit = String(rawPost.subreddit ?? '').replace(/^r\//i, '');
+      const canonicalPostUrl = `https://www.reddit.com/r/${postSubreddit}/comments/${post.post_id}/`;
+      if (!rawPost.url || !/^https?:/i.test(rawPost.url) || rawPost.url.startsWith('https://www.reddit.com/comments/')) {
+        rawPost.url = canonicalPostUrl;
+      }
+      if (!rawPost.permalink) {
+        rawPost.permalink = `/r/${postSubreddit}/comments/${post.post_id}/`;
+      }
+      const commentRows = rows.filter((row) => {
+        const type = String(row.type ?? '').toLowerCase();
+        const text = String(row.text ?? '').trim();
+        return type.startsWith('l') && text.length > 0 && !/^\[\+?\d+ more (?:replies|top-level comments)\]$/i.test(text) && !/^\[\+?\d+ more(?: replies)?\]$/i.test(text);
+      });
+      const comments = commentRows.map((row, index) => {
+        const commentId = `${post.post_id}-c${index}`;
+        return {
+          id: commentId,
+          comment_id: commentId,
+          post_id: post.post_id,
+          author: row.author && row.author !== '[deleted]' ? String(row.author) : null,
+          body_original: String(row.text ?? '').trim(),
+          body: String(row.text ?? '').trim(),
+          score: Number(row.score ?? 0) || 0,
+          created_at: null,
+          url: `https://www.reddit.com/r/${String(post.subreddit ?? '').replace(/^r\//i, '')}/comments/${post.post_id}/`,
+        };
+      });
+      return { post: rawPost, comments: comments.slice(0, commentLimit) };
     },
     async fetchAuthorActivity(username, { limit = 50, afterUtc = null } = {}) {
       const postLimit = Math.max(1, Math.ceil(limit / 2));

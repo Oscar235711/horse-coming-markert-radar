@@ -99,7 +99,7 @@ function normalizeComment(comment, postId) {
     body_original: String(item.body ?? '').trim(),
     score: Number(item.score ?? item.ups ?? 0) || 0,
     created_at: created > 0 ? new Date(created * 1000).toISOString() : null,
-    url: asRedditUrl(item.permalink, postId),
+    url: asRedditUrl(item.permalink ?? item.url, postId),
   };
 }
 

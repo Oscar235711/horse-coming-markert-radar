@@ -243,6 +243,13 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
     .commercial-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:16px}.commercial-item{padding:10px;border:1px solid var(--line);border-radius:12px}.commercial-item span,.commercial-item strong{display:block}.commercial-item span{font-size:12px;color:var(--muted)}
     .status{display:inline-block;padding:2px 8px;border-radius:999px;background:#ece8df;font-style:normal;font-size:11px}.status.fact{background:#d7efe5;color:#0c5c47}.status.inference{background:#fff0cb;color:#7c5400}.status.unknown{background:#ececec;color:#5d5d5d}
     .empty{padding:24px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fbf8f2}
+    details.failures-detail{margin-top:10px;border:1px solid var(--line);border-radius:14px;background:#fcfaf5;padding:0 14px}
+    details.failures-detail summary{cursor:pointer;padding:12px 2px;font-weight:700;user-select:none;list-style:none}
+    details.failures-detail summary::-webkit-details-marker{display:none}
+    details.failures-detail summary::before{content:"▸ ";color:var(--gold)}
+    details.failures-detail[open] summary::before{content:"▾ "}
+    .failures-list{margin:0 0 14px;padding-left:20px}.failures-list li{margin:4px 0;font-size:13px;line-height:1.5}.failures-list code{background:#efeae0;border-radius:6px;padding:1px 6px;font-size:12px}
+    .map-empty,.cloud-empty{padding:48px 24px;text-align:center;color:var(--muted);font-size:16px}
     .map-layout{display:grid;grid-template-columns:260px minmax(0,1fr) 320px;min-height:700px;overflow:hidden}.map-sidebar,.map-detail{padding:20px;background:#faf7f1}.map-sidebar{border-right:1px solid var(--line)}.map-detail{border-left:1px solid var(--line)}.map-canvas{overflow:auto;background-image:radial-gradient(#dbd4c6 1px,transparent 1px);background-size:24px 24px}.map-canvas svg{width:100%;height:700px;min-width:760px}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.graph-node{cursor:pointer}.graph-node text{font-size:11px;pointer-events:none;fill:var(--ink)}.graph-node.product circle{fill:var(--green);stroke:#fff;stroke-width:2}.graph-node.community circle{fill:#fff;stroke:#5f6861;stroke-width:2}.graph-edge{stroke:#b8bbb6;stroke-width:1;opacity:.7}.graph-node.dim,.graph-edge.dim{opacity:.08}.graph-node.selected circle{stroke:var(--gold);stroke-width:5}
     .keyword-layout{display:grid;grid-template-columns:320px minmax(0,1fr) 320px;gap:16px}.keyword-cloud{min-height:360px;padding:20px;display:flex;flex-wrap:wrap;gap:12px;align-content:flex-start}.cloud-term{box-shadow:none}.cloud-term.hidden{display:none}.detail-card{padding:22px}.detail-card h3{margin-bottom:12px}
     .evidence-tools{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}.evidence-tools input,.evidence-tools select,.map-controls input{width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#fff}.evidence-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.evidence-card blockquote{margin:12px 0;font-family:Georgia,serif;font-size:17px}
@@ -313,7 +320,10 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
         <p><strong>正式词：</strong>${escapeHtml((analysis.research_keywords?.anchors ?? []).join(' · ') || '未知')}</p>
         <p><strong>探索词：</strong>${escapeHtml((analysis.research_keywords?.exploratory_used ?? []).join(' · ') || '暂无')}</p>
         <p><strong>扩展词：</strong>${escapeHtml((analysis.research_keywords?.expanded ?? []).join(' · ') || '暂无')}</p>
-        <p><strong>失败：</strong>${analysis.collection_failures?.length ? analysis.collection_failures.map((item) => `${escapeHtml(item.stage)} · ${escapeHtml(item.query ?? item.post_id ?? '')} · ${escapeHtml(item.error ?? '')}`).join('<br>') : '无'}</p>
+        <details class="failures-detail"${analysis.collection_failures?.length ? '' : ' open'}>
+          <summary>失败记录（${analysis.collection_failures?.length ?? 0} 条）${analysis.collection_failures?.length ? ' <span class="muted">点击展开</span>' : ' · 无'}</summary>
+          ${analysis.collection_failures?.length ? `<ul class="failures-list">${analysis.collection_failures.map((item) => `<li><code>${escapeHtml(item.stage)}</code> · ${escapeHtml(item.query ?? item.post_id ?? '')} · <span class="muted">${escapeHtml(item.error ?? '')}</span></li>`).join('')}</ul>` : '<p class="muted">本次运行无失败记录。</p>'}
+        </details>
       </section>
 
       <section class="panel" style="margin-top:20px">
@@ -461,6 +471,17 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
 
     function renderMap() {
       mapSvg.replaceChildren();
+      if (!(audienceMap.nodes || []).length) {
+        const empty = document.createElementNS(mapNs, 'text');
+        empty.setAttribute('x', '500');
+        empty.setAttribute('y', '350');
+        empty.setAttribute('text-anchor', 'middle');
+        empty.setAttribute('fill', '#67746c');
+        empty.setAttribute('font-size', '18');
+        empty.textContent = '暂无机会或社区数据，无法绘制 Audience Map。';
+        mapSvg.appendChild(empty);
+        return;
+      }
       (audienceMap.edges || []).forEach(edge => {
         const source = positions.get(edge.source);
         const target = positions.get(edge.target);
@@ -598,6 +619,12 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
 
     function slug(value) {
       return String(value || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+    }
+
+    const initialTab = location.hash.replace(/^#/, '');
+    if (initialTab) {
+      const initialButton = document.querySelector('.tabs button[data-tab="' + initialTab + '"]');
+      if (initialButton) initialButton.click();
     }
   </script>
 </body>
