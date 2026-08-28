@@ -32,7 +32,7 @@ test('runner produces normalized data, analysis, graph, and offline report in on
 
   const result = await runLightingRadar({ config, adapter, runDir, runId: 'runner-run' });
 
-  for (const name of ['manifest.json', 'candidates.json', 'analysis.json', 'evidence.jsonl', 'audience_map.json', 'optimization_backlog.jsonl', 'report.html']) {
+  for (const name of ['manifest.json', 'candidates.json', 'analysis.json', 'audience_map.json', 'keyword_candidates.json', 'keyword_cloud.json', 'opportunities.json', 'personas.json', 'quality_evidence.jsonl', 'excluded_evidence.jsonl', 'optimization_backlog.jsonl', 'report.html']) {
     assert.equal(await exists(path.join(runDir, name)), true, name);
   }
   assert.equal(result.analysis.run_id, 'runner-run');
@@ -40,7 +40,11 @@ test('runner produces normalized data, analysis, graph, and offline report in on
   assert.ok(result.analysis.candidate_signals.length >= 1);
   assert.equal(result.audienceMap.nodes.length, 0);
   assert.equal(result.audienceMap.edges.length, 0);
+  assert.equal(result.keywordCloud.terms.length >= 1, true);
   assert.equal(result.manifest.status, 'complete');
+  assert.equal(result.manifest.artifacts.keyword_cloud, 'keyword_cloud.json');
+  assert.equal(result.manifest.artifacts.personas, 'personas.json');
+  assert.equal(result.manifest.artifacts.quality_evidence, 'quality_evidence.jsonl');
 });
 
 async function exists(filePath) {

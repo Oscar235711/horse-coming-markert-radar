@@ -6,70 +6,92 @@ import path from 'node:path';
 
 import { buildAudienceMap } from '../src/radar-core.mjs';
 import { renderReportHtml, writeReportArtifacts } from '../src/radar-report.mjs';
+import { createKeywordCloudInputs, createReportFixture } from './fixtures/task-6-report.fixture.mjs';
 
-const analysis = {
-  schema_version: '1.0.0',
-  run_id: 'report-run',
-  generated_at: '2026-08-27T00:00:00.000Z',
-  scope: { country: 'US', seasonality_in_scope: false },
-  metrics: { posts_analyzed: 2, comments_analyzed: 1, us_posts: 1, unknown_geography_posts: 1, communities: 1 },
-  executive_summary: '识别出一个车灯机会。',
-  seller_verdict: '建议先验证适配和退货风险。',
-  hotspots: { communities: [{ name: 'MechanicAdvice', count: 1 }], pains: [{ name: '闪烁/故障码', count: 1 }], behavior_segments: [{ name: '升级改装', count: 1 }] },
-  opportunities: [{
-    id: 'product-led-headlight-upgrade',
-    label: 'LED 头灯升级方案',
-    category: 'headlight',
-    opportunity_score: 78,
-    verdict: '高信号，建议验证',
-    evidence_ids: ['post-p1'],
-    communities: ['MechanicAdvice'],
-    fitment_tags: ['H11'],
-    pain_points: ['闪烁/故障码'],
-    solution_ideas: ['CANbus-safe driver'],
-    behavior_segments: ['升级改装'],
-    claims: { facts: ['1 篇帖子涉及该方案。'], inferences: ['可能存在适配缺口。'], unknowns: ['制造成本'] },
-    commercial: {
-      pricing_band: { status: 'fact', value: '$50–$100' },
-      manufacturing_complexity: { status: 'unknown', value: null },
-      shipping_complexity: { status: 'unknown', value: null },
-      return_risk: { status: 'inference', value: '可能偏高' },
-    },
-    why_not_done: { status: 'inference', text: '车型协议差异大。' },
-  }],
-  evidence: [{ id: 'post-p1', type: 'post', subreddit: 'MechanicAdvice', url: 'https://www.reddit.com/r/MechanicAdvice/comments/p1/x', score: 30, geography: 'us', quote_original: 'My H11 LED headlights flicker after install.', fact_status: 'fact' }],
-  configuration_suggestions: [],
-  analysis_engine: { rules: { status: 'complete' }, llm: { status: 'not_requested' }, active_result: 'rules' },
-  privacy_note: 'Only public automotive evidence is retained.',
-};
+const { analysis, manifest } = createReportFixture();
 
-test('report HTML is a self-contained seller report with an Audience Map tab', () => {
+test('report HTML is a self-contained WhatToSell-style report with keyword cloud, Audience Map, and persona tabs', () => {
   const audienceMap = buildAudienceMap(analysis);
-  const html = renderReportHtml({ analysis, audienceMap, manifest: { status: 'complete', counts: { failures: 0 } } });
+  const keywordCloud = { terms: [], filters: { categories: [], statuses: [] } };
+  const html = renderReportHtml({
+    analysis,
+    audienceMap,
+    keywordCloud,
+    manifest,
+  });
 
   assert.match(html, /<!doctype html>/i);
   assert.match(html, /Audience Map/);
   assert.match(html, /data-tab="map"/);
+  assert.match(html, /data-tab="keyword-cloud"/);
+  assert.match(html, /data-tab="pain"/);
+  assert.match(html, /data-tab="competitors"/);
+  assert.match(html, /data-tab="adjacent"/);
+  assert.match(html, /data-tab="personas"/);
+  assert.match(html, /关键词词云/);
+  assert.match(html, /竞品\/现有产品/);
+  assert.match(html, /用户画像/);
   assert.match(html, /<svg[^>]+id="audience-map"/);
+  assert.match(html, /id="keyword-cloud-data"/);
+  assert.match(html, /id="keyword-cloud-search"/);
+  assert.match(html, /id="keyword-cloud-score"/);
   assert.match(html, /LED 头灯升级方案/);
+  assert.match(html, /头灯透气膜维修套件/);
+  assert.match(html, /insufficient_sample/);
+  assert.match(html, /研究范围、关键词与失败记录/);
+  assert.match(html, /未知项/);
   assert.match(html, /My H11 LED headlights flicker/);
   assert.doesNotMatch(html, /<script[^>]+src=/i);
-  assert.doesNotMatch(html, /<link[^>]+href=["']https?:/i);
+  assert.doesNotMatch(html, /<link[^>]+href=/i);
+  assert.doesNotMatch(html, /fetch\(/i);
 });
 
-test('report artifacts share one JSON source of truth', async (t) => {
+test('report keeps adjacent opportunities out of the main formal-opportunity panel and preserves candidate-signal labeling', () => {
+  const audienceMap = buildAudienceMap(analysis);
+  const { candidates, evidence } = createKeywordCloudInputs();
+  const html = renderReportHtml({
+    analysis,
+    audienceMap,
+    keywordCloud: { terms: candidates, filters: { categories: ['product'], statuses: ['candidate_review', 'exploratory_used'] } },
+    manifest,
+  });
+
+  assert.match(html, /正式机会/);
+  assert.match(html, /候选信号/);
+  assert.match(html, /邻近配套/);
+  assert.match(html, /id="formal-opportunities"/);
+  assert.doesNotMatch(html, /id="formal-opportunities"[\s\S]*data-opportunity-type="adjacent_bundle"/);
+});
+
+test('report artifacts share one JSON source of truth and emit dedicated Task 6 artifacts', async (t) => {
   const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-report-'));
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));
   const audienceMap = buildAudienceMap(analysis);
+  const { candidates } = createKeywordCloudInputs();
+  const keywordCloud = { terms: candidates, filters: { categories: ['product'], statuses: ['candidate_review', 'exploratory_used'] } };
 
-  const paths = await writeReportArtifacts({ runDir, analysis, audienceMap, manifest: { status: 'complete', counts: { failures: 0 } } });
+  const paths = await writeReportArtifacts({
+    runDir,
+    analysis,
+    audienceMap,
+    keywordCloud,
+    manifest,
+  });
 
   const savedAnalysis = JSON.parse(await fs.readFile(paths.analysis, 'utf8'));
   const savedMap = JSON.parse(await fs.readFile(paths.audienceMap, 'utf8'));
+  const savedCloud = JSON.parse(await fs.readFile(paths.keywordCloud, 'utf8'));
+  const savedOpportunities = JSON.parse(await fs.readFile(paths.opportunities, 'utf8'));
+  const savedPersonas = JSON.parse(await fs.readFile(paths.personas, 'utf8'));
   const html = await fs.readFile(paths.html, 'utf8');
-  const evidenceLines = (await fs.readFile(paths.evidence, 'utf8')).trim().split('\n');
+  const qualifiedEvidenceLines = (await fs.readFile(paths.qualityEvidence, 'utf8')).trim().split('\n');
+  const excludedEvidenceLines = (await fs.readFile(paths.excludedEvidence, 'utf8')).trim().split('\n');
   assert.equal(savedAnalysis.run_id, 'report-run');
   assert.equal(savedMap.nodes.length, audienceMap.nodes.length);
-  assert.equal(evidenceLines.length, analysis.evidence.length);
+  assert.equal(savedCloud.terms.length, keywordCloud.terms.length);
+  assert.equal(savedOpportunities.opportunities.length, analysis.opportunities.length);
+  assert.equal(savedPersonas.persona_status, analysis.personas.persona_status);
+  assert.equal(qualifiedEvidenceLines.length, analysis.evidence.filter((item) => item.quality?.eligible).length);
+  assert.equal(excludedEvidenceLines.length, analysis.evidence.filter((item) => item.quality?.eligible === false).length);
   assert.match(html, /report-run/);
 });

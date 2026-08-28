@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/keyword-cloud.schema.json",
+  "title": "Keyword Cloud Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "generated_at",
+    "scope",
+    "terms",
+    "filters"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["country", "data_source", "weighting_note"],
+      "properties": {
+        "country": { "type": "string" },
+        "data_source": { "const": "keyword_cloud.json" },
+        "weighting_note": { "type": "string" }
+      }
+    },
+    "terms": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/term" }
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "statuses", "minimum_score"],
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "statuses": { "type": "array", "items": { "type": "string" } },
+        "minimum_score": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    }
+  },
+  "$defs": {
+    "representative_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "url", "subreddit", "quote_original", "quality_band"],
+      "properties": {
+        "evidence_id": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "subreddit": { "type": "string" },
+        "quote_original": { "type": "string" },
+        "quality_band": { "type": "string" }
+      }
+    },
+    "term": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "term",
+        "normalized_term",
+        "category",
+        "status",
+        "display_weight",
+        "discovery_score",
+        "unique_user_count",
+        "community_count",
+        "purchase_signal_count",
+        "pain_signal_count",
+        "average_quality_weight",
+        "score_breakdown",
+        "penalties",
+        "evidence_ids",
+        "source_evidence_ids",
+        "communities",
+        "parent_formal_terms",
+        "related_product_ids",
+        "representative_evidence"
+      ],
+      "properties": {
+        "term": { "type": "string" },
+        "normalized_term": { "type": "string" },
+        "category": {
+          "enum": [
+            "product",
+            "solution",
+            "pain",
+            "fitment",
+            "competitor_brand",
+            "use_case",
+            "adjacent_product"
+          ]
+        },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "status": {
+          "enum": [
+            "formal",
+            "exploratory_used",
+            "candidate_review",
+            "rejected",
+            "promoted_by_human"
+          ]
+        },
+        "display_weight": { "type": "number", "minimum": 1, "maximum": 100 },
+        "discovery_score": { "type": "number", "minimum": 0, "maximum": 100 },
+        "unique_user_count": { "type": "integer", "minimum": 0 },
+        "community_count": { "type": "integer", "minimum": 0 },
+        "purchase_signal_count": { "type": "integer", "minimum": 0 },
+        "pain_signal_count": { "type": "integer", "minimum": 0 },
+        "average_quality_weight": { "type": "number", "minimum": 0 },
+        "score_breakdown": { "type": "object" },
+        "penalties": { "type": "object" },
+        "evidence_ids": { "type": "array", "items": { "type": "string" } },
+        "source_evidence_ids": { "type": "array", "items": { "type": "string" } },
+        "communities": { "type": "array", "items": { "type": "string" } },
+        "parent_formal_terms": { "type": "array", "items": { "type": "string" } },
+        "related_product_ids": { "type": "array", "items": { "type": "string" } },
+        "representative_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/representative_evidence" }
+        }
+      }
+    }
+  }
+}

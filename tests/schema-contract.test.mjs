@@ -231,6 +231,70 @@ test('keyword candidate schema and exploratory search defaults are tracked', asy
   assert.equal(pilot.limits.round_two_minimum_communities, 2);
 });
 
+test('keyword cloud schema keeps display weights, evidence backlinks, and offline filter metadata explicit', async () => {
+  const keywordCloud = await schema('keyword-cloud.schema.json');
+
+  assert.deepEqual(keywordCloud.required, [
+    'schema_version',
+    'run_id',
+    'generated_at',
+    'scope',
+    'terms',
+    'filters',
+  ]);
+  assert.deepEqual(keywordCloud.$defs.term.required, [
+    'term',
+    'normalized_term',
+    'category',
+    'status',
+    'display_weight',
+    'discovery_score',
+    'unique_user_count',
+    'community_count',
+    'purchase_signal_count',
+    'pain_signal_count',
+    'average_quality_weight',
+    'score_breakdown',
+    'penalties',
+    'evidence_ids',
+    'source_evidence_ids',
+    'communities',
+    'parent_formal_terms',
+    'related_product_ids',
+    'representative_evidence',
+  ]);
+  assert.equal(keywordCloud.$defs.term.properties.display_weight.minimum, 1);
+  assert.equal(keywordCloud.$defs.term.properties.display_weight.maximum, 100);
+  assert.deepEqual(keywordCloud.$defs.term.properties.category.enum, [
+    'product',
+    'solution',
+    'pain',
+    'fitment',
+    'competitor_brand',
+    'use_case',
+    'adjacent_product',
+  ]);
+  assert.deepEqual(keywordCloud.$defs.term.properties.status.enum, [
+    'formal',
+    'exploratory_used',
+    'candidate_review',
+    'rejected',
+    'promoted_by_human',
+  ]);
+  assert.deepEqual(keywordCloud.$defs.representative_evidence.required, [
+    'evidence_id',
+    'url',
+    'subreddit',
+    'quote_original',
+    'quality_band',
+  ]);
+  assert.deepEqual(keywordCloud.properties.filters.required, [
+    'categories',
+    'statuses',
+    'minimum_score',
+  ]);
+});
+
 test('persona artifact schema enforces aggregate-only demographics and representative traceability', async () => {
   const personas = await schema('user_profile.schema.json');
   const analysis = await schema('analysis.schema.json');
