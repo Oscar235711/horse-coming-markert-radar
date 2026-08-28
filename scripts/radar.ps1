@@ -9,9 +9,12 @@ param(
   [string]$OutputRoot,
   [string]$ConfigPath,
   [string]$RunsRoot,
-  [string]$ResearchConfig = "configs\automotive_lighting_us_pilot.json",
+  [string]$ResearchConfig = "",
+  [ValidateSet("overnight")][string]$Profile,
   [ValidateSet("auto", "opencli", "public-json")][string]$Transport = "auto",
-  [string]$RunId
+  [string]$RunId,
+  [int]$MaxRuntimeMinutes,
+  [string]$LlmModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -107,17 +110,40 @@ switch ($Command) {
   }
   "run" {
     if (-not $nodeExe) { throw "Node.js not found. Install Node.js or set RADAR_NODE_EXE in $ConfigPath" }
-    $researchConfigPath = Resolve-RadarPath -Value $ResearchConfig -RepoRoot $repoRoot -DefaultRelative "configs\automotive_lighting_us_pilot.json"
-    if (-not (Test-Path -LiteralPath $researchConfigPath)) { throw "Research config not found: $researchConfigPath" }
+    $researchConfigPath = $null
+    if ($ResearchConfig) {
+      $researchConfigPath = Resolve-RadarPath -Value $ResearchConfig -RepoRoot $repoRoot -DefaultRelative "configs\automotive_lighting_us_pilot.json"
+      if (-not (Test-Path -LiteralPath $researchConfigPath)) { throw "Research config not found: $researchConfigPath" }
+    }
     $runnerArgs = @(
       (Join-Path $PSScriptRoot "run-radar.mjs"),
-      "--config", $researchConfigPath,
       "--transport", $Transport,
       "--output-root", $RunsRoot
     )
+    if ($researchConfigPath) { $runnerArgs += @("--config", $researchConfigPath) }
+    if ($Profile) { $runnerArgs += @("--profile", $Profile) }
     if ($RunId) { $runnerArgs += @("--run-id", $RunId) }
+    if ($MaxRuntimeMinutes -gt 0) { $runnerArgs += @("--max-runtime-minutes", "$MaxRuntimeMinutes") }
+    if ($LlmModel) { $runnerArgs += @("--llm-model", $LlmModel) }
     if ($openCliExe) { $runnerArgs += @("--opencli", $openCliExe) }
-    & $nodeExe @runnerArgs
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $previousLlmEnabled = $env:RADAR_LLM_ENABLED
+    $previousLlmModel = $env:RADAR_LLM_MODEL
+    $previousRuntimeMinutes = $env:RADAR_MAX_RUNTIME_MINUTES
+    try {
+      if ($LlmModel) {
+        $env:RADAR_LLM_ENABLED = "1"
+        $env:RADAR_LLM_MODEL = $LlmModel
+      }
+      if ($MaxRuntimeMinutes -gt 0) {
+        $env:RADAR_MAX_RUNTIME_MINUTES = "$MaxRuntimeMinutes"
+      }
+      & $nodeExe @runnerArgs
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    finally {
+      $env:RADAR_LLM_ENABLED = $previousLlmEnabled
+      $env:RADAR_LLM_MODEL = $previousLlmModel
+      $env:RADAR_MAX_RUNTIME_MINUTES = $previousRuntimeMinutes
+    }
   }
 }
