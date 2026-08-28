@@ -94,4 +94,6 @@ def test_html_contains_rich_report_sections_and_single_payload(tmp_path: Path):
     html = path.read_text(encoding="utf-8")
     for section in ("Demand Validation", "Seller Insight", "Pain Points", "Seller Opportunities", "Why hasn’t this been done?", "Manufacturing Profile", "Seller Verdict"):
         assert section in html
+    assert "report-open" in html
+    assert "report-back" in html
     assert html.count('id="analysis-data"') == 1
