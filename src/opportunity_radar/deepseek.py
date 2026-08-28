@@ -1,7 +1,7 @@
 """Small, injected HTTP adapter for DeepSeek JSON post extraction."""
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import json
 import os
 from typing import Any
@@ -36,9 +36,37 @@ class EvidenceClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisField:
+    """One Flash-extracted field with provenance and epistemic status."""
+
+    value: str = "unknown"
+    evidence_ids: tuple[str, ...] = ()
+    status: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class PostAnalysis:
+    """Backward-compatible compact topics/claims plus the diesel V2 contract."""
+
     topics: tuple[TopicCandidate, ...]
     claims: tuple[EvidenceClaim, ...]
+    platform: AnalysisField = field(default_factory=AnalysisField)
+    vehicle: AnalysisField = field(default_factory=AnalysisField)
+    year: AnalysisField = field(default_factory=AnalysisField)
+    scenario: AnalysisField = field(default_factory=AnalysisField)
+    goal: AnalysisField = field(default_factory=AnalysisField)
+    pain_points: tuple[AnalysisField, ...] = ()
+    needs: tuple[AnalysisField, ...] = ()
+    current_solutions: tuple[AnalysisField, ...] = ()
+    gaps: tuple[AnalysisField, ...] = ()
+    opportunity_hypotheses: tuple[AnalysisField, ...] = ()
+    products: tuple[AnalysisField, ...] = ()
+    brands: tuple[AnalysisField, ...] = ()
+    competitors: tuple[AnalysisField, ...] = ()
+    purchase_intent: tuple[AnalysisField, ...] = ()
+    sentiment: AnalysisField = field(default_factory=AnalysisField)
+    keyword_candidates: tuple[AnalysisField, ...] = ()
+    topic_candidates: tuple[AnalysisField, ...] = ()
 
 
 class DeepSeekError(RuntimeError):
@@ -56,12 +84,13 @@ class DeepSeekClient:
         *,
         transport: HttpTransport,
         environment: Mapping[str, str] | None = None,
-        base_url: str = DEFAULT_BASE_URL,
+        base_url: str | None = None,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._transport = transport
         self._environment = environment if environment is not None else os.environ
-        self._base_url = base_url.rstrip("/")
+        configured_base_url = base_url or self._environment.get("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL
+        self._base_url = configured_base_url.rstrip("/")
         self._sleeper = sleeper or (lambda _: None)
 
     def chat_json(self, messages: Sequence[Mapping[str, str]], *, model: str = FLASH_MODEL) -> Mapping[str, Any]:
@@ -105,19 +134,36 @@ class DeepSeekClient:
         raise last_error or DeepSeekError("DeepSeek 请求失败。")
 
     def extract_post(self, thread: ThreadDocument) -> PostAnalysis:
-        """Extract at most three evidence-cited topic candidates with Flash."""
+        """Extract an evidence-cited diesel post contract with Flash."""
         evidence = {"post": thread.post.url}
         evidence.update({comment.comment_id: comment.url for comment in thread.comments})
         prompt = {
             "post": {"evidence_id": "post", "url": thread.post.url, "title": thread.post.title, "body": thread.post.body},
             "comments": [{"evidence_id": comment.comment_id, "url": comment.url, "body": comment.body} for comment in thread.comments],
-            "instruction": "Return JSON with topics (max 3) and claims. Cite only supplied evidence_ids and URLs.",
+            "instruction": (
+                "Return JSON with topics (max 3), claims, and the diesel fields platform, vehicle, year, "
+                "scenario, goal, pain_points, needs, current_solutions, gaps, opportunity_hypotheses, "
+                "products, brands, competitors, purchase_intent, sentiment, keyword_candidates, and "
+                "topic_candidates. Each diesel field is {value, evidence_ids, status}; status is fact, "
+                "inference, or unknown. Cite only supplied evidence_ids and URLs; unknown has no citations."
+            ),
         }
         document = self.chat_json((
             {"role": "system", "content": "You extract evidence-grounded Reddit product signals."},
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-        ))
-        return _analysis_from_document(document, evidence)
+        ), model=self._environment.get("DEEPSEEK_FLASH_MODEL", FLASH_MODEL))
+        analysis = _analysis_from_document(document, evidence)
+        if not analysis.topics and analysis.claims:
+            # Some gateway deployments return grounded claims but omit the optional
+            # topic array. Preserve a conservative topic seed so community-level
+            # consolidation can still group the evidence instead of dropping it.
+            claim = analysis.claims[0]
+            label = " ".join(claim.claim.split())[:120] or "Unclassified product discussion"
+            analysis = replace(
+                analysis,
+                topics=(TopicCandidate(label=label, evidence_ids=claim.evidence_ids),),
+            )
+        return analysis
 
 
 def _status_error(status_code: int) -> DeepSeekError | None:
@@ -163,7 +209,44 @@ def _analysis_from_document(document: Mapping[str, Any], evidence: Mapping[str, 
         urls = tuple(url for url in supplied_urls if isinstance(url, str)) if isinstance(supplied_urls, list) else ()
         valid = bool(ids) and urls == tuple(evidence[identifier] for identifier in ids)
         claims.append(EvidenceClaim(item["claim"].strip(), ids if valid else (), urls if valid else (), "supported" if valid else "unknown"))
-    return PostAnalysis(tuple(topics), tuple(claims))
+    scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment")
+    list_names = (
+        "pain_points", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "products",
+        "brands", "competitors", "purchase_intent", "keyword_candidates", "topic_candidates",
+    )
+    scalar_fields = {name: _analysis_field(document.get(name), evidence) for name in scalar_names}
+    list_fields = {name: _analysis_fields(document.get(name), evidence) for name in list_names}
+    return PostAnalysis(
+        tuple(topics), tuple(claims),
+        platform=scalar_fields["platform"], vehicle=scalar_fields["vehicle"], year=scalar_fields["year"],
+        scenario=scalar_fields["scenario"], goal=scalar_fields["goal"],
+        pain_points=list_fields["pain_points"], needs=list_fields["needs"],
+        current_solutions=list_fields["current_solutions"], gaps=list_fields["gaps"],
+        opportunity_hypotheses=list_fields["opportunity_hypotheses"], products=list_fields["products"],
+        brands=list_fields["brands"], competitors=list_fields["competitors"],
+        purchase_intent=list_fields["purchase_intent"], sentiment=scalar_fields["sentiment"],
+        keyword_candidates=list_fields["keyword_candidates"], topic_candidates=list_fields["topic_candidates"],
+    )
+
+
+def _analysis_field(value: Any, evidence: Mapping[str, str]) -> AnalysisField:
+    """Reject unsupported model assertions while preserving explicit uncertainty."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("value"), str) or not value["value"].strip():
+        return AnalysisField()
+    status = value.get("status") if value.get("status") in {"fact", "inference", "unknown"} else "unknown"
+    ids = _known_ids(value.get("evidence_ids"), evidence)
+    if status == "unknown" or not ids:
+        return AnalysisField(value["value"].strip(), (), "unknown")
+    return AnalysisField(value["value"].strip(), ids, status)
+
+
+def _analysis_fields(value: Any, evidence: Mapping[str, str]) -> tuple[AnalysisField, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        field for item in value
+        if (field := _analysis_field(item, evidence)).value != "unknown"
+    )
 
 
 def _known_ids(value: Any, evidence: Mapping[str, str]) -> tuple[str, ...]:

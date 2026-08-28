@@ -1,12 +1,57 @@
 """YAML configuration loading for the community radar."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .models import CollectionSettings, Community, CommunityCatalog, RadarConfig
+
+
+@dataclass(frozen=True, slots=True)
+class DieselDictionaries:
+    """Explicit, inspectable vocabulary used only for diesel-pickup relevance."""
+
+    platforms: tuple[str, ...]
+    products: tuple[str, ...]
+    vehicle_terms: tuple[str, ...]
+    scenarios: tuple[str, ...]
+    brands: tuple[str, ...]
+    slang: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DieselExclusions:
+    """Hard boundaries that prevent generic automotive samples from entering analysis."""
+
+    non_diesel_terms: tuple[str, ...]
+    excluded_subreddits: tuple[str, ...]
+    promotional_terms: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KeywordSearchSettings:
+    enabled: bool
+    max_candidate_keywords: int
+    max_posts_per_keyword: int
+    require_human_approval: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReportSettings:
+    formats: tuple[str, ...]
+    offline_html: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DieselDomainConfig:
+    dictionaries: DieselDictionaries
+    exclusions: DieselExclusions
+    keyword_search: KeywordSearchSettings
+    report: ReportSettings
+    user_deep_dive_enabled: bool
 
 
 def load_config(path: str | Path) -> RadarConfig:
@@ -25,6 +70,44 @@ def load_config(path: str | Path) -> RadarConfig:
         communities=communities,
         community_catalog_version=catalog.version if catalog is not None else str(raw_document.get("community_catalog_version", "")),
         collection=_load_collection(raw_document),
+    )
+
+
+def load_diesel_domain_config(path: str | Path) -> DieselDomainConfig:
+    """Load V2's diesel-only dictionaries and non-secret runtime settings."""
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, Mapping):
+        raise ValueError("diesel configuration must be a YAML mapping")
+    dictionaries = _mapping(document.get("dictionaries"), "dictionaries")
+    exclusions = _mapping(document.get("exclusions"), "exclusions")
+    keyword_search = _mapping(document.get("keyword_search"), "keyword_search")
+    report = _mapping(document.get("report"), "report")
+    profile = _mapping(document.get("user_deep_dive"), "user_deep_dive")
+    return DieselDomainConfig(
+        dictionaries=DieselDictionaries(
+            platforms=_text_list(dictionaries.get("platforms"), "dictionaries.platforms", required=True),
+            products=_text_list(dictionaries.get("products"), "dictionaries.products", required=True),
+            vehicle_terms=_text_list(dictionaries.get("vehicle_terms"), "dictionaries.vehicle_terms", required=True),
+            scenarios=_text_list(dictionaries.get("scenarios"), "dictionaries.scenarios", required=True),
+            brands=_text_list(dictionaries.get("brands"), "dictionaries.brands", required=True),
+            slang=_text_list(dictionaries.get("slang"), "dictionaries.slang", required=True),
+        ),
+        exclusions=DieselExclusions(
+            non_diesel_terms=_text_list(exclusions.get("non_diesel_terms"), "exclusions.non_diesel_terms", required=True),
+            excluded_subreddits=_text_list(exclusions.get("excluded_subreddits"), "exclusions.excluded_subreddits", required=True),
+            promotional_terms=_text_list(exclusions.get("promotional_terms"), "exclusions.promotional_terms", required=True),
+        ),
+        keyword_search=KeywordSearchSettings(
+            enabled=_as_bool(keyword_search.get("enabled"), "keyword_search.enabled"),
+            max_candidate_keywords=_positive_int(keyword_search.get("max_candidate_keywords"), "keyword_search.max_candidate_keywords"),
+            max_posts_per_keyword=_positive_int(keyword_search.get("max_posts_per_keyword"), "keyword_search.max_posts_per_keyword"),
+            require_human_approval=_as_bool(keyword_search.get("require_human_approval"), "keyword_search.require_human_approval"),
+        ),
+        report=ReportSettings(
+            formats=_text_list(report.get("formats"), "report.formats", required=True),
+            offline_html=_as_bool(report.get("offline_html"), "report.offline_html"),
+        ),
+        user_deep_dive_enabled=_as_bool(profile.get("enabled"), "user_deep_dive.enabled"),
     )
 
 
@@ -176,6 +259,12 @@ def _load_collection(document: Mapping[str, Any]) -> CollectionSettings:
             configured.get("expand_rounds", defaults.expand_rounds), "collection.expand_rounds"
         ),
     )
+
+
+def _mapping(value: object, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a YAML mapping")
+    return value
 
 
 def _positive_int(value: object, field_name: str) -> int:

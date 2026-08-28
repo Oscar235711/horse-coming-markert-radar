@@ -1,7 +1,17 @@
 """Opportunity Radar core package."""
 
 from .cli_app import RadarCliApp
-from .config import load_community_catalog, load_config, write_community_catalog
+from .config import (
+    DieselDomainConfig,
+    DieselDictionaries,
+    DieselExclusions,
+    KeywordSearchSettings,
+    ReportSettings,
+    load_community_catalog,
+    load_config,
+    load_diesel_domain_config,
+    write_community_catalog,
+)
 from .collector import (
     CollectionFailure,
     CollectionResult,
@@ -10,6 +20,7 @@ from .collector import (
     ThreadDocument,
 )
 from .deepseek import (
+    AnalysisField,
     DEFAULT_BASE_URL,
     FLASH_MODEL,
     PRO_MODEL,
@@ -19,6 +30,14 @@ from .deepseek import (
     HttpResponse,
     PostAnalysis,
     TopicCandidate,
+)
+from .evidence import (
+    EVIDENCE_ROLES,
+    EvidenceGateResult,
+    EvidenceQuality,
+    GatedEvidence,
+    apply_diesel_evidence_gate,
+    classify_diesel_evidence,
 )
 from .models import (
     Community,
@@ -50,14 +69,22 @@ from .topics import (
 
 __all__ = [
     "Community",
+    "AnalysisField",
     "CollectionSettings",
     "CollectionFailure",
     "CollectionResult",
     "DEFAULT_BASE_URL",
     "DeepSeekClient",
     "DeepSeekError",
+    "DieselDomainConfig",
+    "DieselDictionaries",
+    "DieselExclusions",
     "CommunityCatalog",
     "EvidenceClaim",
+    "EvidenceGateResult",
+    "EvidenceQuality",
+    "EVIDENCE_ROLES",
+    "GatedEvidence",
     "EvidenceBackedClaim",
     "EXCEL_SHEET_NAMES",
     "FLASH_MODEL",
@@ -68,6 +95,8 @@ __all__ = [
     "PostAnalysis",
     "PostSignal",
     "PRO_MODEL",
+    "KeywordSearchSettings",
+    "ReportSettings",
     "ProTopicProposal",
     "RadarCliApp",
     "RadarConfig",
@@ -87,6 +116,7 @@ __all__ = [
     "create_run_paths",
     "load_community_catalog",
     "load_config",
+    "load_diesel_domain_config",
     "normalize_and_deduplicate",
     "read_manifest",
     "score_shortlist",
@@ -94,4 +124,6 @@ __all__ = [
     "write_manifest",
     "write_community_catalog",
     "export_topic_analysis",
+    "apply_diesel_evidence_gate",
+    "classify_diesel_evidence",
 ]
