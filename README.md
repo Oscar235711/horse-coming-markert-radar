@@ -49,13 +49,23 @@ python -m opportunity_radar doctor
 python -m opportunity_radar run --config configs/diesel_90d.yaml
 python -m opportunity_radar resume --run-id <run_id>
 python -m opportunity_radar status --run-id <run_id>
-python -m opportunity_radar export --run-id <run_id> --formats json,xlsx
+python -m opportunity_radar export --run-id <run_id> --formats json,xlsx,html
 python -m opportunity_radar communities suggest --run-id <run_id>
 python -m opportunity_radar communities approve --suggestion .local\runs\<run_id>\suggestions\community_suggestions.json --suggestion-id <id>
 ```
 
 `doctor` 在缺少 `DEEPSEEK_API_KEY` 时只给出警告，不会阻断 Reddit 侧检查。
-`export --formats` 当前仅支持 `json` 和 `xlsx`；`json` 不依赖 Node，`xlsx` 才需要 `RADAR_NODE_EXE` 或系统 `node`。
+默认导出还会生成离线 `report.html`（不依赖服务器，双击即可打开）；`xlsx` 才需要 `RADAR_NODE_EXE` 或系统 `node`。
+
+## 改装领域 Demo
+
+先用不联网的固定样例查看最终呈现：
+
+```powershell
+python scripts/build_diesel_demo.py
+```
+
+输出在 `outputs/diesel-demo/`：`analysis.json`、`report.html`、`community_topics.xlsx` 和 `community_topic_map.json`。报告按“社区 → 话题 → 帖子/评论证据”下钻，内容是演示样例；接入真实 Reddit 运行后，用同一个渲染器生成真实报告。
 
 ## PowerShell 兼容入口
 
