@@ -259,6 +259,13 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
   const afterUtc = normalizeIsoDate(options.afterUtc) ?? new Date(Date.now() - DEFAULT_ACTIVITY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const timeoutMs = clampPositiveInteger(options.timeoutMs, 30000);
   const authorsDir = path.join(runDir, 'raw', 'authors');
+  const failureAttemptsPath = path.join(runDir, 'failure_attempts.jsonl');
+  const historicalAttempts = await readJsonlIfExists(failureAttemptsPath);
+  const attemptCounts = new Map();
+  for (const attempt of historicalAttempts) {
+    const key = failureKey(attempt);
+    attemptCounts.set(key, Math.max(attemptCounts.get(key) ?? 0, Number(attempt.attempt ?? 0)));
+  }
   await fs.mkdir(authorsDir, { recursive: true });
 
   const retainedAuthors = [];
@@ -334,13 +341,14 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
       await fs.writeFile(checkpointPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
       retainedAuthors.push(payload);
     } catch (error) {
-      failures.push({
+      failures.push(await recordFailureAttempt({
+        attemptsPath: failureAttemptsPath,
+        attemptCounts,
         stage: 'author-activity',
         username,
         evidence_ids: [...new Set(author?.evidence_ids ?? [])].sort(),
-        error: error instanceof Error ? error.message : String(error),
-        retryable: isRetryable(error),
-      });
+        error,
+      }));
     }
   }
 
@@ -630,4 +638,55 @@ async function readJsonIfExists(filePath) {
     if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+async function readJsonlIfExists(filePath) {
+  try {
+    const text = await fs.readFile(filePath, 'utf8');
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function appendJsonl(filePath, rows) {
+  if (!rows.length) return;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.appendFile(filePath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+}
+
+function failureKey(value) {
+  return JSON.stringify({
+    stage: value.stage,
+    username: value.username ?? null,
+  });
+}
+
+async function recordFailureAttempt({
+  attemptsPath,
+  attemptCounts,
+  stage,
+  username,
+  evidence_ids,
+  error,
+}) {
+  const key = failureKey({ stage, username });
+  const attempt = (attemptCounts.get(key) ?? 0) + 1;
+  attemptCounts.set(key, attempt);
+  const message = error instanceof Error ? error.message : String(error);
+  const failure = {
+    stage,
+    username,
+    evidence_ids,
+    attempt,
+    error: message,
+    retryable: isRetryable(error),
+  };
+  await appendJsonl(attemptsPath, [failure]);
+  return failure;
 }

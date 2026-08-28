@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -250,20 +251,38 @@ export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync 
         const text = String(row.text ?? '').trim();
         return type.startsWith('l') && text.length > 0 && !/^\[\+?\d+ more (?:replies|top-level comments)\]$/i.test(text) && !/^\[\+?\d+ more(?: replies)?\]$/i.test(text);
       });
-      const comments = commentRows.map((row, index) => {
-        const commentId = `${post.post_id}-c${index}`;
-        return {
-          id: commentId,
-          comment_id: commentId,
-          post_id: post.post_id,
-          author: row.author && row.author !== '[deleted]' ? String(row.author) : null,
-          body_original: String(row.text ?? '').trim(),
-          body: String(row.text ?? '').trim(),
-          score: Number(row.score ?? 0) || 0,
-          created_at: null,
-          url: `https://www.reddit.com/r/${String(post.subreddit ?? '').replace(/^r\//i, '')}/comments/${post.post_id}/`,
-        };
-      });
+      const commentIdentityCounts = new Map();
+      const comments = commentRows
+        .map((row) => {
+          const body = String(row.text ?? '').trim();
+          return {
+            row,
+            body,
+            identity: stableSyntheticCommentIdentity(post.post_id, body),
+          };
+        })
+        .sort((left, right) => (
+          left.identity.sort_key.localeCompare(right.identity.sort_key)
+          || String(left.row.author ?? '').localeCompare(String(right.row.author ?? ''))
+          || Number(right.row.score ?? 0) - Number(left.row.score ?? 0)
+        ))
+        .map(({ row, body, identity }) => {
+          const occurrence = (commentIdentityCounts.get(identity.hash) ?? 0) + 1;
+          commentIdentityCounts.set(identity.hash, occurrence);
+          const commentId = `${post.post_id}-cmt-${identity.hash}${occurrence > 1 ? `-${occurrence}` : ''}`;
+          return {
+            id: commentId,
+            comment_id: commentId,
+            post_id: post.post_id,
+            author: row.author && row.author !== '[deleted]' ? String(row.author) : null,
+            body_original: body,
+            body,
+            score: Number(row.score ?? 0) || 0,
+            created_at: null,
+            url: `https://www.reddit.com/r/${String(post.subreddit ?? '').replace(/^r\//i, '')}/comments/${post.post_id}/`,
+            precision: 'limited',
+          };
+        });
       return { post: rawPost, comments: comments.slice(0, commentLimit) };
     },
     async fetchAuthorActivity(username, { limit = 50, afterUtc = null } = {}) {
@@ -600,6 +619,24 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
       round_two_additions: roundTwoAdditions,
       round_two_failures: roundTwo.failures.length,
       failures: failures.length,
+      opportunities: 0,
+      candidate_signals: 0,
+      audience_nodes: 0,
+      audience_edges: 0,
+      keyword_cloud_terms: 0,
+    },
+    artifacts: {
+      analysis: 'analysis.json',
+      evidence: 'evidence.jsonl',
+      audience_map: 'audience_map.json',
+      keyword_cloud: 'keyword_cloud.json',
+      opportunities: 'opportunities.json',
+      personas: 'personas.json',
+      quality_evidence: 'quality_evidence.jsonl',
+      excluded_evidence: 'excluded_evidence.jsonl',
+      report: 'report.html',
+      optimization_backlog: 'optimization_backlog.jsonl',
+      failures: 'failures.jsonl',
     },
   };
   await writeJson(path.join(runDir, 'manifest.json'), manifest);
@@ -863,6 +900,18 @@ function failureKey(value) {
     post_id: value.post_id ?? null,
     username: value.username ?? null,
   });
+}
+
+function stableSyntheticCommentIdentity(postId, body) {
+  const normalizedBody = String(body ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const hash = crypto.createHash('sha256')
+    .update(`${postId}\n${normalizedBody}`)
+    .digest('hex')
+    .slice(0, 12);
+  return {
+    hash,
+    sort_key: `${hash}:${normalizedBody}`,
+  };
 }
 
 async function recordFailureAttempt({
