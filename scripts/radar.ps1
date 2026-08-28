@@ -12,6 +12,7 @@ param(
   [string]$ResearchConfig = "",
   [ValidateSet("overnight")][string]$Profile,
   [ValidateSet("auto", "opencli", "public-json")][string]$Transport = "auto",
+  [ValidatePattern('^(?!.*(?:[\\/]|\\.\\.))[A-Za-z0-9._-]+$')]
   [string]$RunId,
   [int]$MaxRuntimeMinutes,
   [string]$LlmModel

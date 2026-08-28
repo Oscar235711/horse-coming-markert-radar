@@ -90,6 +90,7 @@ node .\scripts\run-radar.mjs `
 Resume command: reuse the same `--run-id` or `-RunId` exactly. Successful stages must not be repeated. Retry only unresolved items.
 
 输出目录固定为 `.local/runs/<run_id>/`。不要写个人绝对路径，不要把结果搬到仓库外的个人目录。
+`run_id` 必须是单层目录名：禁止路径分隔符，禁止 `..`。
 
 ## Stage Order / 固定阶段顺序
 
@@ -114,6 +115,8 @@ Resume command: reuse the same `--run-id` or `-RunId` exactly. Successful stages
 - One exhausted item becomes an unresolved failure and must not stop unrelated work
 
 If Task 7 resume history is available, preserve `failure_attempts.jsonl`. Always preserve `failures.jsonl`.
+
+`runtime-status.json` must stay inside `.local/runs/<run_id>/`. On non-timeout exits, `runtime-status.status` must mirror `manifest.status` (`complete` or `partial`). `timed_out` only when the wall-clock ceiling aborts the run.
 
 ## Stop Conditions / 必须停止条件
 

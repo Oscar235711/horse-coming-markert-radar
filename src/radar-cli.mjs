@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 
 import { loadLightingConfig } from './radar-core.mjs';
 import { createOpenAiCompatibleAnalyzer } from './llm-client.mjs';
@@ -202,6 +203,7 @@ export async function listCompletedArtifacts(runDir) {
 
 export async function writeRuntimeStatus({
   runDir,
+  outputRoot,
   runId,
   runtimeLimitMinutes,
   profile = '',
@@ -213,10 +215,16 @@ export async function writeRuntimeStatus({
   finishedAt,
   stage = '',
 } = {}) {
-  const completedArtifacts = await listCompletedArtifacts(runDir);
+  const resolvedRunId = normalizeRunId(runId);
+  const resolvedRunDir = resolveRunDir({
+    outputRoot: outputRoot ?? path.dirname(path.resolve(runDir)),
+    runId: resolvedRunId,
+    runDir,
+  });
+  const completedArtifacts = await listCompletedArtifacts(resolvedRunDir);
   const payload = {
     schema_version: '1.0.0',
-    run_id: runId,
+    run_id: resolvedRunId,
     status,
     reason: String(reason ?? '').trim(),
     stage: stage || null,
@@ -228,8 +236,8 @@ export async function writeRuntimeStatus({
     finished_at: finishedAt ?? new Date().toISOString(),
     completed_artifacts: completedArtifacts,
   };
-  await fs.mkdir(runDir, { recursive: true });
-  await fs.writeFile(path.join(runDir, RUNTIME_STATUS_FILENAME), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  await fs.mkdir(resolvedRunDir, { recursive: true });
+  await fs.writeFile(path.join(resolvedRunDir, RUNTIME_STATUS_FILENAME), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   return payload;
 }
 
@@ -250,8 +258,8 @@ export async function executeRadarRun({
   const selectedConfig = resolveProfileConfigPath({ profile: options.profile, config: options.config });
   const configPath = path.resolve(repoRoot, selectedConfig);
   const outputRoot = path.resolve(repoRoot, options.outputRoot || '.local/runs');
-  const runId = options.runId || createRunId(new Date(normalizeNow(readNowValue(now))));
-  const runDir = path.join(outputRoot, runId);
+  const runId = normalizeRunId(options.runId || createRunId(new Date(normalizeNow(readNowValue(now)))));
+  const runDir = resolveRunDir({ outputRoot, runId });
   const config = await loadConfig(configPath);
   const openCliPath = options.openCliPath ? path.resolve(repoRoot, options.openCliPath) : options.openCliPath;
   const transportName = selectTransportName({
@@ -260,13 +268,23 @@ export async function executeRadarRun({
     openCliPath,
   });
   const baseAdapter = transportName === 'opencli'
-    ? createOpenCliAdapterImpl({ executablePath: openCliPath })
+    ? createRuntimeBoundOpenCliAdapter({
+        executablePath: openCliPath,
+        createOpenCliAdapterImpl,
+        runtimeBudget: createRuntimeBudget({
+          maxRuntimeMinutes: options.maxRuntimeMinutes,
+          now,
+          defaultOperationTimeoutMs: config.transport?.timeout_ms ?? 30000,
+        }),
+      })
     : createPublicJsonAdapterImpl();
-  const runtimeBudget = createRuntimeBudget({
-    maxRuntimeMinutes: options.maxRuntimeMinutes,
-    now,
-    defaultOperationTimeoutMs: config.transport?.timeout_ms ?? 30000,
-  });
+  const runtimeBudget = transportName === 'opencli' && baseAdapter.runtimeBudget
+    ? baseAdapter.runtimeBudget
+    : createRuntimeBudget({
+        maxRuntimeMinutes: options.maxRuntimeMinutes,
+        now,
+        defaultOperationTimeoutMs: config.transport?.timeout_ms ?? 30000,
+      });
   const adapter = createRuntimeAwareAdapter(baseAdapter, runtimeBudget, {
     defaultOperationTimeoutMs: config.transport?.timeout_ms ?? 30000,
   });
@@ -306,13 +324,14 @@ export async function executeRadarRun({
     if (options.maxRuntimeMinutes !== null && options.maxRuntimeMinutes !== undefined) {
       await writeRuntimeStatus({
         runDir,
+        outputRoot,
         runId,
         runtimeLimitMinutes: options.maxRuntimeMinutes,
         profile: options.profile,
         transport: transportName,
         llmModel: llmModel || null,
-        status: 'complete',
-        reason: `Run completed within the configured max runtime of ${options.maxRuntimeMinutes} minutes.`,
+        status: result.manifest.status,
+        reason: `Run ${result.manifest.status} within the configured max runtime of ${options.maxRuntimeMinutes} minutes.`,
         startedAt,
         finishedAt,
         stage: 'verification',
@@ -334,6 +353,7 @@ export async function executeRadarRun({
     if (options.maxRuntimeMinutes !== null && options.maxRuntimeMinutes !== undefined) {
       await writeRuntimeStatus({
         runDir,
+        outputRoot,
         runId,
         runtimeLimitMinutes: options.maxRuntimeMinutes,
         profile: options.profile,
@@ -350,6 +370,94 @@ export async function executeRadarRun({
   } finally {
     restoreEnvironment(environment, previousValues);
   }
+}
+
+function normalizeRunId(runId) {
+  const normalized = String(runId ?? '').trim();
+  if (!normalized) throw new Error('Invalid run id: value is required.');
+  if (normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error(`Invalid run id: ${normalized}. Run IDs must not contain path separators or "..".`);
+  }
+  return normalized;
+}
+
+function resolveRunDir({ outputRoot, runId, runDir = null } = {}) {
+  const resolvedOutputRoot = path.resolve(outputRoot);
+  const resolvedRunId = normalizeRunId(runId);
+  const expectedRunDir = path.resolve(resolvedOutputRoot, resolvedRunId);
+  if (runDir === null || runDir === undefined || runDir === '') return expectedRunDir;
+  const resolvedRunDir = path.resolve(runDir);
+  if (resolvedRunDir !== expectedRunDir) {
+    throw new Error(`runtime-status must stay inside outputRoot/runId: ${expectedRunDir}`);
+  }
+  return resolvedRunDir;
+}
+
+function createRuntimeBoundOpenCliAdapter({
+  executablePath,
+  createOpenCliAdapterImpl,
+  runtimeBudget,
+} = {}) {
+  if (!runtimeBudget?.maxRuntimeMinutes) {
+    return createOpenCliAdapterImpl({ executablePath });
+  }
+  const maxRuntimeMinutes = runtimeBudget.maxRuntimeMinutes;
+
+  function buildAdapter(stage) {
+    runtimeBudget.throwIfExceeded(stage);
+    const remainingMs = Math.max(0, Math.floor(runtimeBudget.remainingMs()));
+    if (remainingMs <= 0) {
+      throw createRuntimeLimitError({ stage, maxRuntimeMinutes });
+    }
+    return createOpenCliAdapterImpl({
+      executablePath,
+      execImpl(file, args, options = {}) {
+        return execFileWithinRuntimeBudget(file, args, {
+          ...options,
+          timeout: remainingMs,
+        }, {
+          stage,
+          maxRuntimeMinutes,
+        });
+      },
+    });
+  }
+
+  return {
+    name: 'opencli',
+    runtimeBudget,
+    async search(query, options = {}) {
+      return buildAdapter('round-one-search').search(query, options);
+    },
+    async fetchDetails(post, options = {}) {
+      return buildAdapter('detail-fetch').fetchDetails(post, options);
+    },
+    async fetchAuthorActivity(username, options = {}) {
+      return buildAdapter('author-deep-dive').fetchAuthorActivity(username, options);
+    },
+  };
+}
+
+function execFileWithinRuntimeBudget(file, args, options, { stage, maxRuntimeMinutes } = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (error, stdout = '', stderr = '') => {
+      if (!error) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      if (error.code === 'ETIMEDOUT' || error.killed === true) {
+        reject(createRuntimeLimitError({
+          stage,
+          maxRuntimeMinutes,
+          cause: error,
+        }));
+        return;
+      }
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
+  });
 }
 
 async function walkFiles(rootDir, currentDir, files) {

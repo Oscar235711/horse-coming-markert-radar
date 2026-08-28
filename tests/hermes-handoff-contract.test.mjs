@@ -38,6 +38,8 @@ test('Hermes handoff is executable, bilingual, and forbids repository mutation',
     'manifest.json',
     'report.html',
     'runtime-status.json',
+    'run_id` 必须是单层目录名',
+    'runtime-status.status',
     'failure_attempts.jsonl',
     'keyword_cloud.json',
     'node --test \"tests/*.test.mjs\"',
@@ -58,16 +60,21 @@ test('Hermes handoff is executable, bilingual, and forbids repository mutation',
   }
 
   assert.match(text, /PROHIBITED:[\s\S]*git push[\s\S]*git tag[\s\S]*git merge/i);
+  assert.match(text, /`?timed_out`? only when the wall-clock ceiling aborts the run/i);
 });
 
 test('Task 9 script contracts keep OpenCLI detail expansion disabled and pass the runtime ceiling through', async () => {
   const fetchDetailsText = await fs.readFile(path.join(repoRoot, 'scripts', 'fetch-details.ps1'), 'utf8');
   const radarScriptText = await fs.readFile(path.join(repoRoot, 'scripts', 'radar.ps1'), 'utf8');
+  const runRadarText = await fs.readFile(path.join(repoRoot, 'scripts', 'run-radar.mjs'), 'utf8');
 
   assert.match(fetchDetailsText, /--expand-more false/i);
   assert.doesNotMatch(fetchDetailsText, /--expand-more true/i);
   assert.match(radarScriptText, /--max-runtime-minutes", "\$MaxRuntimeMinutes"/i);
   assert.match(radarScriptText, /RADAR_MAX_RUNTIME_MINUTES = "\$MaxRuntimeMinutes"/i);
+  assert.match(radarScriptText, /ValidatePattern\('\^\(\?!\.\*\(\?:\[\\\\\/\]\|\\\\\.\\\\\.\)\)\[A-Za-z0-9\._-\]\+\$'\)/i);
+  assert.match(runRadarText, /no path separators or '\.\.'/i);
+  assert.match(runRadarText, /Successful runs mirror manifest\.status; only the wall-clock ceiling writes timed_out/i);
 });
 
 test('Hermes progress and outbox templates use the fixed reporting fields', async () => {

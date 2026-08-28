@@ -111,7 +111,9 @@ test('runtime budget clamps operation windows and stops new work after the deadl
 });
 
 test('runtime status writer records timeout state and completed artifacts from partial output', async (t) => {
-  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runtime-'));
+  const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runtime-root-'));
+  const runId = 'overnight-20260828-1200';
+  const runDir = path.join(outputRoot, runId);
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));
   await fs.mkdir(path.join(runDir, 'raw', 'details'), { recursive: true });
   await fs.writeFile(path.join(runDir, 'config.snapshot.json'), '{}\n', 'utf8');
@@ -123,7 +125,8 @@ test('runtime status writer records timeout state and completed artifacts from p
 
   const summary = await writeRuntimeStatus({
     runDir,
-    runId: 'overnight-20260828-1200',
+    outputRoot,
+    runId,
     runtimeLimitMinutes: 600,
     profile: 'overnight',
     transport: 'opencli',
@@ -142,6 +145,57 @@ test('runtime status writer records timeout state and completed artifacts from p
   const saved = JSON.parse(await fs.readFile(path.join(runDir, 'runtime-status.json'), 'utf8'));
   assert.equal(saved.reason, 'Max runtime of 600 minutes reached during detail-fetch.');
   assert.deepEqual(saved.completed_artifacts, artifacts);
+});
+
+test('runtime status writer refuses to write outside outputRoot/runId', async (t) => {
+  const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runtime-root-'));
+  const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runtime-outside-'));
+  t.after(() => Promise.all([
+    fs.rm(outputRoot, { recursive: true, force: true }),
+    fs.rm(outsideDir, { recursive: true, force: true }),
+  ]));
+
+  await assert.rejects(() => writeRuntimeStatus({
+    outputRoot,
+    runDir: outsideDir,
+    runId: 'safe-run',
+    runtimeLimitMinutes: 600,
+    status: 'failed',
+    reason: 'should not write outside the run directory',
+    startedAt: '2026-08-28T12:00:00.000Z',
+    finishedAt: '2026-08-28T12:01:00.000Z',
+    stage: 'verification',
+  }), /outputRoot\/runId/i);
+
+  assert.equal(
+    await fs.access(path.join(outsideDir, 'runtime-status.json')).then(() => true).catch(() => false),
+    false,
+  );
+});
+
+test('CLI runtime rejects run IDs that contain path traversal or separators', async (t) => {
+  const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-cli-runid-'));
+  t.after(() => fs.rm(repoDir, { recursive: true, force: true }));
+
+  for (const runId of ['..', '../escape', '..\\escape', 'nested/run', 'nested\\run']) {
+    await assert.rejects(() => executeRadarRun({
+      options: {
+        config: 'configs/runtime-fixture.json',
+        profile: '',
+        transport: 'public-json',
+        runId,
+        outputRoot: '.local/runs',
+        maxRuntimeMinutes: null,
+        llmModel: '',
+        openCliPath: '',
+      },
+      repoRoot: repoDir,
+      environment: {},
+      loadConfig: async () => {
+        throw new Error('loadConfig should not run for invalid run IDs');
+      },
+    }), /Invalid run id/i, `runId ${runId} should be rejected`);
+  }
 });
 
 test('CLI runtime enforcement stops new work, preserves partial artifacts, and writes runtime status', async (t) => {
@@ -204,3 +258,112 @@ test('CLI runtime enforcement stops new work, preserves partial artifacts, and w
   assert.match(status.reason, /detail-fetch/i);
   assert.deepEqual(status.completed_artifacts, ['candidates.json', 'config.snapshot.json']);
 });
+
+test('CLI runtime status mirrors the manifest status for successful bounded runs', async (t) => {
+  for (const manifestStatus of ['partial', 'complete']) {
+    const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), `radar-cli-status-${manifestStatus}-`));
+    t.after(() => fs.rm(repoDir, { recursive: true, force: true }));
+
+    const summary = await executeRadarRun({
+      options: {
+        config: 'configs/runtime-fixture.json',
+        profile: '',
+        transport: 'public-json',
+        runId: `manifest-${manifestStatus}`,
+        outputRoot: '.local/runs',
+        maxRuntimeMinutes: 10,
+        llmModel: '',
+        openCliPath: '',
+      },
+      repoRoot: repoDir,
+      environment: {},
+      loadConfig: async () => ({
+        transport: { timeout_ms: 30000 },
+        analysis: { llm: { enabled_by_default: false } },
+      }),
+      createPublicJsonAdapter: () => ({ name: 'fixture-public-json' }),
+      runLightingRadarImpl: async ({ runDir, runId }) => {
+        await fs.mkdir(runDir, { recursive: true });
+        await fs.writeFile(path.join(runDir, 'config.snapshot.json'), '{}\n', 'utf8');
+        await fs.writeFile(path.join(runDir, 'report.html'), '<html></html>\n', 'utf8');
+        return {
+          manifest: {
+            run_id: runId,
+            status: manifestStatus,
+            transport: 'public-json',
+            counts: { failures: manifestStatus === 'partial' ? 1 : 0 },
+          },
+        };
+      },
+    });
+
+    assert.equal(summary.status, manifestStatus);
+    const status = JSON.parse(await fs.readFile(path.join(repoDir, '.local', 'runs', `manifest-${manifestStatus}`, 'runtime-status.json'), 'utf8'));
+    assert.equal(status.status, manifestStatus);
+    assert.match(status.reason, new RegExp(`Run ${manifestStatus}`, 'i'));
+  }
+});
+
+test('CLI runtime timeout aborts the live OpenCLI child process and records timed_out status', async (t) => {
+  const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-cli-opencli-timeout-'));
+  const fixturePath = path.join(repoDir, 'opencli-timeout-fixture.cjs');
+  const markerPath = path.join(repoDir, 'opencli-finished.txt');
+  t.after(() => fs.rm(repoDir, { recursive: true, force: true }));
+
+  await fs.writeFile(fixturePath, `'use strict';
+const fs = require('node:fs/promises');
+const markerPath = process.argv[2];
+setTimeout(async () => {
+  await fs.writeFile(markerPath, 'finished\\n', 'utf8');
+  process.stdout.write('[]');
+}, 400);
+`, 'utf8');
+
+  await assert.rejects(() => executeRadarRun({
+    options: {
+      config: 'configs/runtime-fixture.json',
+      profile: '',
+      transport: 'opencli',
+      runId: 'opencli-timeout',
+      outputRoot: '.local/runs',
+      maxRuntimeMinutes: 0.002,
+      llmModel: '',
+      openCliPath: 'ignored-opencli',
+    },
+    repoRoot: repoDir,
+    environment: {},
+    loadConfig: async () => ({
+      transport: { timeout_ms: 30000 },
+      analysis: { llm: { enabled_by_default: false } },
+    }),
+    createOpenCliAdapter: ({ execImpl }) => ({
+      name: 'opencli',
+      async search() {
+        const { stdout } = await execImpl(process.execPath, [fixturePath, markerPath], {
+          encoding: 'utf8',
+          windowsHide: true,
+          shell: false,
+        });
+        return JSON.parse(stdout);
+      },
+    }),
+    runLightingRadarImpl: async ({ adapter, runDir }) => {
+      await fs.mkdir(runDir, { recursive: true });
+      await fs.writeFile(path.join(runDir, 'config.snapshot.json'), '{}\n', 'utf8');
+      await adapter.search('headlight timeout');
+      throw new Error('search should have timed out');
+    },
+  }), /0\.002 minutes.*round-one-search/i);
+
+  await wait(500);
+  assert.equal(await fs.access(markerPath).then(() => true).catch(() => false), false);
+
+  const status = JSON.parse(await fs.readFile(path.join(repoDir, '.local', 'runs', 'opencli-timeout', 'runtime-status.json'), 'utf8'));
+  assert.equal(status.status, 'timed_out');
+  assert.equal(status.stage, 'round-one-search');
+  assert.deepEqual(status.completed_artifacts, ['config.snapshot.json']);
+});
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
