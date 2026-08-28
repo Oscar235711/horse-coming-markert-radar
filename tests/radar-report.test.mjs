@@ -60,6 +60,8 @@ test('report keeps adjacent opportunities out of the main formal-opportunity pan
   assert.match(html, /候选信号/);
   assert.match(html, /邻近配套/);
   assert.match(html, /id="formal-opportunities"/);
+  assert.match(html, /为什么还没有被很好解决/);
+  assert.match(html, /车型协议差异大/);
   assert.doesNotMatch(html, /id="formal-opportunities"[\s\S]*data-opportunity-type="adjacent_bundle"/);
 });
 
@@ -89,7 +91,18 @@ test('report artifacts share one JSON source of truth and emit dedicated Task 6 
   assert.equal(savedAnalysis.run_id, 'report-run');
   assert.equal(savedMap.nodes.length, audienceMap.nodes.length);
   assert.equal(savedCloud.terms.length, keywordCloud.terms.length);
+  assert.deepEqual(Object.keys(savedOpportunities).sort(), [
+    'candidate_signals',
+    'competitors',
+    'generated_at',
+    'opportunities',
+    'pain_points',
+    'run_id',
+    'schema_version',
+  ]);
+  assert.equal(savedOpportunities.run_id, 'report-run');
   assert.equal(savedOpportunities.opportunities.length, analysis.opportunities.length);
+  assert.equal(savedOpportunities.opportunities[0].why_not_done.text, analysis.opportunities[0].why_not_done.text);
   assert.equal(savedPersonas.persona_status, analysis.personas.persona_status);
   assert.equal(qualifiedEvidenceLines.length, analysis.evidence.filter((item) => item.quality?.eligible).length);
   assert.equal(excludedEvidenceLines.length, analysis.evidence.filter((item) => item.quality?.eligible === false).length);

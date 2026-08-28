@@ -204,3 +204,46 @@ test('buildAudienceMap keeps evidence scoped to the current product-community ed
   assert.deepEqual(map.edges.find((edge) => edge.source === 'product-a').evidence_ids, ['post-a']);
   assert.deepEqual(map.edges.find((edge) => edge.source === 'product-b').evidence_ids, ['post-b']);
 });
+
+test('buildAudienceMap separates formal opportunities from adjacent bundles without changing product-community edges', () => {
+  const analysis = {
+    opportunities: [
+      {
+        id: 'formal-a',
+        label: 'Formal A',
+        category: 'headlight',
+        opportunity_type: 'validated_entry',
+        opportunity_score: 70,
+        evidence_ids: ['post-a'],
+        communities: ['Cars'],
+      },
+      {
+        id: 'adjacent-b',
+        label: 'Adjacent B',
+        category: 'protection',
+        opportunity_type: 'adjacent_bundle',
+        opportunity_score: 55,
+        evidence_ids: ['post-b'],
+        communities: ['Cars'],
+      },
+    ],
+    evidence: [
+      { id: 'post-a', subreddit: 'Cars', url: 'https://www.reddit.com/comments/a' },
+      { id: 'post-b', subreddit: 'Cars', url: 'https://www.reddit.com/comments/b' },
+    ],
+  };
+
+  const map = buildAudienceMap(analysis);
+  const formalNode = map.nodes.find((node) => node.id === 'formal-a');
+  const adjacentNode = map.nodes.find((node) => node.id === 'adjacent-b');
+  const communityNode = map.nodes.find((node) => node.id === 'community-cars');
+
+  assert.equal(formalNode.type, 'product');
+  assert.equal(formalNode.entry_type, 'formal_opportunity');
+  assert.equal(adjacentNode.type, 'product');
+  assert.equal(adjacentNode.entry_type, 'adjacent_bundle');
+  assert.equal(communityNode.formal_product_count, 1);
+  assert.equal(communityNode.adjacent_product_count, 1);
+  assert.deepEqual(map.filters.entry_types, ['adjacent_bundle', 'formal_opportunity']);
+  assert.equal(map.edges.every((edge) => edge.source_type === 'product' && edge.target_type === 'community'), true);
+});

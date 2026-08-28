@@ -17,6 +17,26 @@ test('normalized evidence, run manifest, and Audience Map schemas are tracked', 
   assert.deepEqual(graph.properties.edges.items.properties.source_type.enum, ['product']);
   assert.deepEqual(graph.properties.edges.items.properties.target_type.enum, ['community']);
   assert.ok(manifest.required.includes('status'));
+  assert.ok(manifest.required.includes('artifacts'));
+  assert.ok(manifest.required.includes('persona_status'));
+  assert.ok(manifest.properties.counts.required.includes('keyword_cloud_terms'));
+  assert.ok(manifest.properties.counts.required.includes('candidate_signals'));
+  assert.deepEqual(manifest.properties.artifacts.required, [
+    'analysis',
+    'evidence',
+    'audience_map',
+    'keyword_cloud',
+    'opportunities',
+    'personas',
+    'quality_evidence',
+    'excluded_evidence',
+    'report',
+    'optimization_backlog',
+    'failures',
+  ]);
+  assert.equal(graph.properties.nodes.items.properties.entry_type.enum.includes('formal_opportunity'), true);
+  assert.equal(graph.properties.nodes.items.properties.entry_type.enum.includes('adjacent_bundle'), true);
+  assert.ok(graph.properties.filters.required.includes('entry_types'));
 });
 
 test('evidence-quality schema and universal rule/config contracts are tracked', async () => {
@@ -58,6 +78,7 @@ test('evidence-quality schema and universal rule/config contracts are tracked', 
 
 test('opportunity schema limits formal opportunities to sellable product types', async () => {
   const opportunities = await schema('opportunities.schema.json');
+  const artifact = await schema('opportunity-artifact.schema.json');
   assert.deepEqual(opportunities.properties.opportunities.items.properties.opportunity_type.enum, [
     'validated_entry', 'emerging_product', 'adjacent_bundle',
   ]);
@@ -111,6 +132,62 @@ test('opportunity schema limits formal opportunities to sellable product types',
   ]);
   assert.ok(opportunities.required.includes('pain_points'));
   assert.ok(opportunities.required.includes('candidate_signals'));
+  assert.deepEqual(artifact.required, [
+    'schema_version',
+    'run_id',
+    'generated_at',
+    'opportunities',
+    'candidate_signals',
+    'competitors',
+    'pain_points',
+  ]);
+  assert.equal(artifact.additionalProperties, false);
+  assert.equal(artifact.properties.opportunities.items.$ref, '#/$defs/formal_opportunity');
+  assert.equal(artifact.properties.candidate_signals.items.$ref, '#/$defs/candidate_signal');
+  assert.equal(artifact.properties.pain_points.items.$ref, '#/$defs/pain_point');
+  assert.deepEqual(artifact.$defs.formal_opportunity.required, [
+    'id',
+    'label',
+    'category',
+    'opportunity_type',
+    'opportunity_score',
+    'verdict',
+    'evidence_ids',
+    'qualified_evidence_ids',
+    'communities',
+    'fitment_tags',
+    'pain_points',
+    'solution_ideas',
+    'claims',
+    'why_not_done',
+    'commercial',
+    'competitor_signals',
+    'existing_product_signals',
+    'entry_gaps',
+  ]);
+  assert.deepEqual(artifact.$defs.candidate_signal.required, [
+    'id',
+    'label',
+    'category',
+    'opportunity_type',
+    'threshold_check',
+    'evidence_ids',
+    'qualified_evidence_ids',
+    'claims',
+    'why_not_done',
+  ]);
+  assert.deepEqual(artifact.$defs.pain_point.required, [
+    'id',
+    'label',
+    'evidence_ids',
+    'communities',
+    'evidence_count',
+    'qualified_evidence_count',
+    'unique_users',
+    'fact_status',
+    'related_opportunity_ids',
+    'related_solution_ids',
+  ]);
 });
 
 test('author activity schema is strict about retained payloads and self-declared kinds', async () => {

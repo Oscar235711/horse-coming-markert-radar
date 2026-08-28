@@ -179,26 +179,44 @@ export function buildAudienceMap(analysis) {
   const communityStats = new Map();
 
   for (const opportunity of analysis.opportunities ?? []) {
+    const entryType = opportunity.opportunity_type === 'adjacent_bundle' ? 'adjacent_bundle' : 'formal_opportunity';
     nodes.push({
       id: opportunity.id,
       type: 'product',
+      entry_type: entryType,
       label: opportunity.label,
       category: opportunity.category,
       size: opportunity.opportunity_score,
       opportunity_score: opportunity.opportunity_score,
+      product_count: 1,
+      formal_product_count: entryType === 'formal_opportunity' ? 1 : 0,
+      adjacent_product_count: entryType === 'adjacent_bundle' ? 1 : 0,
       fitment_tags: opportunity.fitment_tags ?? [],
       pain_points: opportunity.pain_points ?? [],
       solution_ideas: opportunity.solution_ideas ?? [],
       evidence_ids: opportunity.evidence_ids ?? [],
     });
     for (const subreddit of opportunity.communities ?? []) {
-      const communityId = `community-${subreddit.toLowerCase()}`;
-      const stat = communityStats.get(communityId) ?? { id: communityId, type: 'community', label: `r/${subreddit}`, subreddit, products: new Set(), evidence: new Set() };
+      const normalizedSubreddit = String(subreddit).toLowerCase();
+      const communityId = `community-${normalizedSubreddit}`;
+      const stat = communityStats.get(communityId) ?? {
+        id: communityId,
+        type: 'community',
+        entry_type: 'community',
+        label: `r/${subreddit}`,
+        subreddit,
+        products: new Set(),
+        evidence: new Set(),
+        formalProducts: new Set(),
+        adjacentProducts: new Set(),
+      };
       stat.products.add(opportunity.id);
+      if (entryType === 'formal_opportunity') stat.formalProducts.add(opportunity.id);
+      if (entryType === 'adjacent_bundle') stat.adjacentProducts.add(opportunity.id);
       const edgeEvidence = new Set();
       for (const evidenceId of opportunity.evidence_ids ?? []) {
         const evidence = (analysis.evidence ?? []).find((item) => item.id === evidenceId);
-        if (evidence?.subreddit?.toLowerCase() === subreddit.toLowerCase()) {
+        if (evidence?.subreddit?.toLowerCase() === normalizedSubreddit) {
           stat.evidence.add(evidenceId);
           edgeEvidence.add(evidenceId);
         }
@@ -219,10 +237,13 @@ export function buildAudienceMap(analysis) {
     nodes.push({
       id: stat.id,
       type: 'community',
+      entry_type: 'community',
       label: stat.label,
       subreddit: stat.subreddit,
       size: stat.products.size,
       product_count: stat.products.size,
+      formal_product_count: stat.formalProducts.size,
+      adjacent_product_count: stat.adjacentProducts.size,
       evidence_ids: [...stat.evidence],
     });
   }
@@ -234,6 +255,7 @@ export function buildAudienceMap(analysis) {
     edges,
     filters: {
       categories: [...new Set(nodes.filter((node) => node.type === 'product').map((node) => node.category).filter(Boolean))],
+      entry_types: ['adjacent_bundle', 'formal_opportunity'],
     },
   };
 }

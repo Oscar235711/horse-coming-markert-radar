@@ -32,6 +32,8 @@ export async function runLightingRadar({ config, adapter, runDir, runId, llmAnal
   });
   const manifest = {
     ...collection.manifest,
+    sample_status: inferSampleStatus(analysis),
+    persona_status: analysis.personas?.persona_status ?? analysis.personas?.status ?? 'insufficient_sample',
     counts: {
       ...collection.manifest.counts,
       opportunities: analysis.opportunities.length,
@@ -120,4 +122,19 @@ function qualityWeight(qualityBand) {
 
 function uniqueStrings(values) {
   return [...new Set((values ?? []).filter(Boolean).map((value) => String(value)))];
+}
+
+function inferSampleStatus(analysis) {
+  const counts = analysis.personas?.counts ?? {};
+  const thresholds = analysis.personas?.thresholds ?? {};
+  const qualifiedEvidence = Number(counts.qualified_evidence ?? 0);
+  const qualifiedUsers = Number(counts.qualified_users ?? 0);
+  const deepDiveAuthors = Number(counts.deep_dive_authors ?? 0);
+  const minimumEvidence = Number(thresholds.qualified_evidence ?? 0);
+  const minimumUsers = Number(thresholds.qualified_users ?? 0);
+  const minimumAuthors = Number(thresholds.deep_dive_authors ?? 0);
+  if (qualifiedEvidence >= minimumEvidence && qualifiedUsers >= minimumUsers && deepDiveAuthors >= minimumAuthors) {
+    return 'sufficient';
+  }
+  return 'insufficient';
 }

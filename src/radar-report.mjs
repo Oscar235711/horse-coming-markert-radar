@@ -67,6 +67,7 @@ function renderOpportunityCard(item, evidenceById, { attributeName = 'data-oppor
         <div class="chips">${(item.fitment_tags ?? []).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
         <h4>痛点</h4>${list(item.pain_points)}
         <h4>机会/解决方向</h4>${list(item.solution_ideas ?? item.entry_gaps ?? [])}
+        <h4>为什么还没有被很好解决</h4><p><span class="status ${escapeHtml(item.why_not_done?.status ?? 'unknown')}">${escapeHtml(item.why_not_done?.status ?? 'unknown')}</span> ${escapeHtml(item.why_not_done?.text ?? '未知')}</p>
         <h4>事实</h4>${list(item.claims?.facts)}
         <h4>推断</h4>${list(item.claims?.inferences)}
         <h4>未知项</h4>${list(item.claims?.unknowns)}
@@ -395,9 +396,12 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
       const linkedNodes = (audienceMap.nodes || []).filter(item => linkedIds.includes(item.id));
       const evidenceItems = unique(linkedEdges.flatMap(edge => edge.evidence_ids || []).map(id => evidenceById.get(id)).filter(Boolean));
       if (node.type === 'product') {
-        mapDetail.innerHTML = '<p class="eyebrow">正式机会</p><h3>' + escapeHtml(node.label) + '</h3><p>分数 ' + escapeHtml(node.opportunity_score ?? node.size ?? 0) + '</p><h4>痛点</h4><ul>' + (node.pain_points || []).map(item => '<li>' + escapeHtml(item) + '</li>').join('') + '</ul><h4>社区</h4><p>' + linkedNodes.map(item => escapeHtml(item.label)).join(' · ') + '</p><h4>代表证据</h4><ul>' + (evidenceItems.length ? evidenceItems.map(item => '<li><a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">' + escapeHtml(item.subreddit) + ' · ' + escapeHtml((item.quote_original || '').slice(0, 100)) + '</a></li>').join('') : '<li>暂无可点击证据</li>') + '</ul>';
+        const productEyebrow = node.entry_type === 'adjacent_bundle' ? '邻近配套' : '正式机会';
+        mapDetail.innerHTML = '<p class="eyebrow">' + productEyebrow + '</p><h3>' + escapeHtml(node.label) + '</h3><p>分数 ' + escapeHtml(node.opportunity_score ?? node.size ?? 0) + '</p><h4>痛点</h4><ul>' + (node.pain_points || []).map(item => '<li>' + escapeHtml(item) + '</li>').join('') + '</ul><h4>社区</h4><p>' + linkedNodes.map(item => escapeHtml(item.label)).join(' · ') + '</p><h4>代表证据</h4><ul>' + (evidenceItems.length ? evidenceItems.map(item => '<li><a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">' + escapeHtml(item.subreddit) + ' · ' + escapeHtml((item.quote_original || '').slice(0, 100)) + '</a></li>').join('') : '<li>暂无可点击证据</li>') + '</ul>';
       } else {
-        mapDetail.innerHTML = '<p class="eyebrow">社区来源</p><h3>' + escapeHtml(node.label) + '</h3><p>关联 ' + escapeHtml(linkedNodes.length) + ' 个正式机会。</p><h4>正式机会</h4><ul>' + linkedNodes.map(item => '<li>' + escapeHtml(item.label) + '</li>').join('') + '</ul><h4>代表证据</h4><ul>' + (evidenceItems.length ? evidenceItems.map(item => '<li><a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">' + escapeHtml((item.quote_original || '').slice(0, 100)) + '</a></li>').join('') : '<li>暂无可点击证据</li>') + '</ul>';
+        const formalLinked = linkedNodes.filter(item => item.entry_type === 'formal_opportunity');
+        const adjacentLinked = linkedNodes.filter(item => item.entry_type === 'adjacent_bundle');
+        mapDetail.innerHTML = '<p class="eyebrow">社区来源</p><h3>' + escapeHtml(node.label) + '</h3><p>正式机会 ' + escapeHtml(node.formal_product_count ?? formalLinked.length) + ' 个 · 邻近配套 ' + escapeHtml(node.adjacent_product_count ?? adjacentLinked.length) + ' 个。</p><h4>正式机会</h4><ul>' + (formalLinked.length ? formalLinked.map(item => '<li>' + escapeHtml(item.label) + '</li>').join('') : '<li>暂无</li>') + '</ul><h4>邻近配套</h4><ul>' + (adjacentLinked.length ? adjacentLinked.map(item => '<li>' + escapeHtml(item.label) + '</li>').join('') : '<li>暂无</li>') + '</ul><h4>代表证据</h4><ul>' + (evidenceItems.length ? evidenceItems.map(item => '<li><a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">' + escapeHtml((item.quote_original || '').slice(0, 100)) + '</a></li>').join('') : '<li>暂无可点击证据</li>') + '</ul>';
       }
     }
 
@@ -563,15 +567,7 @@ export { renderReportHtml };
 
 export async function writeReportArtifacts({ runDir, analysis, audienceMap, keywordCloud, manifest = {} }) {
   await fs.mkdir(runDir, { recursive: true });
-  const opportunitiesArtifact = {
-    schema_version: analysis.schema_version ?? '1.0.0',
-    run_id: analysis.run_id ?? manifest.run_id ?? 'unknown-run',
-    generated_at: analysis.generated_at ?? new Date().toISOString(),
-    opportunities: analysis.opportunities ?? [],
-    candidate_signals: analysis.candidate_signals ?? [],
-    competitors: analysis.competitors ?? [],
-    pain_points: analysis.pain_points ?? [],
-  };
+  const opportunitiesArtifact = buildOpportunityArtifact(analysis, manifest);
   const paths = {
     analysis: path.join(runDir, 'analysis.json'),
     audienceMap: path.join(runDir, 'audience_map.json'),
@@ -615,4 +611,143 @@ function uniqueItems(items) {
     output.push(item);
   }
   return output;
+}
+
+function buildOpportunityArtifact(analysis, manifest) {
+  const formalOpportunities = (analysis.opportunities ?? []).map((item) => normalizeFormalOpportunity(item));
+  const candidateSignals = (analysis.candidate_signals ?? []).map((item) => normalizeCandidateSignal(item));
+  return {
+    schema_version: analysis.schema_version ?? '1.0.0',
+    run_id: analysis.run_id ?? manifest.run_id ?? 'unknown-run',
+    generated_at: analysis.generated_at ?? new Date().toISOString(),
+    opportunities: formalOpportunities,
+    candidate_signals: candidateSignals,
+    competitors: normalizeSignalList(analysis.competitors ?? []),
+    pain_points: normalizePainPoints(analysis, formalOpportunities, candidateSignals),
+  };
+}
+
+function normalizeFormalOpportunity(item = {}) {
+  return {
+    id: String(item.id ?? ''),
+    label: String(item.label ?? ''),
+    category: String(item.category ?? 'unknown'),
+    opportunity_type: String(item.opportunity_type ?? 'validated_entry'),
+    opportunity_score: Number(item.opportunity_score ?? 0),
+    verdict: String(item.verdict ?? ''),
+    evidence_ids: uniqueStrings(item.evidence_ids ?? []),
+    qualified_evidence_ids: uniqueStrings(item.qualified_evidence_ids ?? item.evidence_ids ?? []),
+    communities: uniqueStrings(item.communities ?? []),
+    fitment_tags: uniqueStrings(item.fitment_tags ?? []),
+    pain_points: uniqueStrings(item.pain_points ?? []),
+    solution_ideas: uniqueStrings(item.solution_ideas ?? []),
+    claims: normalizeClaims(item.claims),
+    why_not_done: normalizeWhyNotDone(item.why_not_done),
+    commercial: normalizeCommercial(item.commercial),
+    competitor_signals: normalizeSignalList(item.competitor_signals ?? []),
+    existing_product_signals: normalizeSignalList(item.existing_product_signals ?? []),
+    entry_gaps: uniqueStrings(item.entry_gaps ?? []),
+  };
+}
+
+function normalizeCandidateSignal(item = {}) {
+  return {
+    id: String(item.id ?? ''),
+    label: String(item.label ?? ''),
+    category: String(item.category ?? 'candidate_signal'),
+    opportunity_type: String(item.opportunity_type ?? 'emerging_product'),
+    threshold_check: normalizeThresholdCheck(item.threshold_check),
+    evidence_ids: uniqueStrings(item.evidence_ids ?? []),
+    qualified_evidence_ids: uniqueStrings(item.qualified_evidence_ids ?? item.evidence_ids ?? []),
+    claims: normalizeClaims(item.claims),
+    why_not_done: normalizeWhyNotDone(item.why_not_done),
+  };
+}
+
+function normalizePainPoints(analysis, formalOpportunities, candidateSignals) {
+  return (analysis.pain_points ?? []).map((item) => {
+    const label = String(item.label ?? item.id ?? '');
+    const relatedOpportunityIds = uniqueStrings([
+      ...(item.related_opportunity_ids ?? []),
+      ...formalOpportunities.filter((opportunity) => opportunity.pain_points.includes(label)).map((opportunity) => opportunity.id),
+    ]);
+    const relatedSolutionIds = uniqueStrings([
+      ...(item.related_solution_ids ?? []),
+      ...formalOpportunities.filter((opportunity) => opportunity.pain_points.includes(label)).map((opportunity) => opportunity.id),
+      ...candidateSignals.filter((signal) => (analysis.candidate_signals ?? []).find((raw) => raw.id === signal.id)?.pain_points?.includes?.(label)).map((signal) => signal.id),
+    ]);
+    return {
+      id: String(item.id ?? ''),
+      label,
+      evidence_ids: uniqueStrings(item.evidence_ids ?? []),
+      communities: uniqueStrings(item.communities ?? []),
+      evidence_count: Number(item.evidence_count ?? item.evidence_ids?.length ?? 0),
+      qualified_evidence_count: Number(item.qualified_evidence_count ?? item.evidence_count ?? item.evidence_ids?.length ?? 0),
+      unique_users: Number(item.unique_users ?? item.unique_user_count ?? 0),
+      fact_status: 'fact',
+      related_opportunity_ids: relatedOpportunityIds,
+      related_solution_ids: relatedSolutionIds,
+    };
+  });
+}
+
+function normalizeThresholdCheck(value = {}) {
+  return {
+    passed: Boolean(value.passed),
+    failures: uniqueStrings(value.failures ?? []),
+    checks: { ...(value.checks ?? {}) },
+    required: { ...(value.required ?? {}) },
+  };
+}
+
+function normalizeClaims(value = {}) {
+  return {
+    facts: uniqueStrings(value.facts ?? []),
+    inferences: uniqueStrings(value.inferences ?? []),
+    unknowns: uniqueStrings(value.unknowns ?? []),
+  };
+}
+
+function normalizeWhyNotDone(value = {}) {
+  const status = ['fact', 'inference', 'unknown'].includes(value?.status) ? value.status : 'unknown';
+  return {
+    status,
+    text: value?.text == null ? null : String(value.text),
+  };
+}
+
+function normalizeCommercial(value = {}) {
+  return {
+    pricing_band: normalizeCommercialField(value.pricing_band),
+    margin_potential: normalizeCommercialField(value.margin_potential),
+    manufacturing_complexity: normalizeCommercialField(value.manufacturing_complexity),
+    shipping_complexity: normalizeCommercialField(value.shipping_complexity),
+    return_risk: normalizeCommercialField(value.return_risk),
+  };
+}
+
+function normalizeCommercialField(value = {}) {
+  const status = ['fact', 'inference', 'unknown'].includes(value?.status) ? value.status : 'unknown';
+  return {
+    status,
+    value: value?.value ?? null,
+    evidence_ids: uniqueStrings(value?.evidence_ids ?? []),
+    basis: value?.basis == null ? undefined : String(value.basis),
+  };
+}
+
+function normalizeSignalList(items) {
+  return (items ?? []).map((item) => {
+    if (typeof item === 'string') {
+      return { name: item, evidence_ids: [] };
+    }
+    return {
+      name: String(item?.name ?? ''),
+      evidence_ids: uniqueStrings(item?.evidence_ids ?? []),
+    };
+  }).filter((item) => item.name);
+}
+
+function uniqueStrings(values) {
+  return [...new Set((values ?? []).filter(Boolean).map((value) => String(value)))];
 }

@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/opportunity-artifact.schema.json",
+  "title": "Task 6 Opportunity Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "generated_at",
+    "opportunities",
+    "candidate_signals",
+    "competitors",
+    "pain_points"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "opportunities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/formal_opportunity" }
+    },
+    "candidate_signals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/candidate_signal" }
+    },
+    "competitors": {
+      "type": "array",
+      "items": { "$ref": "./opportunities.schema.json#/$defs/competitor_signal" }
+    },
+    "pain_points": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pain_point" }
+    }
+  },
+  "$defs": {
+    "signal_object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "evidence_ids"],
+      "properties": {
+        "name": { "type": "string" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "commercial_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "value", "evidence_ids"],
+      "properties": {
+        "status": { "enum": ["fact", "inference", "unknown"] },
+        "value": { "type": ["string", "number", "boolean", "null"] },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "basis": { "type": "string" }
+      }
+    },
+    "commercial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pricing_band",
+        "margin_potential",
+        "manufacturing_complexity",
+        "shipping_complexity",
+        "return_risk"
+      ],
+      "properties": {
+        "pricing_band": { "$ref": "#/$defs/commercial_field" },
+        "margin_potential": { "$ref": "#/$defs/commercial_field" },
+        "manufacturing_complexity": { "$ref": "#/$defs/commercial_field" },
+        "shipping_complexity": { "$ref": "#/$defs/commercial_field" },
+        "return_risk": { "$ref": "#/$defs/commercial_field" }
+      }
+    },
+    "formal_opportunity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "category",
+        "opportunity_type",
+        "opportunity_score",
+        "verdict",
+        "evidence_ids",
+        "qualified_evidence_ids",
+        "communities",
+        "fitment_tags",
+        "pain_points",
+        "solution_ideas",
+        "claims",
+        "why_not_done",
+        "commercial",
+        "competitor_signals",
+        "existing_product_signals",
+        "entry_gaps"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "category": { "type": "string" },
+        "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] },
+        "opportunity_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "verdict": { "type": "string" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "qualified_evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "communities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fitment_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pain_points": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "solution_ideas": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "claims": { "$ref": "./opportunities.schema.json#/$defs/claims" },
+        "why_not_done": { "$ref": "./opportunities.schema.json#/$defs/why_not_done" },
+        "commercial": { "$ref": "#/$defs/commercial" },
+        "competitor_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/signal_object" }
+        },
+        "existing_product_signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/signal_object" }
+        },
+        "entry_gaps": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "candidate_signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "category",
+        "opportunity_type",
+        "threshold_check",
+        "evidence_ids",
+        "qualified_evidence_ids",
+        "claims",
+        "why_not_done"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "category": { "type": "string" },
+        "opportunity_type": { "enum": ["validated_entry", "emerging_product", "adjacent_bundle"] },
+        "threshold_check": { "$ref": "./opportunities.schema.json#/$defs/threshold_check" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "qualified_evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "claims": { "$ref": "./opportunities.schema.json#/$defs/claims" },
+        "why_not_done": { "$ref": "./opportunities.schema.json#/$defs/why_not_done" }
+      }
+    },
+    "pain_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "evidence_ids",
+        "communities",
+        "evidence_count",
+        "qualified_evidence_count",
+        "unique_users",
+        "fact_status",
+        "related_opportunity_ids",
+        "related_solution_ids"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "communities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_count": { "type": "integer", "minimum": 0 },
+        "qualified_evidence_count": { "type": "integer", "minimum": 0 },
+        "unique_users": { "type": "integer", "minimum": 0 },
+        "fact_status": { "enum": ["fact"] },
+        "related_opportunity_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "related_solution_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

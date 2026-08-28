@@ -3,20 +3,32 @@
   "$id": "https://example.invalid/schemas/audience-map.schema.json",
   "title": "Product Community Audience Map",
   "type": "object",
+  "additionalProperties": false,
   "required": ["schema_version", "nodes", "edges", "filters"],
   "properties": {
     "schema_version": { "type": "string" },
-    "generated_at": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
     "nodes": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "type", "label", "size", "evidence_ids"],
+        "additionalProperties": false,
+        "required": ["id", "type", "entry_type", "label", "size", "evidence_ids"],
         "properties": {
           "id": { "type": "string" },
           "type": { "enum": ["product", "community"] },
+          "entry_type": { "enum": ["formal_opportunity", "adjacent_bundle", "community"] },
           "label": { "type": "string" },
+          "category": { "type": "string" },
           "size": { "type": "number", "minimum": 0 },
+          "opportunity_score": { "type": "number", "minimum": 0, "maximum": 100 },
+          "product_count": { "type": "integer", "minimum": 0 },
+          "formal_product_count": { "type": "integer", "minimum": 0 },
+          "adjacent_product_count": { "type": "integer", "minimum": 0 },
+          "subreddit": { "type": "string" },
+          "fitment_tags": { "type": "array", "items": { "type": "string" } },
+          "pain_points": { "type": "array", "items": { "type": "string" } },
+          "solution_ideas": { "type": "array", "items": { "type": "string" } },
           "evidence_ids": { "type": "array", "items": { "type": "string" } }
         }
       }
@@ -25,6 +37,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["id", "source", "source_type", "target", "target_type", "evidence_ids"],
         "properties": {
           "id": { "type": "string" },
@@ -38,8 +51,15 @@
     },
     "filters": {
       "type": "object",
-      "required": ["categories"],
-      "properties": { "categories": { "type": "array", "items": { "type": "string" } } }
+      "additionalProperties": false,
+      "required": ["categories", "entry_types"],
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "entry_types": {
+          "type": "array",
+          "items": { "enum": ["adjacent_bundle", "formal_opportunity"] }
+        }
+      }
     }
   }
 }

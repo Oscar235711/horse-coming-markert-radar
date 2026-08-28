@@ -35,6 +35,8 @@ test('runner produces normalized data, analysis, graph, and offline report in on
   for (const name of ['manifest.json', 'candidates.json', 'analysis.json', 'audience_map.json', 'keyword_candidates.json', 'keyword_cloud.json', 'opportunities.json', 'personas.json', 'quality_evidence.jsonl', 'excluded_evidence.jsonl', 'optimization_backlog.jsonl', 'report.html']) {
     assert.equal(await exists(path.join(runDir, name)), true, name);
   }
+  const manifest = JSON.parse(await fs.readFile(path.join(runDir, 'manifest.json'), 'utf8'));
+  const opportunitiesArtifact = JSON.parse(await fs.readFile(path.join(runDir, 'opportunities.json'), 'utf8'));
   assert.equal(result.analysis.run_id, 'runner-run');
   assert.equal(result.analysis.opportunities.length, 0);
   assert.ok(result.analysis.candidate_signals.length >= 1);
@@ -42,9 +44,14 @@ test('runner produces normalized data, analysis, graph, and offline report in on
   assert.equal(result.audienceMap.edges.length, 0);
   assert.equal(result.keywordCloud.terms.length >= 1, true);
   assert.equal(result.manifest.status, 'complete');
+  assert.equal(result.manifest.persona_status, 'insufficient_sample');
   assert.equal(result.manifest.artifacts.keyword_cloud, 'keyword_cloud.json');
   assert.equal(result.manifest.artifacts.personas, 'personas.json');
   assert.equal(result.manifest.artifacts.quality_evidence, 'quality_evidence.jsonl');
+  assert.equal(manifest.artifacts.opportunities, 'opportunities.json');
+  assert.equal(manifest.counts.keyword_cloud_terms, result.keywordCloud.terms.length);
+  assert.equal(opportunitiesArtifact.run_id, 'runner-run');
+  assert.ok(Array.isArray(opportunitiesArtifact.candidate_signals));
 });
 
 async function exists(filePath) {

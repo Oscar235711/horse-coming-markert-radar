@@ -36,3 +36,19 @@ Resume Task 6 in-place on top of the existing V1.2 worktree without `reset`, `ch
 
 - The deleted `src/radar-report.mjs` was treated as an incomplete rewrite state, not an intentional removal, because the current tests and runner still imported it and immediately failed on module resolution.
 - No tags, no push, no branch rewrite, and no unrelated file reverts were performed.
+
+## Review Fixes
+
+- Added `schemas/opportunity-artifact.schema.json` so `opportunities.json` now has its own strict artifact contract with explicit top-level metadata, formal opportunities, candidate signals, competitors, and pain-point sections.
+- Normalized `opportunities.json` output inside `src/radar-report.mjs` instead of writing the raw analysis object shape directly.
+- Restored `why_not_done` rendering in the main opportunity cards with the original “为什么还没有被很好解决” framing.
+- Split Audience Map product semantics into `formal_opportunity` and `adjacent_bundle` while keeping graph edges strictly `product -> community`.
+- Added `formal_product_count` and `adjacent_product_count` on community nodes so adjacent bundles no longer inflate formal-opportunity counts in map detail views.
+- Tightened `schemas/audience-map.schema.json` and `schemas/run-manifest.schema.json` to reflect the Task 6 artifact and count contract actually emitted by the runner.
+- Extended `src/radar-runner.mjs` manifest output with `sample_status` and `persona_status`.
+
+## Review Verification
+
+- Focused review-fix suite:
+  - `node --test tests/radar-report.test.mjs tests/radar-core.test.mjs tests/radar-runner.test.mjs tests/schema-contract.test.mjs`
+- Then full suite, offline dependency check, and `git diff --check` were re-run before the follow-up commit.
