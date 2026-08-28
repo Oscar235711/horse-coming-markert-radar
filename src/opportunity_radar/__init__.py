@@ -15,6 +15,7 @@ from .config import (
 from .collector import (
     CollectionFailure,
     CollectionResult,
+    RoundTwoCollectionResult,
     OpenCliCollector,
     ThreadComment,
     ThreadDocument,
@@ -74,6 +75,7 @@ __all__ = [
     "CollectionSettings",
     "CollectionFailure",
     "CollectionResult",
+    "RoundTwoCollectionResult",
     "DEFAULT_BASE_URL",
     "DeepSeekClient",
     "DeepSeekError",

@@ -387,6 +387,41 @@ def test_collector_failure_records_and_failed_checkpoints_include_the_community(
     }
 
 
+def test_collector_round_two_preserves_raw_deduplicates_and_retries_only_failed_terms(tmp_path) -> None:
+    """A resumed expansion must reuse successful queries and never let one failed term stop its peers."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    calls: list[tuple[str, ...]] = []
+    attempts = {"heavy duty clamp kit": 0, "egr coolant cap": 0}
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        calls.append(arguments)
+        term = arguments[3]
+        attempts[term] += 1
+        if term == "egr coolant cap" and attempts[term] == 1:
+            raise RuntimeError("temporary throttle")
+        identifier = "same" if term == "heavy duty clamp kit" else "new"
+        return json.dumps([_listing(identifier, created_at=as_of - timedelta(days=2), subreddit="Cummins")])
+
+    paths = opportunity_radar.create_run_paths(tmp_path, "round-two")
+    collector = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None)
+    first = collector.collect_round_two(
+        ("heavy duty clamp kit", "egr coolant cap"), paths=paths, as_of=as_of
+    )
+    second = collector.collect_round_two(
+        ("heavy duty clamp kit", "egr coolant cap"), paths=paths, as_of=as_of,
+        existing_candidates=first.candidates,
+    )
+
+    assert [entry.post.post_id for entry in first.candidates] == ["t3_same"]
+    assert [failure.stage for failure in first.failures] == ["keyword:egr coolant cap"]
+    assert [entry.post.post_id for entry in second.candidates] == ["t3_same", "t3_new"]
+    assert [call[3] for call in calls] == ["heavy duty clamp kit", "egr coolant cap", "egr coolant cap"]
+    assert (paths.raw_dir / "listings" / "keyword__heavy_duty_clamp_kit.json").exists()
+    checkpoint = json.loads((paths.checkpoints_dir / "round_two.json").read_text(encoding="utf-8"))
+    assert checkpoint["queries"]["heavy duty clamp kit"]["status"] == "success"
+    assert checkpoint["queries"]["egr coolant cap"]["status"] == "success"
+
+
 def test_thread_comments_preserve_author_ids_for_distinct_commenter_counts() -> None:
     """Deep-read normalization must retain public commenter authors, not only text and URLs."""
     post = opportunity_radar.NormalizedPost(

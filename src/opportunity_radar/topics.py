@@ -253,6 +253,17 @@ class TopicAggregator:
                 "gaps": gaps,
                 "opportunity_hypotheses": opportunity_hypotheses,
             },
+            "field_evidence": {
+                "vehicles": _labelled_evidence(proposal.vehicles, evidence),
+                "platforms": _labelled_evidence(proposal.platforms, evidence),
+                "scenarios": _labelled_evidence(proposal.scenarios, evidence),
+                "category_tags": _labelled_evidence(proposal.category_tags, evidence),
+                "brand_tags": _labelled_evidence(proposal.brand_tags, evidence),
+                "competitor_tags": _labelled_evidence(proposal.competitor_tags, evidence),
+                "validation_questions": _labelled_evidence(proposal.validation_questions, evidence),
+                "supporting_views": _labelled_evidence(_views(evidence, "supporting"), evidence),
+                "opposing_views": _labelled_evidence(_views(evidence, "opposing"), evidence),
+            },
             "model_mode": getattr(self._pro, "mode", "injected_pro"),
         }
 
@@ -338,6 +349,14 @@ def _validated_claims(
 
 def _views(evidence: Sequence[Mapping[str, str]], stance: str) -> list[str]:
     return list(dict.fromkeys(item["claim_en"] for item in evidence if item["stance"] == stance))
+
+
+def _labelled_evidence(values: Sequence[str], evidence: Sequence[Mapping[str, str]]) -> list[dict[str, Any]]:
+    """Keep descriptive tags and validation questions tied to accepted topic evidence."""
+    return [
+        {"text": value, "evidence": list(evidence)}
+        for value in dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip())
+    ]
 
 
 def _is_formal(posts: Sequence[NormalizedPost], commenter_count: int) -> bool:

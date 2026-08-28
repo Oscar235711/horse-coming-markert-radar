@@ -356,3 +356,15 @@ def test_specific_topic_claims_require_their_own_valid_evidence_and_export_views
         xml = "".join(workbook.read(name).decode("utf-8") for name in workbook.namelist() if name.endswith(".xml"))
     assert "Grounded pain." in xml and "Unsupported pain." not in xml
     assert "Some owners report no crack." in xml
+
+
+def test_topic_tags_and_validation_questions_keep_evidence_projections(tmp_path: Path) -> None:
+    """Tags and next questions must remain traceable rather than becoming uncited topic decoration."""
+    posts = tuple(_post(index, age_days=index + 1, author=f"owner-{index}") for index in range(3))
+    topic = opportunity_radar.TopicAggregator(
+        pro=DeterministicPro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF
+    ).aggregate("diesel", tuple(_signal(post) for post in posts)).formal_topics[0]
+
+    assert topic["field_evidence"]["vehicles"][0]["text"] == "Diesel pickup"
+    assert topic["field_evidence"]["platforms"][0]["evidence"][0]["post_id"] == "t3_post_0"
+    assert topic["field_evidence"]["validation_questions"][0]["text"] == "Does failure repeat below freezing?"

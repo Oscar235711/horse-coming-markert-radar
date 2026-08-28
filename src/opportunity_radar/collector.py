@@ -65,6 +65,15 @@ class CollectionResult:
     failures: tuple[CollectionFailure, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RoundTwoCollectionResult:
+    """Bounded keyword-search records, resumable independently from community collection."""
+
+    candidates: tuple[WindowedPost, ...]
+    failures: tuple[CollectionFailure, ...]
+    selected_terms: tuple[str, ...]
+
+
 class OpenCliCollector:
     """Collect Reddit listings through a caller-supplied OpenCLI process boundary."""
 
@@ -171,6 +180,56 @@ class OpenCliCollector:
                 failures.append(failure)
         return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures))
 
+    def collect_round_two(
+        self,
+        terms: Iterable[str], *, paths: RunPaths, as_of: datetime,
+        existing_candidates: Iterable[WindowedPost] = (), max_posts_per_term: int = 10,
+    ) -> RoundTwoCollectionResult:
+        """Search approved exploratory terms once, retrying only failed checkpoint queries on resume."""
+        selected_terms = tuple(dict.fromkeys(term.strip() for term in terms if isinstance(term, str) and term.strip()))[:20]
+        if max_posts_per_term < 1:
+            raise ValueError("max_posts_per_term must be at least one")
+        checkpoint_path = paths.checkpoints_dir / "round_two.json"
+        signature = json.dumps({"selected_terms": selected_terms, "max_posts_per_term": max_posts_per_term}, sort_keys=True)
+        checkpoint = _read_checkpoint(checkpoint_path) or {}
+        reusable = checkpoint if checkpoint.get("candidate_signature") == signature else {}
+        queries = reusable.get("queries") if isinstance(reusable.get("queries"), Mapping) else {}
+        stored_records = reusable.get("records") if isinstance(reusable.get("records"), list) else []
+        records: list[Mapping[str, Any]] = [item for item in stored_records if isinstance(item, Mapping)]
+        terms_to_run = tuple(
+            term for term in selected_terms
+            if not isinstance(queries.get(term), Mapping) or queries[term].get("status") != "success"
+        )
+        failures: list[CollectionFailure] = []
+        current_queries: dict[str, dict[str, str]] = {
+            term: {"status": "success"} for term in selected_terms
+            if isinstance(queries.get(term), Mapping) and queries[term].get("status") == "success"
+        }
+        for position, term in enumerate(terms_to_run):
+            if position:
+                self._sleeper(self._settings.request_interval_seconds)
+            try:
+                raw_text = self._runner(_keyword_search_command(term, max_posts_per_term))
+                _write_raw_listing(paths.raw_dir, "keyword", _safe_path_component(term), raw_text)
+                parsed = _parse_records(raw_text)
+                records.extend({**dict(record), "source_surface": f"keyword:{term}"} for record in parsed)
+                current_queries[term] = {"status": "success"}
+            except Exception as error:
+                failure = CollectionFailure("", None, f"keyword:{term}", _safe_error(error))
+                failures.append(failure)
+                current_queries[term] = {"status": "failed", "message": failure.message}
+        _write_checkpoint(checkpoint_path, {
+            "candidate_signature": signature, "selected_terms": list(selected_terms),
+            "queries": current_queries, "records": records,
+        })
+        normalized = normalize_and_deduplicate(records)
+        additions = window_posts(normalized, as_of=as_of)
+        merged: dict[str, WindowedPost] = {item.post.post_id: item for item in existing_candidates}
+        for item in additions:
+            merged.setdefault(item.post.post_id, item)
+        ordered = tuple(merged[key] for key in merged)
+        return RoundTwoCollectionResult(ordered, tuple(failures), selected_terms)
+
 
 def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     common = ("-f", "json", "--window", "foreground", "--site-session", "persistent")
@@ -179,6 +238,13 @@ def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]
         ("top_month", ("opencli", "reddit", "subreddit", community, "--sort", "top", "--time", "month", "--limit", "50", *common)),
         ("top_year", ("opencli", "reddit", "subreddit", community, "--sort", "top", "--time", "year", "--limit", "100", *common)),
         ("new", ("opencli", "reddit", "subreddit", community, "--sort", "new", "--limit", "50", *common)),
+    )
+
+
+def _keyword_search_command(term: str, limit: int) -> tuple[str, ...]:
+    return (
+        "opencli", "reddit", "search", term, "--limit", str(limit), "-f", "json",
+        "--window", "foreground", "--site-session", "persistent",
     )
 
 
