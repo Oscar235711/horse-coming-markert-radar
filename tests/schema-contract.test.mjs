@@ -19,6 +19,8 @@ test('normalized evidence, run manifest, and Audience Map schemas are tracked', 
   assert.ok(manifest.required.includes('status'));
   assert.ok(manifest.required.includes('artifacts'));
   assert.ok(manifest.required.includes('persona_status'));
+  assert.ok(manifest.required.includes('unresolved_failures'));
+  assert.ok(manifest.required.includes('cumulative_attempts'));
   assert.ok(manifest.properties.counts.required.includes('keyword_cloud_terms'));
   assert.ok(manifest.properties.counts.required.includes('candidate_signals'));
   assert.deepEqual(manifest.properties.artifacts.required, [

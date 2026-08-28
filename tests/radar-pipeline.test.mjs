@@ -323,6 +323,41 @@ test('pipeline resumes completed detail files without refetching them', async (t
   assert.equal(resumed.manifest.status, 'complete');
 });
 
+test('pipeline appends failure attempts, retries only unresolved details, and clears resolved failures from the current manifest', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-failure-history-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const first = fixtureAdapter();
+
+  const partial = await runRadarPipeline({ config, adapter: first, runDir, runId: 'failure-history-run' });
+
+  assert.equal(partial.manifest.status, 'partial');
+  assert.equal(partial.manifest.unresolved_failures, 1);
+  assert.equal(partial.manifest.cumulative_attempts, 1);
+  const attemptsAfterFirstRun = (await fs.readFile(path.join(runDir, 'failure_attempts.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(attemptsAfterFirstRun.length, 1);
+  assert.equal(attemptsAfterFirstRun[0].stage, 'detail-fetch');
+  assert.equal(attemptsAfterFirstRun[0].attempt, 1);
+  assert.equal(attemptsAfterFirstRun[0].retryable, true);
+
+  const second = fixtureAdapter({ failBad: false });
+  const resumed = await runRadarPipeline({ config, adapter: second, runDir, runId: 'failure-history-run' });
+
+  assert.deepEqual(second.visited, ['bad']);
+  assert.equal(resumed.manifest.status, 'complete');
+  assert.equal(resumed.manifest.unresolved_failures, 0);
+  assert.equal(resumed.manifest.cumulative_attempts, 1);
+  assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).trim(), '');
+  const attemptsAfterResume = (await fs.readFile(path.join(runDir, 'failure_attempts.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(attemptsAfterResume.length, 1);
+  assert.equal(attemptsAfterResume[0].post_id, 'bad');
+});
+
 test('pipeline can discover automotive lighting communities outside the seed list', async (t) => {
   const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-discovery-'));
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));
@@ -449,6 +484,72 @@ test('resume retries unresolved search queries and preserves the immutable confi
   assert.deepEqual(resumed.candidates.map((post) => post.post_id), ['p1', 'p2']);
   assert.deepEqual(await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8'), snapshotBefore);
   assert.equal((await fs.readFile(path.join(runDir, 'failures.jsonl'), 'utf8')).trim(), '');
+});
+
+test('a config drift reruns only the newly dependent search stage while preserving earlier checkpointed results and the first snapshot', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-config-drift-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const searchCalls = [];
+  const adapter = {
+    name: 'fixture',
+    async search(query) {
+      searchCalls.push(query);
+      if (query === 'headlight problem') {
+        return [{ id: 'p1', title: 'F-150 headlight flicker', selftext: 'Texas', subreddit: 'sub0', permalink: '/comments/p1/x' }];
+      }
+      if (query === 'fog light condensation') {
+        return [{ id: 'p2', title: 'Silverado fog light condensation', selftext: 'Ohio', subreddit: 'sub1', permalink: '/comments/p2/x' }];
+      }
+      throw new Error(`unexpected query: ${query}`);
+    },
+    async fetchDetails(post) {
+      return { post, comments: [] };
+    },
+  };
+  const firstConfig = {
+    ...config,
+    query_groups: ['headlight problem'],
+    limits: { ...config.limits, posts: 2, deep_dive_posts: 2 },
+  };
+
+  const first = await runRadarPipeline({ config: firstConfig, adapter, runDir, runId: 'config-drift-run' });
+  const snapshotBefore = await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8');
+  assert.equal(first.manifest.cumulative_attempts, 0);
+
+  const secondConfig = {
+    ...firstConfig,
+    query_groups: ['headlight problem', 'fog light condensation'],
+  };
+  const resumed = await runRadarPipeline({ config: secondConfig, adapter, runDir, runId: 'config-drift-run' });
+
+  assert.deepEqual(searchCalls, ['headlight problem', 'fog light condensation']);
+  assert.deepEqual(resumed.candidates.map((post) => post.post_id), ['p1', 'p2']);
+  assert.deepEqual(await fs.readFile(path.join(runDir, 'config.snapshot.json'), 'utf8'), snapshotBefore);
+});
+
+test('pipeline keeps low-sample runs technically partial even when no transport call fails', async (t) => {
+  const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-low-sample-'));
+  t.after(() => fs.rm(runDir, { recursive: true, force: true }));
+  const adapter = {
+    name: 'fixture',
+    async search() {
+      return [{ id: 'p1', title: 'F-150 headlight flicker', selftext: 'Texas', subreddit: 'sub0', permalink: '/comments/p1/x' }];
+    },
+    async fetchDetails(post) {
+      return { post, comments: [] };
+    },
+  };
+  const underTargetConfig = {
+    ...config,
+    limits: { ...config.limits, posts: 3, deep_dive_posts: 3, minimum_complete_candidates: 3 },
+  };
+
+  const result = await runRadarPipeline({ config: underTargetConfig, adapter, runDir, runId: 'low-sample-run' });
+
+  assert.equal(result.manifest.status, 'partial');
+  assert.equal(result.manifest.sample_status, 'insufficient');
+  assert.equal(result.manifest.persona_status, 'insufficient_sample');
+  assert.equal(result.manifest.unresolved_failures, 0);
 });
 
 test('pipeline writes a bounded keyword candidate pool, runs one controlled second round, and keeps formal keywords immutable', async (t) => {

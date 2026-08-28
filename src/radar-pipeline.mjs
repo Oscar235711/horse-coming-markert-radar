@@ -19,6 +19,11 @@ import {
   scoreKeywordCandidates,
   selectRoundTwoTerms,
 } from './keyword-discovery.mjs';
+import {
+  hashStageInput,
+  readStageCheckpoint,
+  writeStageCheckpoint,
+} from './checkpoint-store.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -308,6 +313,26 @@ async function writeJsonl(filePath, rows) {
   await fs.writeFile(filePath, text, 'utf8');
 }
 
+async function readJsonlIfExists(filePath) {
+  try {
+    const text = await fs.readFile(filePath, 'utf8');
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function appendJsonl(filePath, rows) {
+  if (!rows.length) return;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.appendFile(filePath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+}
+
 function delay(milliseconds) {
   if (!milliseconds) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -337,96 +362,170 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
   const detailsDir = path.join(runDir, 'raw', 'details');
   await fs.mkdir(detailsDir, { recursive: true });
   const configSnapshotPath = path.join(runDir, 'config.snapshot.json');
-  if (!(await readJsonIfExists(configSnapshotPath))) await writeJson(configSnapshotPath, config);
+  const configSnapshot = await readJsonIfExists(configSnapshotPath);
+  if (!configSnapshot) await writeJson(configSnapshotPath, config);
+  const configDriftDetected = configSnapshot
+    ? hashStageInput(configSnapshot) !== hashStageInput(config)
+    : false;
+  const failureAttemptsPath = path.join(runDir, 'failure_attempts.jsonl');
+  const historicalAttempts = await readJsonlIfExists(failureAttemptsPath);
+  const attemptCounts = new Map();
+  for (const attempt of historicalAttempts) {
+    const key = failureKey(attempt);
+    attemptCounts.set(key, Math.max(attemptCounts.get(key) ?? 0, Number(attempt.attempt ?? 0)));
+  }
   await writeJsonl(path.join(runDir, 'optimization_backlog.jsonl'), OPTIMIZATION_ITEMS.map(([id, stage, issue, impact, recommendation, priority, status]) => ({ id, stage, issue, evidence: issue, impact, recommendation, priority, status })));
 
   const candidatePath = path.join(runDir, 'candidates.json');
+  const unresolvedFailurePath = path.join(runDir, 'failures.jsonl');
   const searchFailurePath = path.join(runDir, 'search_failures.json');
   const keywordCandidatePath = path.join(runDir, 'keyword_candidates.json');
   const roundTwoCheckpointPath = path.join(runDir, 'round_two_checkpoint.json');
-  let candidates = await readJsonIfExists(candidatePath);
-  const previousSearchFailures = (await readJsonIfExists(searchFailurePath)) ?? [];
+  const previousUnresolvedFailures = await readJsonlIfExists(unresolvedFailurePath);
+  const resumeLockedToSnapshot = previousUnresolvedFailures.length > 0 && configSnapshot;
+  const activeConfig = resumeLockedToSnapshot ? configSnapshot : config;
   const failures = [];
-  const rawPosts = candidates ? [...candidates] : [];
-  const queriesToRun = candidates
-    ? previousSearchFailures.map((item) => item.query).filter(Boolean)
-    : config.query_groups;
-  const searchFailures = [];
-  if (queriesToRun.length) {
-    for (const query of queriesToRun) {
-      try {
-        const results = await adapter.search(query, {
-          limit: config.limits.search_results_per_query,
-          timeoutMs: config.transport?.timeout_ms ?? 30000,
-        });
-        rawPosts.push(...results.map((post) => normalizePost(post, { query, transport: adapter.name })));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        searchFailures.push({ query, error: message });
-      }
-      await delay(config.transport?.request_interval_ms ?? 0);
+  const rawPosts = [];
+  const storedCandidates = await readJsonIfExists(candidatePath);
+  const previousSearchFailures = (await readJsonIfExists(searchFailurePath)) ?? [];
+  const hasPendingSearchFailures = previousSearchFailures.length > 0;
+  const queryCacheEntries = [];
+  let hasSearchCheckpoint = false;
+  for (const query of activeConfig.query_groups) {
+    const inputHash = hashStageInput({
+      stage: 'search-query',
+      query,
+      transport: adapter.name,
+      search_results_per_query: activeConfig.limits.search_results_per_query,
+      market: activeConfig.market,
+      subreddits: activeConfig.subreddits,
+    });
+    const checkpoint = await readStageCheckpoint(runDir, 'search-query', inputHash, '1.0.0');
+    queryCacheEntries.push({ query, inputHash, checkpoint });
+    if (checkpoint) {
+      hasSearchCheckpoint = true;
+      rawPosts.push(...(checkpoint.results ?? []));
     }
   }
-  candidates = deriveCandidates(rawPosts, config);
+  const canReuseStoredCandidates = Array.isArray(storedCandidates)
+    && (resumeLockedToSnapshot || hasPendingSearchFailures || (!hasSearchCheckpoint && !configDriftDetected));
+  if (canReuseStoredCandidates) rawPosts.push(...storedCandidates);
+  const searchFailures = [];
+  const queriesToRun = hasPendingSearchFailures
+    ? previousSearchFailures.map((item) => item.query).filter(Boolean).map((query) => ({
+      query,
+      inputHash: hashStageInput({
+        stage: 'search-query',
+        query,
+        transport: adapter.name,
+        search_results_per_query: activeConfig.limits.search_results_per_query,
+        market: activeConfig.market,
+        subreddits: activeConfig.subreddits,
+      }),
+      checkpoint: null,
+    }))
+    : resumeLockedToSnapshot
+      ? []
+      : queryCacheEntries;
+  for (const entry of queriesToRun) {
+    if (!hasPendingSearchFailures && (entry.checkpoint || canReuseStoredCandidates)) continue;
+    try {
+      const results = await adapter.search(entry.query, {
+        limit: activeConfig.limits.search_results_per_query,
+        timeoutMs: activeConfig.transport?.timeout_ms ?? 30000,
+      });
+      const normalized = results.map((post) => normalizePost(post, {
+        query: entry.query,
+        transport: adapter.name,
+      }));
+      rawPosts.push(...normalized);
+      await writeStageCheckpoint(runDir, 'search-query', entry.inputHash, '1.0.0', {
+        schema_version: '1.0.0',
+        query: entry.query,
+        results: normalized,
+      });
+    } catch (error) {
+      const failure = await recordFailureAttempt({
+        attemptsPath: failureAttemptsPath,
+        attemptCounts,
+        stage: 'search',
+        transport: adapter.name,
+        now,
+        identifiers: { query: entry.query },
+        error,
+      });
+      failures.push(failure);
+      searchFailures.push({ query: entry.query, error: failure.message });
+    }
+    await delay(activeConfig.transport?.request_interval_ms ?? 0);
+  }
+  let candidates = deriveCandidates(rawPosts, activeConfig);
   await writeJson(searchFailurePath, searchFailures);
-  failures.push(...searchFailures.map((item) => ({ stage: 'search', ...item })));
   await writeJson(candidatePath, candidates);
 
   let details = await collectCandidateDetails({
     candidates,
     adapter,
-    config,
+    config: activeConfig,
     detailsDir,
     failures,
+    failureAttemptsPath,
+    attemptCounts,
+    now,
+    configDriftDetected,
   });
 
   const authorSelectionEvidence = buildAuthorSelectionEvidence(details);
   const gatedAuthorEvidence = applyEvidenceGate(authorSelectionEvidence, {
-    market: config.market,
-    marketRules: config.market_rules,
+    market: activeConfig.market,
+    marketRules: activeConfig.market_rules,
   });
   const authorCandidates = selectAuthors(gatedAuthorEvidence.qualified, {
-    limit: config.limits?.profile_users ?? 60,
+    limit: activeConfig.limits?.profile_users ?? 60,
   });
   await cleanupAuthorCheckpoints(runDir, authorCandidates);
   const authorActivity = typeof adapter.fetchAuthorActivity === 'function'
     ? await collectAuthorActivity(authorCandidates, adapter, {
       runDir,
-      limitAuthors: config.limits?.profile_users ?? 60,
-      limitPerAuthor: config.limits?.profile_items_per_user ?? 50,
-      maxTotalActivities: config.limits?.total_profile_items
-        ?? (config.limits?.profile_users ?? 60) * (config.limits?.profile_items_per_user ?? 50),
-      timeoutMs: config.transport?.timeout_ms ?? 30000,
+      limitAuthors: activeConfig.limits?.profile_users ?? 60,
+      limitPerAuthor: activeConfig.limits?.profile_items_per_user ?? 50,
+      maxTotalActivities: activeConfig.limits?.total_profile_items
+        ?? (activeConfig.limits?.profile_users ?? 60) * (activeConfig.limits?.profile_items_per_user ?? 50),
+      timeoutMs: activeConfig.transport?.timeout_ms ?? 30000,
       afterUtc: new Date(now().getTime() - 180 * 24 * 60 * 60 * 1000).toISOString(),
-      market: config.market,
-      marketRules: config.market_rules,
+      market: activeConfig.market,
+      marketRules: activeConfig.market_rules,
       productTerms: [
-        ...(config.keywords?.anchors ?? []),
-        ...(config.keywords?.expanded ?? []),
+        ...(activeConfig.keywords?.anchors ?? []),
+        ...(activeConfig.keywords?.expanded ?? []),
       ],
-      dictionaries: config.market_rules?.dictionaries ?? {},
+      dictionaries: activeConfig.market_rules?.dictionaries ?? {},
     })
     : { authors: [], failures: [], summary: { selected_authors: authorCandidates.length, authors_collected: 0, retained_activities: 0, excluded_activities: 0 } };
   failures.push(...authorActivity.failures);
 
   const scoredKeywordCandidates = scoreKeywordCandidates(
-    extractKeywordCandidates(gatedAuthorEvidence.qualified, authorActivity.authors, config),
-    config,
+    extractKeywordCandidates(gatedAuthorEvidence.qualified, authorActivity.authors, activeConfig),
+    activeConfig,
   );
   const roundTwoTerms = selectRoundTwoTerms(scoredKeywordCandidates, {
-    maxTerms: config.limits?.round_two_terms ?? 20,
-    minimumScore: config.limits?.round_two_minimum_score ?? 65,
-    minimumUsers: config.limits?.round_two_minimum_users ?? 2,
-    minimumCommunities: config.limits?.round_two_minimum_communities ?? 2,
+    maxTerms: activeConfig.limits?.round_two_terms ?? 20,
+    minimumScore: activeConfig.limits?.round_two_minimum_score ?? 65,
+    minimumUsers: activeConfig.limits?.round_two_minimum_users ?? 2,
+    minimumCommunities: activeConfig.limits?.round_two_minimum_communities ?? 2,
   });
   const roundTwo = await runRoundTwoSearch({
     adapter,
-    config,
+    config: activeConfig,
     runId,
     roundTwoTerms,
     checkpointPath: roundTwoCheckpointPath,
+    runDir,
+    failureAttemptsPath,
+    attemptCounts,
+    now,
   });
-  failures.push(...roundTwo.failures.map((failure) => ({ stage: 'round-two-search', ...failure })));
+  failures.push(...roundTwo.failures);
 
   const usedTerms = new Set(roundTwo.selected_terms);
   const keywordCandidateArtifact = {
@@ -443,7 +542,7 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
 
   const roundOneCandidateIds = new Set(candidates.map((post) => post.post_id));
   const combinedRawPosts = [...rawPosts, ...roundTwo.results];
-  const combinedCandidates = deriveCandidates(combinedRawPosts, config);
+  const combinedCandidates = deriveCandidates(combinedRawPosts, activeConfig);
   const candidateListChanged = combinedCandidates.length !== candidates.length
     || combinedCandidates.some((post, index) => post.post_id !== candidates[index]?.post_id);
   candidates = combinedCandidates;
@@ -452,24 +551,45 @@ export async function runRadarPipeline({ config, adapter, runDir, runId = new Da
     details = await collectCandidateDetails({
       candidates,
       adapter,
-      config,
+      config: activeConfig,
       detailsDir,
       failures,
+      failureAttemptsPath,
+      attemptCounts,
+      now,
+      configDriftDetected,
     });
   }
-  const finalDeepDiveTarget = Math.min(candidates.length, config.limits.deep_dive_posts ?? candidates.length);
+  const deepDiveTarget = inferDeepDiveTarget(activeConfig, candidates.length);
   const roundTwoAdditions = candidates.filter((post) => !roundOneCandidateIds.has(post.post_id)).length;
 
   await writeJsonl(path.join(runDir, 'failures.jsonl'), failures);
+  const cumulativeAttempts = (await readJsonlIfExists(failureAttemptsPath)).length;
+  const sampleStatus = inferPipelineSampleStatus({ config: activeConfig, candidates, details });
+  const personaStatus = inferPipelinePersonaStatus({
+    sampleStatus,
+    config: activeConfig,
+    authorCandidates,
+    authorsCollected: authorActivity.summary.authors_collected,
+  });
+  const status = inferPipelineStatus({
+    failures,
+    candidates,
+    config: activeConfig,
+  });
   const manifest = {
     schema_version: '1.0.0',
     run_id: runId,
-    status: failures.length ? 'partial' : 'complete',
+    status,
+    sample_status: sampleStatus,
+    persona_status: personaStatus,
+    unresolved_failures: failures.length,
+    cumulative_attempts: cumulativeAttempts,
     transport: adapter.name,
     updated_at: now().toISOString(),
     counts: {
       candidates: candidates.length,
-      deep_dive_target: finalDeepDiveTarget,
+      deep_dive_target: deepDiveTarget,
       details: details.length,
       comments: details.reduce((sum, item) => sum + item.comments.length, 0),
       author_candidates: authorCandidates.length,
@@ -501,18 +621,39 @@ async function collectCandidateDetails({
   config,
   detailsDir,
   failures,
+  failureAttemptsPath,
+  attemptCounts,
+  now,
+  configDriftDetected,
 }) {
   const details = [];
-  const deepDiveCandidates = (candidates ?? []).slice(0, config.limits.deep_dive_posts ?? candidates.length);
+  const deepDiveTarget = inferDeepDiveTarget(config, candidates.length);
+  const deepDiveCandidates = (candidates ?? []).slice(0, deepDiveTarget || candidates.length);
   const selectedDetailFiles = new Set(deepDiveCandidates.map((post) => `${post.post_id}.json`));
   for (const file of await fs.readdir(detailsDir)) {
     if (file.endsWith('.json') && !selectedDetailFiles.has(file)) await fs.rm(path.join(detailsDir, file), { force: true });
   }
   for (const post of deepDiveCandidates) {
     const detailPath = path.join(detailsDir, `${post.post_id}.json`);
-    const checkpoint = await readJsonIfExists(detailPath);
+    const inputHash = hashStageInput({
+      stage: 'detail-fetch',
+      post_id: post.post_id,
+      query: post.query,
+      url: post.url,
+      transport: adapter.name,
+      comments_per_post: config.limits.comments_per_post,
+      comment_identity: adapter.name === 'opencli' ? 'synthetic_post_scoped_post_link_only' : 'native_comment_id',
+    });
+    const checkpoint = await readStageCheckpoint(runDirFromDetailsDir(detailsDir), 'detail-fetch', inputHash, '1.0.0');
     if (checkpoint) {
+      await writeJson(detailPath, checkpoint);
       details.push(checkpoint);
+      continue;
+    }
+    const legacyDetail = !configDriftDetected ? await readJsonIfExists(detailPath) : null;
+    if (legacyDetail) {
+      await writeStageCheckpoint(runDirFromDetailsDir(detailsDir), 'detail-fetch', inputHash, '1.0.0', legacyDetail);
+      details.push(legacyDetail);
       continue;
     }
     try {
@@ -525,10 +666,19 @@ async function collectCandidateDetails({
         post: normalizedPost,
         comments: normalizeComments(raw.comments ?? [], { postId: post.post_id, limit: config.limits.comments_per_post }),
       };
+      await writeStageCheckpoint(runDirFromDetailsDir(detailsDir), 'detail-fetch', inputHash, '1.0.0', normalized);
       await writeJson(detailPath, normalized);
       details.push(normalized);
     } catch (error) {
-      failures.push({ post_id: post.post_id, stage: 'detail-fetch', error: error instanceof Error ? error.message : String(error) });
+      failures.push(await recordFailureAttempt({
+        attemptsPath: failureAttemptsPath,
+        attemptCounts,
+        stage: 'detail-fetch',
+        transport: adapter.name,
+        now,
+        identifiers: { post_id: post.post_id },
+        error,
+      }));
     }
     await delay(config.transport?.request_interval_ms ?? 0);
   }
@@ -604,35 +754,54 @@ async function runRoundTwoSearch({
   runId,
   roundTwoTerms,
   checkpointPath,
+  runDir,
+  failureAttemptsPath,
+  attemptCounts,
+  now,
 }) {
-  const signature = JSON.stringify({
+  const signaturePayload = {
     selected_terms: [...roundTwoTerms],
     max_terms: config.limits?.round_two_terms ?? 20,
     minimum_score: config.limits?.round_two_minimum_score ?? 65,
     max_posts_per_term: config.limits?.round_two_posts_per_term ?? 10,
-  });
-  const existing = await readJsonIfExists(checkpointPath);
-  const canReuse = existing?.candidate_signature === signature;
-  const results = canReuse ? [...(existing.results ?? [])] : [];
-  const previousFailures = canReuse ? (existing.failures ?? []) : [];
-  const queriesToRun = canReuse
-    ? previousFailures.map((item) => item.query).filter(Boolean)
-    : [...roundTwoTerms];
+  };
+  const signature = JSON.stringify(signaturePayload);
+  const results = [];
   const failures = [];
-
-  for (const query of queriesToRun) {
+  for (const query of roundTwoTerms) {
+    const inputHash = hashStageInput({
+      stage: 'round-two-search',
+      query,
+      transport: adapter.name,
+      round_two_posts_per_term: config.limits?.round_two_posts_per_term ?? 10,
+    });
+    const checkpoint = await readStageCheckpoint(runDir, 'round-two-search', inputHash, '1.0.0');
+    if (checkpoint) {
+      results.push(...(checkpoint.results ?? []));
+      continue;
+    }
     try {
       const rawResults = await adapter.search(query, {
         limit: config.limits?.round_two_posts_per_term ?? 10,
         timeoutMs: config.transport?.timeout_ms ?? 30000,
       });
       const normalized = rawResults.map((post) => normalizePost(post, { query, transport: adapter.name }));
+      await writeStageCheckpoint(runDir, 'round-two-search', inputHash, '1.0.0', {
+        schema_version: '1.0.0',
+        query,
+        results: normalized,
+      });
       results.push(...normalized);
     } catch (error) {
-      failures.push({
-        query,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      failures.push(await recordFailureAttempt({
+        attemptsPath: failureAttemptsPath,
+        attemptCounts,
+        stage: 'round-two-search',
+        transport: adapter.name,
+        now,
+        identifiers: { query },
+        error,
+      }));
     }
     await delay(config.transport?.request_interval_ms ?? 0);
   }
@@ -645,8 +814,96 @@ async function runRoundTwoSearch({
     completed_rounds: 1,
     selected_terms: [...roundTwoTerms],
     results: dedupedResults,
-    failures,
+    failures: failures.map(({ query, message }) => ({ query, error: message })),
   };
   await writeJson(checkpointPath, payload);
-  return payload;
+  return { ...payload, failures };
+}
+
+function inferDeepDiveTarget(config, candidateCount) {
+  if (Number.isFinite(Number(config.limits?.deep_dive_posts))) {
+    return Math.max(0, Math.min(candidateCount, Number(config.limits.deep_dive_posts)));
+  }
+  return candidateCount;
+}
+
+function inferMinimumCompleteCandidates(config) {
+  if (Number.isFinite(Number(config.limits?.minimum_complete_candidates))) {
+    return Math.max(0, Number(config.limits.minimum_complete_candidates));
+  }
+  return 0;
+}
+
+function inferPipelineSampleStatus({ config, candidates }) {
+  const minimumCompleteCandidates = inferMinimumCompleteCandidates(config);
+  if (!minimumCompleteCandidates) return 'sufficient';
+  return candidates.length >= minimumCompleteCandidates ? 'sufficient' : 'insufficient';
+}
+
+function inferPipelinePersonaStatus({ sampleStatus, config, authorCandidates, authorsCollected }) {
+  if (sampleStatus !== 'sufficient') return 'insufficient_sample';
+  const requestedAuthors = Number(config.limits?.profile_users ?? 0);
+  if (requestedAuthors <= 0) return 'complete';
+  return authorsCollected >= Math.min(requestedAuthors, authorCandidates.length)
+    ? 'complete'
+    : 'insufficient_sample';
+}
+
+function inferPipelineStatus({ failures, candidates, config }) {
+  if (failures.length) return 'partial';
+  const minimumCompleteCandidates = inferMinimumCompleteCandidates(config);
+  if (minimumCompleteCandidates && candidates.length < minimumCompleteCandidates) return 'partial';
+  return 'complete';
+}
+
+function failureKey(value) {
+  return JSON.stringify({
+    stage: value.stage,
+    query: value.query ?? null,
+    post_id: value.post_id ?? null,
+    username: value.username ?? null,
+  });
+}
+
+async function recordFailureAttempt({
+  attemptsPath,
+  attemptCounts,
+  stage,
+  transport,
+  now,
+  identifiers,
+  error,
+}) {
+  const key = failureKey({ stage, ...identifiers });
+  const attempt = (attemptCounts.get(key) ?? 0) + 1;
+  attemptCounts.set(key, attempt);
+  const message = error instanceof Error ? error.message : String(error);
+  const failure = {
+    stage,
+    attempt,
+    transport,
+    occurred_at: now().toISOString(),
+    error_category: classifyFailure(message, error),
+    retryable: isRetryableFailure(error, message),
+    message,
+    ...identifiers,
+  };
+  await appendJsonl(attemptsPath, [failure]);
+  return failure;
+}
+
+function classifyFailure(message, error) {
+  const text = `${message} ${error?.status ?? ''}`.toLowerCase();
+  if (/\b(429|rate limit(?:ed)?|throttle|timeout|temporar)/.test(text)) return 'transient';
+  if (/\b(403|404|private|deleted|suspended)\b/.test(text)) return 'access';
+  return 'runtime';
+}
+
+function isRetryableFailure(error, message) {
+  if (typeof error?.status === 'number') return error.status === 403 || error.status === 404 || error.status === 429;
+  return /\b(rate limit(?:ed)?|throttle|timeout|temporar|private|deleted|suspended|403|404|429)\b/i.test(message);
+}
+
+function runDirFromDetailsDir(detailsDir) {
+  return path.resolve(detailsDir, '..', '..');
 }

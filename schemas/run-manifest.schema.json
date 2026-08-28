@@ -4,13 +4,15 @@
   "title": "Opportunity Radar Run Manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "status", "sample_status", "persona_status", "transport", "updated_at", "counts", "artifacts"],
+  "required": ["schema_version", "run_id", "status", "sample_status", "persona_status", "unresolved_failures", "cumulative_attempts", "transport", "updated_at", "counts", "artifacts"],
   "properties": {
     "schema_version": { "type": "string" },
     "run_id": { "type": "string", "minLength": 1 },
     "status": { "enum": ["complete", "partial", "failed"] },
     "sample_status": { "enum": ["sufficient", "insufficient"] },
     "persona_status": { "enum": ["complete", "insufficient_sample"] },
+    "unresolved_failures": { "type": "integer", "minimum": 0 },
+    "cumulative_attempts": { "type": "integer", "minimum": 0 },
     "transport": { "enum": ["opencli", "public-json", "fixture"] },
     "updated_at": { "type": "string", "format": "date-time" },
     "counts": {
