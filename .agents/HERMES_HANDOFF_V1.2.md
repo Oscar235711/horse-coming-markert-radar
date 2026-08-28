@@ -110,7 +110,7 @@ Resume command: reuse the same `--run-id` or `-RunId` exactly. Successful stages
 - Max wall-clock runtime: `600` minutes
 - Reddit query/post/author attempts: at most `3` total attempts, with waits of `15 seconds` and `45 seconds`
 - DSV4Pro attempts: at most `2` total attempts, with a wait of `30 seconds`
-- Honor `Retry-After` when present, capped at `120` seconds
+- Honor `Retry-After` when present, capped at 120 seconds
 - One exhausted item becomes an unresolved failure and must not stop unrelated work
 
 If Task 7 resume history is available, preserve `failure_attempts.jsonl`. Always preserve `failures.jsonl`.
@@ -169,6 +169,7 @@ The run directory should contain:
 - `audience_map.json`
 - `manifest.json`
 - `report.html`
+- `runtime-status.json`
 - `failures.jsonl`
 - `failure_attempts.jsonl` if available in the current resume implementation
 - `optimization_backlog.jsonl`
@@ -201,6 +202,7 @@ On stop, timeout, or partial completion:
 
 - preserve checkpoints;
 - preserve partial artifacts;
+- write `runtime-status.json`;
 - record unresolved failures;
 - update `.agents/PROGRESS.md`;
 - update `.agents/OUTBOX.md`;

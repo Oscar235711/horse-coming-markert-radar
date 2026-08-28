@@ -32,7 +32,7 @@ foreach ($row in $rows) {
   }
   Write-Host "[$i/$total] $id FETCH"
   try {
-    $result = & opencli reddit read $postId -f json --window foreground --site-session persistent --limit 100 --depth 3 --replies 20 --expand-more true --expand-rounds 5 --max-length 5000 2>&1
+    $result = & opencli reddit read $postId -f json --window foreground --site-session persistent --limit 100 --depth 3 --replies 20 --expand-more false --expand-rounds 5 --max-length 5000 2>&1
     $text = ($result -join "`n")
     if ($text.TrimStart().StartsWith("[") -and $text.TrimEnd().EndsWith("]")) {
       [System.IO.File]::WriteAllText($outFile, $text, [System.Text.UTF8Encoding]::new($false))
