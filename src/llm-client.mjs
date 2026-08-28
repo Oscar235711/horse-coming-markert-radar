@@ -104,24 +104,30 @@ export function createOpenAiCompatibleAnalyzer({
 
 export function validateEnrichment(result, allowedEvidenceIds) {
   const allowedIds = new Set(uniqueStrings(allowedEvidenceIds));
-  const normalized = normalizeTopLevelOverrides(result, allowedIds);
-  const errors = validateWithSchema(normalized, ENRICHMENT_SCHEMA, '$');
+  const errors = validateWithSchema(result, ENRICHMENT_SCHEMA, '$');
   if (errors.length) {
     return { valid: false, errors, value: null };
   }
 
-  validateUpdateCollection(normalized?.opportunities, '$.opportunities', allowedIds, errors);
-  validateUpdateCollection(normalized?.candidate_signals, '$.candidate_signals', allowedIds, errors);
+  validateTopLevelCitedText(result?.executive_summary, '$.executive_summary', allowedIds, errors);
+  validateTopLevelCitedText(result?.seller_verdict, '$.seller_verdict', allowedIds, errors);
+  validateUpdateCollection(result?.opportunities, '$.opportunities', allowedIds, errors);
+  validateUpdateCollection(result?.candidate_signals, '$.candidate_signals', allowedIds, errors);
 
-  for (const [index, competitor] of (normalized?.competitors ?? []).entries()) {
+  for (const [index, competitor] of (result?.competitors ?? []).entries()) {
     validateEvidenceIds(competitor.evidence_ids, `$.competitors[${index}].evidence_ids`, allowedIds, errors);
   }
 
   return {
     valid: errors.length === 0,
     errors,
-    value: errors.length === 0 ? structuredClone(normalized) : null,
+    value: errors.length === 0 ? structuredClone(result) : null,
   };
+}
+
+function validateTopLevelCitedText(value, path, allowedIds, errors) {
+  if (!value) return;
+  validateEvidenceIds(value.evidence_ids, `${path}.evidence_ids`, allowedIds, errors);
 }
 
 function validateUpdateCollection(items, path, allowedIds, errors) {
@@ -245,38 +251,6 @@ function mergeCompetitors(baseCompetitors, updates) {
     });
   }
   return [...merged.values()];
-}
-
-function normalizeTopLevelOverrides(result, allowedIds) {
-  const normalized = {};
-  if (!result || typeof result !== 'object' || Array.isArray(result)) {
-    return result;
-  }
-
-  for (const [key, value] of Object.entries(result)) {
-    if (key === 'executive_summary' || key === 'seller_verdict') continue;
-    normalized[key] = value;
-  }
-
-  const executiveSummary = normalizeCitedTextOverride(result.executive_summary, allowedIds);
-  if (executiveSummary) normalized.executive_summary = executiveSummary;
-
-  const sellerVerdict = normalizeCitedTextOverride(result.seller_verdict, allowedIds);
-  if (sellerVerdict) normalized.seller_verdict = sellerVerdict;
-
-  return normalized;
-}
-
-function normalizeCitedTextOverride(value, allowedIds) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const text = String(value.text ?? '').trim();
-  if (!text) return null;
-
-  const evidenceIds = uniqueStrings(value.evidence_ids);
-  if (!evidenceIds.length) return null;
-  if (evidenceIds.some((evidenceId) => !allowedIds.has(evidenceId))) return null;
-
-  return { text, evidence_ids: evidenceIds };
 }
 
 function createHttpError(status, body, headers) {

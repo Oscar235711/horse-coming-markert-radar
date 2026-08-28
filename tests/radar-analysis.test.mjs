@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { createOpenAiCompatibleAnalyzer } from '../src/llm-client.mjs';
 import { analyzeDetails, analyzeWithOptionalLlm } from '../src/radar-analysis.mjs';
 
 const config = {
@@ -63,6 +64,53 @@ test('optional LLM failure preserves rule analysis and records the fallback', as
   assert.equal(result.opportunities.length, rules.opportunities.length);
   assert.equal(result.analysis_engine.llm.status, 'failed');
   assert.match(result.analysis_engine.llm.error, /provider timeout/);
+  assert.equal(result.analysis_engine.active_result, 'rules');
+});
+
+test('optional LLM schema or provenance failure falls back to untouched rules output', async () => {
+  const rules = analyzeDetails(fixtureDetails(), config);
+  const analyzer = createOpenAiCompatibleAnalyzer({
+    baseUrl: 'https://example.test/v1',
+    apiKey: 'test-key',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get() { return null; } },
+      async json() {
+        return {
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                executive_summary: { text: '带未知引用的总结', evidence_ids: ['invented-id'] },
+                candidate_signals: [
+                  {
+                    id: 'led-headlight-bulb-kit',
+                    label: '不该被部分接收的新标签',
+                    claims: {
+                      facts: [{ text: '公开样本支持该方向。', evidence_ids: [rules.evidence[0].id] }],
+                    },
+                  },
+                ],
+              }),
+            },
+          }],
+        };
+      },
+      async text() {
+        return 'ok';
+      },
+    }),
+    sleepImpl: async () => {},
+  });
+
+  const result = await analyzeWithOptionalLlm(rules, analyzer);
+
+  assert.equal(result.executive_summary, rules.executive_summary);
+  assert.equal(result.seller_verdict, rules.seller_verdict);
+  assert.deepEqual(result.opportunities, rules.opportunities);
+  assert.deepEqual(result.candidate_signals, rules.candidate_signals);
+  assert.equal(result.analysis_engine.llm.status, 'failed');
+  assert.match(result.analysis_engine.llm.error, /unknown evidence id "invented-id"/i);
   assert.equal(result.analysis_engine.active_result, 'rules');
 });
 

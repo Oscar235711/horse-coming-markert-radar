@@ -85,10 +85,9 @@ test('validateEnrichment rejects unknown evidence ids', () => {
   assert.match(result.errors.join('\n'), /unknown evidence id/i);
 });
 
-test('validateEnrichment drops unauditable summary overrides but keeps valid merge-safe patches', () => {
+test('validateEnrichment rejects mixed patches when executive_summary uses the wrong top-level shape', () => {
   const result = validateEnrichment({
     executive_summary: 'legacy uncited summary',
-    seller_verdict: { text: 'unsupported evidence', evidence_ids: ['invented-id'] },
     candidate_signals: [
       {
         id: 'protective-headlight-film',
@@ -100,13 +99,45 @@ test('validateEnrichment drops unauditable summary overrides but keeps valid mer
     ],
   }, ['ev-1']);
 
-  assert.equal(result.valid, true);
-  assert.equal('executive_summary' in result.value, false);
-  assert.equal('seller_verdict' in result.value, false);
-  assert.equal(result.value.candidate_signals[0].claims.facts[0].text, '公开样本已出现安装与购买场景。');
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /\$\.executive_summary: expected object/i);
 });
 
-test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire model, and preserves rule fallbacks', async () => {
+test('validateEnrichment rejects top-level cited text without citations', () => {
+  const result = validateEnrichment({
+    seller_verdict: { text: '缺少引用的结论' },
+    candidate_signals: [
+      {
+        id: 'protective-headlight-film',
+        claims: {
+          facts: [{ text: '公开样本已出现安装与购买场景。', evidence_ids: ['ev-1'] }],
+        },
+      },
+    ],
+  }, ['ev-1']);
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /\$\.seller_verdict\.evidence_ids: missing required property/i);
+});
+
+test('validateEnrichment rejects top-level cited text with unknown evidence ids', () => {
+  const result = validateEnrichment({
+    executive_summary: { text: '引用了未知 evidence 的总结', evidence_ids: ['invented-id'] },
+    candidate_signals: [
+      {
+        id: 'protective-headlight-film',
+        claims: {
+          facts: [{ text: '公开样本已出现安装与购买场景。', evidence_ids: ['ev-1'] }],
+        },
+      },
+    ],
+  }, ['ev-1']);
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /\$\.executive_summary\.evidence_ids: unknown evidence id "invented-id"/i);
+});
+
+test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire model, and merges valid enrichments', async () => {
   let requestedUrl = '';
   let requestedBody = null;
   let requestedTimeoutMs = null;
@@ -131,7 +162,7 @@ test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire 
           message: {
             content: JSON.stringify({
               executive_summary: { text: 'LLM enriched', evidence_ids: ['ev-1'] },
-              seller_verdict: 'legacy uncited verdict',
+              seller_verdict: { text: 'LLM verdict', evidence_ids: ['ev-2'] },
               candidate_signals: [
                 {
                   id: 'protective-headlight-film',
@@ -168,7 +199,7 @@ test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire 
     'https://example.invalid/schemas/dsv4pro-enrichment.schema.json',
   );
   assert.equal(result.executive_summary, 'LLM enriched');
-  assert.equal(result.seller_verdict, 'rules verdict');
+  assert.equal(result.seller_verdict, 'LLM verdict');
   assert.equal(result.candidate_signals[0].id, 'protective-headlight-film');
   assert.equal(result.candidate_signals[0].label, '车灯保护膜方向');
   assert.equal(result.candidate_signals[0].opportunity_score, 42);
@@ -177,6 +208,47 @@ test('OpenAI-compatible analyzer sends tracked json_schema, normalizes the wire 
   } finally {
     AbortSignal.timeout = originalTimeout;
   }
+});
+
+test('OpenAI-compatible analyzer rejects the whole patch when top-level cited text is invalid', async () => {
+  let attempts = 0;
+  const waits = [];
+  const analyzer = createOpenAiCompatibleAnalyzer({
+    baseUrl: 'https://example.test/v1',
+    apiKey: 'test-key',
+    fetchImpl: async () => {
+      attempts += 1;
+      return createJsonResponse({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              seller_verdict: 'legacy uncited verdict',
+              candidate_signals: [
+                {
+                  id: 'protective-headlight-film',
+                  label: '会被错误部分接收的候选方向',
+                  claims: {
+                    facts: [{ text: '公开样本已出现购买与安装反馈。', evidence_ids: ['ev-1'] }],
+                  },
+                },
+              ],
+            }),
+          },
+        }],
+      });
+    },
+    sleepImpl: async (ms) => {
+      waits.push(ms);
+    },
+  });
+
+  await assert.rejects(
+    analyzer(ruleAnalysisFixture()),
+    /Invalid DSV4Pro enrichment: .*seller_verdict: expected object/i,
+  );
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(waits, [30000]);
 });
 
 test('OpenAI-compatible analyzer retries once after malformed JSON using the 30-second wait', async () => {

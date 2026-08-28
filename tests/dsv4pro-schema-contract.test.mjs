@@ -24,6 +24,7 @@ test('dsv4pro enrichment schema stays patch-only and citation-driven', async () 
   assert.deepEqual(enrichment.$defs.update.required, ['id']);
   assert.equal(enrichment.$defs.update.additionalProperties, false);
   assert.deepEqual(enrichment.$defs.cited_text.required, ['text', 'evidence_ids']);
+  assert.equal(enrichment.$defs.cited_text.additionalProperties, false);
   assert.equal(enrichment.$defs.cited_text.properties.evidence_ids.minItems, 1);
   assert.equal(enrichment.$defs.why_not_done.additionalProperties, false);
   assert.equal(enrichment.$defs.competitor.required.includes('evidence_ids'), true);
