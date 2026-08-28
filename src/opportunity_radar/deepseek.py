@@ -133,7 +133,7 @@ class DeepSeekClient:
                 self._sleeper(float(attempt + 1))
         raise last_error or DeepSeekError("DeepSeek 请求失败。")
 
-    def extract_post(self, thread: ThreadDocument) -> PostAnalysis:
+    def extract_post(self, thread: ThreadDocument, *, model: str | None = None) -> PostAnalysis:
         """Extract an evidence-cited diesel post contract with Flash."""
         evidence = {"post": thread.post.url}
         evidence.update({comment.comment_id: comment.url for comment in thread.comments})
@@ -151,7 +151,7 @@ class DeepSeekClient:
         document = self.chat_json((
             {"role": "system", "content": "You extract evidence-grounded Reddit product signals."},
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-        ), model=self._environment.get("DEEPSEEK_FLASH_MODEL", FLASH_MODEL))
+        ), model=model or self._environment.get("DEEPSEEK_FLASH_MODEL", FLASH_MODEL))
         analysis = _analysis_from_document(document, evidence)
         if not analysis.topics and analysis.claims:
             # Some gateway deployments return grounded claims but omit the optional

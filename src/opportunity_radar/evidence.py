@@ -58,6 +58,7 @@ class EvidenceQuality:
     quality_score: int
     quality_band: str
     eligible: bool
+    opportunity_weight: float
     hard_exclusion: bool
     components: Mapping[str, int]
     penalties: Mapping[str, int]
@@ -81,37 +82,66 @@ class EvidenceGateResult:
     distribution: Mapping[str, int]
 
 
-def classify_diesel_evidence(record: Mapping[str, Any], *, seen_texts: set[str] | None = None) -> EvidenceQuality:
+def classify_diesel_evidence(
+    record: Mapping[str, Any],
+    *,
+    seen_texts: set[str] | None = None,
+    dictionaries: Any | None = None,
+    exclusions: Any | None = None,
+    approved_communities: Sequence[str] | None = None,
+) -> EvidenceQuality:
     """Classify one public Reddit record without using an LLM or external service."""
     text = _compose_text(record)
     normalized = _normalize(text)
-    hard_reason = _hard_exclusion(record, text, normalized, seen_texts)
+    product_terms = _terms(dictionaries, "products", DIESEL_PRODUCTS)
+    platform_terms = _terms(dictionaries, "platforms", DIESEL_PLATFORMS)
+    vehicle_terms = _terms(dictionaries, "vehicle_terms", ())
+    non_diesel_terms = _terms(exclusions, "non_diesel_terms", NON_DIESEL_TERMS)
+    excluded_subreddits = _terms(exclusions, "excluded_subreddits", ("motorcycles", "cars", "mustang", "subaru"))
+    promotional_terms = _terms(exclusions, "promotional_terms", ())
+    approved = {value.casefold() for value in (approved_communities or ("cummins", "duramax", "powerstroke", "forddiesels"))}
+    community_approved = str(record.get("subreddit") or "").casefold() in approved
+    hard_reason = _hard_exclusion(
+        record, text, normalized, seen_texts,
+        non_diesel_terms=non_diesel_terms,
+        excluded_subreddits=excluded_subreddits,
+        promotional_terms=promotional_terms,
+    )
     zero_components = {key: 0 for key in _COMPONENT_KEYS}
     zero_penalties = {key: 0 for key in _PENALTY_KEYS}
     zero_penalties["total"] = 0
     if hard_reason:
         return EvidenceQuality(
             evidence_role="noise", claim_status="unknown", quality_score=0,
-            quality_band="noise", eligible=False, hard_exclusion=True,
+            quality_band="noise", eligible=False, opportunity_weight=0.0, hard_exclusion=True,
             components=zero_components, penalties=zero_penalties, reason_codes=(hard_reason,),
         )
 
     lower = text.casefold()
     first_person = bool(re.search(r"\b(i|my|we|our)\b", lower))
     practitioner = bool(re.search(r"\b(mechanic|technician|diesel tech|shop)\b", lower))
-    product_hits = _matches(lower, DIESEL_PRODUCTS)
-    platform_hits = _matches(lower, DIESEL_PLATFORMS)
+    product_hits = _matches(lower, product_terms)
+    platform_hits = _matches(lower, platform_terms)
+    vehicle_hits = _matches(lower, vehicle_terms)
+    if not community_approved and not platform_hits and not vehicle_hits:
+        return EvidenceQuality(
+            evidence_role="noise", claim_status="unknown", quality_score=0,
+            quality_band="noise", eligible=False, opportunity_weight=0.0, hard_exclusion=True,
+            components=zero_components, penalties=zero_penalties, reason_codes=("missing_diesel_context",),
+        )
     context = bool(re.search(r"\b(tow|towing|haul|hauling|daily driv|work truck|off[ -]?road|winter|cold)\w*\b", lower))
     vehicle = bool(re.search(r"\b(19|20)\d{2}\b|\b(ram|super duty|f[ -]?250|f[ -]?350|silverado|sierra)\b", lower))
     outcome = bool(re.search(r"\b(fail|failed|leak|leaked|crack|cracked|seep|fixed|fix|broke|broken|overheat|fit|didn.t fit)\w*\b", lower))
     purchase = bool(re.search(r"\b(buy|bought|purchase|price|cost|under \$|order|return|returned|replace|replaced)\w*\b", lower))
+    completed_purchase = bool(re.search(r"\b(bought|purchased|ordered|installed|replaced|returned)\b", lower))
     diagnostic = bool(re.search(r"\b(code|dtc|diagnos|scan|clamp|sensor|pressure|temperature|torque|install)\w*\b", lower))
-    demand = bool(re.search(r"\b(need|looking for|what should i|get me|recommend)\b", lower))
+    demand = bool(re.search(r"\b(need|looking for|what should i|get me|recommend)\b|\bwhich\b.{0,40}\bshould i\b", lower))
+    market_observation = bool(re.search(r"\b(owners?|users?|people)\s+(?:report|describe|mention|say)\b|\baftermarket options?\b", lower))
 
     components = {
         "first_person_or_practitioner": 20 if first_person else 15 if practitioner and diagnostic else 0,
-        "product_specificity": 15 if product_hits else 0,
-        "context": 15 if context or vehicle or platform_hits else 0,
+        "product_specificity": 15 if product_hits or market_observation else 0,
+        "context": 15 if context or vehicle or platform_hits or vehicle_hits or community_approved else 0,
         "observable_outcome": 20 if outcome else 0,
         "purchase_signal": 10 if purchase else 0,
         "diagnostic_detail": 10 if diagnostic else 0,
@@ -131,13 +161,13 @@ def classify_diesel_evidence(record: Mapping[str, Any], *, seen_texts: set[str] 
     penalties["total"] = sum(penalties.values())
     score = max(0, min(100, sum(components.values()) - penalties["total"]))
 
-    if first_person and (outcome or purchase) and (product_hits or platform_hits):
+    if first_person and (outcome or completed_purchase) and (product_hits or platform_hits):
         role = "direct_experience"
     elif practitioner and diagnostic and (product_hits or platform_hits):
         role = "qualified_practitioner"
     elif demand and (context or vehicle or product_hits or platform_hits):
         role = "contextual_demand"
-    elif product_hits or platform_hits:
+    elif product_hits or platform_hits or (community_approved and (outcome or demand or market_observation)):
         role = "market_observation"
     else:
         role = "weak"
@@ -153,25 +183,41 @@ def classify_diesel_evidence(record: Mapping[str, Any], *, seen_texts: set[str] 
         reasons.append("low_information_density")
     if seen_texts is not None and normalized:
         seen_texts.add(normalized)
-    eligible = role in {"direct_experience", "qualified_practitioner", "market_observation"} and score >= 50
-    return EvidenceQuality(role, status, score, _quality_band(score), eligible, False, components, penalties, tuple(reasons))
+    eligible = role in {"direct_experience", "qualified_practitioner", "market_observation", "contextual_demand"} and score >= 50
+    opportunity_weight = 0.65 if role == "contextual_demand" and eligible else 1.0 if eligible else 0.0
+    return EvidenceQuality(role, status, score, _quality_band(score), eligible, opportunity_weight, False, components, penalties, tuple(reasons))
 
 
-def apply_diesel_evidence_gate(records: Sequence[Mapping[str, Any]]) -> EvidenceGateResult:
+def apply_diesel_evidence_gate(
+    records: Sequence[Mapping[str, Any],],
+    *,
+    dictionaries: Any | None = None,
+    exclusions: Any | None = None,
+    approved_communities: Sequence[str] | None = None,
+) -> EvidenceGateResult:
     """Classify supplied records once and retain both qualified and rejected decisions."""
     seen: set[str] = set()
     qualified: list[GatedEvidence] = []
     excluded: list[GatedEvidence] = []
     distribution = {role: 0 for role in EVIDENCE_ROLES}
     for record in records:
-        quality = classify_diesel_evidence(record, seen_texts=seen)
+        quality = classify_diesel_evidence(
+            record,
+            seen_texts=seen,
+            dictionaries=dictionaries,
+            exclusions=exclusions,
+            approved_communities=approved_communities,
+        )
         distribution[quality.evidence_role] += 1
         item = GatedEvidence(record, quality)
         (qualified if quality.eligible else excluded).append(item)
     return EvidenceGateResult(tuple(qualified), tuple(excluded), distribution)
 
 
-def _hard_exclusion(record: Mapping[str, Any], text: str, normalized: str, seen_texts: set[str] | None) -> str | None:
+def _hard_exclusion(
+    record: Mapping[str, Any], text: str, normalized: str, seen_texts: set[str] | None,
+    *, non_diesel_terms: Sequence[str], excluded_subreddits: Sequence[str], promotional_terms: Sequence[str],
+) -> str | None:
     author = str(record.get("author") or "").casefold()
     subreddit = str(record.get("subreddit") or "").casefold()
     lower = text.casefold()
@@ -181,11 +227,12 @@ def _hard_exclusion(record: Mapping[str, Any], text: str, normalized: str, seen_
         return "deleted_or_removed"
     if re.fullmatch(r"https?://\S+", text.strip(), re.I):
         return "url_only"
-    if re.search(r"\b(coupon|promo code|discount code|affiliate|use code|buy now|free shipping)\b", lower):
+    promotion_pattern = "|".join(re.escape(term) for term in (*promotional_terms, "coupon", "promo code", "discount code", "affiliate", "use code", "buy now", "free shipping"))
+    if re.search(rf"\b(?:{promotion_pattern})\b", lower):
         return "affiliate_or_coupon"
     if re.fullmatch(r"\s*(?:same|this|lol|lmao|nice|agreed|following|bump)\s*[.!?]*\s*", text, re.I):
         return "generic_banter"
-    if _matches(lower, NON_DIESEL_TERMS) or subreddit in {"motorcycles", "cars", "mustang", "subaru"}:
+    if _matches(lower, non_diesel_terms) or subreddit in {value.casefold() for value in excluded_subreddits}:
         return "non_diesel_or_non_pickup"
     if seen_texts is not None and normalized and normalized in seen_texts:
         return "duplicate_or_near_duplicate"
@@ -202,6 +249,11 @@ def _normalize(text: str) -> str:
 
 def _matches(text: str, terms: Sequence[str]) -> tuple[str, ...]:
     return tuple(term for term in terms if re.search(rf"\b{re.escape(term)}\b", text, re.I))
+
+
+def _terms(source: Any | None, attribute: str, fallback: Sequence[str]) -> tuple[str, ...]:
+    values = getattr(source, attribute, fallback) if source is not None else fallback
+    return tuple(value.casefold() for value in values if isinstance(value, str) and value.strip())
 
 
 def _as_int(value: object) -> int:

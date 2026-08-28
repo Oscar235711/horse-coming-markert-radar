@@ -51,6 +51,29 @@ def test_diesel_hard_relevance_exclusions_cannot_be_rescued_by_score() -> None:
     assert all(item.quality.quality_score == 0 for item in gated.excluded)
 
 
+def test_bare_product_terms_need_an_approved_diesel_community_or_platform_evidence() -> None:
+    """Generic gasoline downpipe/tuner chatter must not enter the diesel evidence pool."""
+    domain = opportunity_radar.load_diesel_domain_config(Path("configs/diesel_90d.yaml"))
+    generic = opportunity_radar.classify_diesel_evidence(
+        {"id": "generic", "subreddit": "AskCars", "body": "Which catless downpipe and tuner should I buy?"},
+        dictionaries=domain.dictionaries,
+        exclusions=domain.exclusions,
+        approved_communities=("Cummins", "Duramax", "powerstroke", "FordDiesels"),
+    )
+    approved = opportunity_radar.classify_diesel_evidence(
+        {"id": "approved", "subreddit": "Cummins", "body": "Which downpipe and tuner should I buy for towing?"},
+        dictionaries=domain.dictionaries,
+        exclusions=domain.exclusions,
+        approved_communities=("Cummins", "Duramax", "powerstroke", "FordDiesels"),
+    )
+
+    assert generic.hard_exclusion is True
+    assert generic.reason_codes == ("missing_diesel_context",)
+    assert approved.evidence_role == "contextual_demand"
+    assert approved.eligible is True
+    assert approved.opportunity_weight < 1.0
+
+
 def test_flash_contract_keeps_fact_inference_and_unknown_fields_separate() -> None:
     """Structured fields must retain citations and never promote invented facts."""
     post = opportunity_radar.NormalizedPost(
@@ -99,6 +122,32 @@ def test_flash_contract_keeps_fact_inference_and_unknown_fields_separate() -> No
     assert analysis.opportunity_hypotheses[0].status == "unknown"
     assert analysis.opportunity_hypotheses[0].evidence_ids == ()
     assert analysis.topic_candidates[0].value == "EGR durability"
+
+
+def test_flash_contract_drops_malformed_scalar_and_list_entries() -> None:
+    """Only the documented object/array wire shapes can enter saved post analysis."""
+    post = opportunity_radar.NormalizedPost(
+        post_id="t3_malformed", url="https://reddit.example/post", subreddit="Cummins", title="x", body="y",
+        author="owner", created_at=datetime(2026, 8, 26, tzinfo=UTC), score=0, comment_count=0, source_surfaces=("hot",),
+    )
+    payload = {
+        "platform": "Cummins",
+        "pain_points": {"value": "not-an-array"},
+        "needs": ["not-an-object", {"value": "valid need", "evidence_ids": ["post"], "status": "fact"}],
+        "topics": [], "claims": [],
+    }
+
+    class Transport:
+        def __call__(self, method, url, headers, request):
+            return opportunity_radar.HttpResponse(200, json.dumps({"choices": [{"message": {"content": json.dumps(payload)}}]}))
+
+    analysis = opportunity_radar.DeepSeekClient(
+        transport=Transport(), environment={"DEEPSEEK_API_KEY": "test-key"}
+    ).extract_post(opportunity_radar.ThreadDocument(post=post, comments=()))
+
+    assert analysis.platform.status == "unknown"
+    assert analysis.pain_points == ()
+    assert [item.value for item in analysis.needs] == ["valid need"]
 
 
 def test_diesel_config_exposes_domain_dictionaries_and_disables_profile_deep_dive() -> None:

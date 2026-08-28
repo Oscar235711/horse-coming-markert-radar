@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from .config import load_community_catalog, load_config, write_community_catalog
+from .config import load_community_catalog, load_config, load_diesel_domain_config, write_community_catalog
 from .collector import CollectionFailure, OpenCliCollector, ThreadDocument
 from .deepseek import (
     DEFAULT_BASE_URL,
@@ -29,7 +29,9 @@ from .deepseek import (
     HttpResponse,
     PostAnalysis,
     TopicCandidate,
+    AnalysisField,
 )
+from .evidence import apply_diesel_evidence_gate
 from .models import Community, CommunityCatalog, RadarConfig, RunManifest
 from .storage import TopicRegistry, create_run_paths, read_manifest, write_manifest
 from .topics import (
@@ -293,13 +295,22 @@ class RadarCliApp:
         state["completed_stages"] = self._merge_stages(state["completed_stages"], "configured", "collected")
         state["failures"] = [self._failure_to_dict(failure) for failure in collection.failures]
 
+        domain = load_diesel_domain_config(paths.config_snapshot_path)
+        eligible_threads, audit = self._gate_threads(collection.deep_reads, config, domain)
+        audit_path = paths.artifacts_dir / "evidence_gate.json"
+        audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        state["artifacts"]["evidence_gate_json"] = str(audit_path)
+        state["counts"]["eligible_post_count"] = len(eligible_threads)
+        state["counts"]["excluded_post_count"] = len(collection.deep_reads) - len(eligible_threads)
+        state["counts"]["comment_evidence_count"] = len(audit["comments"])
+
         analyses_by_post = self._load_saved_analyses(paths)
         flash_failures: list[CollectionFailure] = []
-        for thread in collection.deep_reads:
+        for thread in eligible_threads:
             if thread.post.post_id in analyses_by_post:
                 continue
             try:
-                analysis = self._flash_client.extract_post(thread)
+                analysis = self._extract_flash(thread)
                 analyses_by_post[thread.post.post_id] = analysis
                 self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
             except Exception as error:
@@ -333,9 +344,10 @@ class RadarCliApp:
             )
             return state
 
-        analysis = self._aggregate_run(config, collection.deep_reads, analyses_by_post)
+        analysis = self._aggregate_run(config, eligible_threads, analyses_by_post)
         exported = self._invoke_exporter(paths.artifacts_dir, analysis, ("json", "xlsx"))
         state["artifacts"] = self._artifact_map(exported, ("json", "xlsx"))
+        state["artifacts"]["evidence_gate_json"] = str(audit_path)
         state["stage"] = "exported"
         state["status"] = "completed"
         state["completed_stages"] = self._merge_stages(
@@ -357,6 +369,79 @@ class RadarCliApp:
             ),
         )
         return state
+
+    def _gate_threads(self, threads: Sequence[ThreadDocument], config: RadarConfig, domain: Any) -> tuple[tuple[ThreadDocument, ...], dict[str, Any]]:
+        """Keep only relevant diesel posts for Flash while retaining every gate decision."""
+        approved = tuple(community.name for community in config.communities)
+        post_records = tuple(
+            {
+                "post_id": thread.post.post_id,
+                "record_type": "post",
+                "author": thread.post.author,
+                "subreddit": thread.post.subreddit,
+                "title": thread.post.title,
+                "body": thread.post.body,
+                "score": thread.post.score,
+            }
+            for thread in threads
+        )
+        post_gate = apply_diesel_evidence_gate(
+            post_records,
+            dictionaries=domain.dictionaries,
+            exclusions=domain.exclusions,
+            approved_communities=approved,
+        )
+        eligible_ids = {str(item.record["post_id"]) for item in post_gate.qualified}
+        comment_records = tuple(
+            {
+                "post_id": thread.post.post_id,
+                "comment_id": comment.comment_id,
+                "record_type": "comment",
+                "author": comment.author,
+                "subreddit": thread.post.subreddit,
+                "body": comment.body,
+                "score": 0,
+            }
+            for thread in threads for comment in thread.comments
+        )
+        comment_gate = apply_diesel_evidence_gate(
+            comment_records,
+            dictionaries=domain.dictionaries,
+            exclusions=domain.exclusions,
+            approved_communities=approved,
+        )
+        audit = {
+            "qualified_posts": [self._gate_entry(item) for item in post_gate.qualified],
+            "excluded_posts": [self._gate_entry(item) for item in post_gate.excluded],
+            "comments": [self._gate_entry(item) for item in (*comment_gate.qualified, *comment_gate.excluded)],
+            "distribution": {"posts": dict(post_gate.distribution), "comments": dict(comment_gate.distribution)},
+        }
+        return tuple(thread for thread in threads if thread.post.post_id in eligible_ids), audit
+
+    @staticmethod
+    def _gate_entry(item: Any) -> dict[str, Any]:
+        record = item.record
+        quality = item.quality
+        return {
+            "post_id": str(record.get("post_id", "")),
+            "comment_id": str(record.get("comment_id", "")),
+            "record_type": str(record.get("record_type", "")),
+            "evidence_role": quality.evidence_role,
+            "claim_status": quality.claim_status,
+            "quality_score": quality.quality_score,
+            "quality_band": quality.quality_band,
+            "opportunity_weight": quality.opportunity_weight,
+            "eligible": quality.eligible,
+            "hard_exclusion": quality.hard_exclusion,
+            "reason_codes": list(quality.reason_codes),
+        }
+
+    def _extract_flash(self, thread: ThreadDocument) -> PostAnalysis:
+        """Pass the configured Flash deployment when the injected client accepts it."""
+        extract = self._flash_client.extract_post
+        if "model" in inspect.signature(extract).parameters:
+            return extract(thread, model=self._deepseek_flash_model())
+        return extract(thread)
 
     def _aggregate_run(
         self,
@@ -582,6 +667,9 @@ class RadarCliApp:
                 "analyzed_posts": 0,
                 "topic_count": 0,
                 "failure_count": 0,
+                "eligible_post_count": 0,
+                "excluded_post_count": 0,
+                "comment_evidence_count": 0,
             },
             "artifacts": {},
             "failures": [],
@@ -606,10 +694,7 @@ class RadarCliApp:
         document = {
             "status": "success",
             "post_id": post_id,
-            "analysis": {
-                "topics": [asdict(topic) for topic in analysis.topics],
-                "claims": [asdict(claim) for claim in analysis.claims],
-            },
+            "analysis": asdict(analysis),
         }
         (paths.checkpoints_dir / f"analysis__{post_id}.json").write_text(
             json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True),
@@ -646,7 +731,36 @@ class RadarCliApp:
             for item in document.get("claims", [])
             if isinstance(item, Mapping)
         )
-        return PostAnalysis(topics=topics, claims=claims)
+        scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment")
+        list_names = (
+            "pain_points", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "products",
+            "brands", "competitors", "purchase_intent", "keyword_candidates", "topic_candidates",
+        )
+        scalar_fields = {name: self._saved_analysis_field(document.get(name)) for name in scalar_names}
+        list_fields = {
+            name: tuple(self._saved_analysis_field(item) for item in document.get(name, []) if isinstance(item, Mapping))
+            if isinstance(document.get(name), list) else ()
+            for name in list_names
+        }
+        return PostAnalysis(
+            topics=topics, claims=claims,
+            platform=scalar_fields["platform"], vehicle=scalar_fields["vehicle"], year=scalar_fields["year"],
+            scenario=scalar_fields["scenario"], goal=scalar_fields["goal"], sentiment=scalar_fields["sentiment"],
+            pain_points=list_fields["pain_points"], needs=list_fields["needs"], current_solutions=list_fields["current_solutions"],
+            gaps=list_fields["gaps"], opportunity_hypotheses=list_fields["opportunity_hypotheses"], products=list_fields["products"],
+            brands=list_fields["brands"], competitors=list_fields["competitors"], purchase_intent=list_fields["purchase_intent"],
+            keyword_candidates=list_fields["keyword_candidates"], topic_candidates=list_fields["topic_candidates"],
+        )
+
+    @staticmethod
+    def _saved_analysis_field(value: Any) -> AnalysisField:
+        if not isinstance(value, Mapping) or not isinstance(value.get("value"), str):
+            return AnalysisField()
+        status = str(value.get("status", "unknown"))
+        if status not in {"fact", "inference", "unknown"}:
+            status = "unknown"
+        ids = tuple(item for item in value.get("evidence_ids", []) if isinstance(item, str)) if isinstance(value.get("evidence_ids"), list) else ()
+        return AnalysisField(value["value"].strip() or "unknown", ids if status != "unknown" else (), status)
 
     def _artifact_map(self, exported: TopicExportArtifacts, formats: Sequence[str]) -> dict[str, str]:
         artifact_map = {
