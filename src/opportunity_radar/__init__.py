@@ -52,6 +52,7 @@ from .models import (
     WindowedPost,
 )
 from .normalization import normalize_and_deduplicate
+from .keywords import KeywordCandidate, discover_diesel_keywords, select_round_two_terms
 from .scoring import score_shortlist
 from .storage import TopicRegistry, RunPaths, create_run_paths, read_manifest, write_manifest
 from .windowing import window_posts
@@ -96,6 +97,7 @@ __all__ = [
     "PostSignal",
     "PRO_MODEL",
     "KeywordSearchSettings",
+    "KeywordCandidate",
     "ReportSettings",
     "ProTopicProposal",
     "RadarCliApp",
@@ -118,6 +120,8 @@ __all__ = [
     "load_config",
     "load_diesel_domain_config",
     "normalize_and_deduplicate",
+    "discover_diesel_keywords",
+    "select_round_two_terms",
     "read_manifest",
     "score_shortlist",
     "window_posts",
