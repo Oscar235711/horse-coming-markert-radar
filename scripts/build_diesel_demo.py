@@ -23,7 +23,9 @@ def main() -> int:
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     exported = export_topic_analysis(analysis, output_dir=output, formats=("json", "xlsx"))
-    report_path = render_html(analysis, output / "report.html")
+    # Render the exact canonical projection used by the workbook so totals cannot drift.
+    canonical = json.loads(exported.analysis_json.read_text(encoding="utf-8"))
+    report_path = render_html(canonical, output / "report.html")
     print(json.dumps({
         "status": "ok",
         "mode": analysis.get("model_mode", "offline_demo_fixture"),
@@ -37,4 +39,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

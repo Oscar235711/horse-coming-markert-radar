@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from collections.abc import Mapping
 from hashlib import sha256
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,14 @@ class RunPaths:
 
     run_dir: Path
     raw_dir: Path
+    raw_listings_dir: Path
+    raw_searches_dir: Path
+    raw_threads_dir: Path
+    normalized_dir: Path
+    keywords_dir: Path
+    keyword_library_path: Path
+    keyword_candidates_path: Path
+    failures_path: Path
     checkpoints_dir: Path
     artifacts_dir: Path
     manifest_path: Path
@@ -31,15 +40,28 @@ def create_run_paths(root: str | Path, run_id: str) -> RunPaths:
         raise ValueError("run_id must be a single non-empty path component")
     run_dir = Path(root) / run_id
     raw_dir = run_dir / "raw"
+    raw_listings_dir = raw_dir / "listings"
+    raw_searches_dir = raw_dir / "searches"
+    raw_threads_dir = raw_dir / "threads"
+    normalized_dir = run_dir / "normalized"
+    keywords_dir = run_dir / "keywords"
     checkpoints_dir = run_dir / "checkpoints"
     artifacts_dir = run_dir / "artifacts"
-    for directory in (raw_dir, checkpoints_dir, artifacts_dir):
+    for directory in (raw_dir, raw_listings_dir, raw_searches_dir, raw_threads_dir, normalized_dir, keywords_dir, checkpoints_dir, artifacts_dir):
         directory.mkdir(parents=True, exist_ok=True)
     suggestions_dir = run_dir / "suggestions"
     suggestions_dir.mkdir(parents=True, exist_ok=True)
     return RunPaths(
         run_dir=run_dir,
         raw_dir=raw_dir,
+        raw_listings_dir=raw_listings_dir,
+        raw_searches_dir=raw_searches_dir,
+        raw_threads_dir=raw_threads_dir,
+        normalized_dir=normalized_dir,
+        keywords_dir=keywords_dir,
+        keyword_library_path=keywords_dir / "keyword_library.json",
+        keyword_candidates_path=keywords_dir / "keyword_candidates.json",
+        failures_path=run_dir / "failures.jsonl",
         checkpoints_dir=checkpoints_dir,
         artifacts_dir=artifacts_dir,
         manifest_path=run_dir / "manifest.json",
@@ -47,6 +69,67 @@ def create_run_paths(root: str | Path, run_id: str) -> RunPaths:
         config_snapshot_path=run_dir / "config.snapshot.yaml",
         suggestions_dir=suggestions_dir,
     )
+
+
+def persist_thread(paths: RunPaths, post_id: str, raw_thread: object) -> Path:
+    """Persist the raw deep-read response without exposing credentials."""
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(post_id).removeprefix("t3_")) or "unknown"
+    target = paths.raw_threads_dir / f"{safe_id}.json"
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(raw_thread, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, target)
+    return target
+
+
+def append_failure(paths: RunPaths, failure: Mapping[str, object]) -> None:
+    """Append one secret-free failure record for resume and reporting."""
+    allowed = {key: failure.get(key) for key in ("community", "post_id", "stage", "error_type", "retryable")}
+    with paths.failures_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(allowed, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def write_normalized_records(paths: RunPaths, posts: object, comments: object) -> tuple[Path, Path]:
+    """Write canonical post/comment records as JSONL projections."""
+    posts_path = paths.normalized_dir / "posts.jsonl"
+    comments_path = paths.normalized_dir / "comments.jsonl"
+    _write_jsonl(posts_path, posts)
+    _write_jsonl(comments_path, comments)
+    return posts_path, comments_path
+
+
+def write_keyword_library(paths: RunPaths, library: Mapping[str, object]) -> tuple[Path, Path]:
+    """Persist the complete keyword snapshot and its review queue for this run."""
+    document = dict(library)
+    candidates = document.get("candidates", [])
+    _write_json(paths.keyword_library_path, document)
+    _write_json(paths.keyword_candidates_path, {
+        "version": document.get("version", "topic-keywords.v1"),
+        "candidates": candidates if isinstance(candidates, list) else [],
+    })
+    return paths.keyword_library_path, paths.keyword_candidates_path
+
+
+def _write_jsonl(path: Path, records: object) -> None:
+    values = records if isinstance(records, (list, tuple)) else ()
+    lines = []
+    for record in values:
+        if hasattr(record, "__dataclass_fields__"):
+            from dataclasses import asdict
+            value = asdict(record)
+        elif isinstance(record, Mapping):
+            value = dict(record)
+        else:
+            value = {"value": str(record)}
+        lines.append(json.dumps(value, ensure_ascii=False, default=str, sort_keys=True))
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _write_json(path: Path, document: Mapping[str, object]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(dict(document), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def write_manifest(paths: RunPaths, manifest: RunManifest) -> None:

@@ -53,9 +53,12 @@ from .models import (
     WindowedPost,
 )
 from .normalization import normalize_and_deduplicate
-from .keywords import KeywordCandidate, discover_diesel_keywords, select_round_two_terms
+from .keywords import KeywordCandidate, build_topic_keyword_library, discover_diesel_keywords, select_round_two_terms
 from .scoring import score_shortlist
-from .storage import TopicRegistry, RunPaths, create_run_paths, read_manifest, write_manifest
+from .storage import (
+    TopicRegistry, RunPaths, append_failure, create_run_paths, persist_thread,
+    read_manifest, write_keyword_library, write_manifest, write_normalized_records,
+)
 from .windowing import window_posts
 from .topics import (
     EXCEL_SHEET_NAMES,
@@ -66,6 +69,7 @@ from .topics import (
     TopicAggregator,
     TopicEvidence,
     TopicExportArtifacts,
+    build_community_library,
     export_topic_analysis,
 )
 from .report import build_topic_map, render_html
@@ -101,6 +105,7 @@ __all__ = [
     "PRO_MODEL",
     "KeywordSearchSettings",
     "KeywordCandidate",
+    "build_topic_keyword_library",
     "ReportSettings",
     "ProTopicProposal",
     "RadarCliApp",
@@ -114,11 +119,16 @@ __all__ = [
     "TopicAggregator",
     "TopicEvidence",
     "TopicExportArtifacts",
+    "build_community_library",
     "TopicRegistry",
     "WindowedPost",
     "ThreadComment",
     "ThreadDocument",
     "create_run_paths",
+    "append_failure",
+    "persist_thread",
+    "write_normalized_records",
+    "write_keyword_library",
     "load_community_catalog",
     "load_config",
     "load_diesel_domain_config",

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
 from pathlib import Path
@@ -12,7 +12,7 @@ from typing import Any
 from .models import CollectionSettings, Community, ShortlistedPost, WindowedPost
 from .normalization import normalize_and_deduplicate
 from .scoring import score_shortlist
-from .storage import RunPaths
+from .storage import RunPaths, append_failure, persist_thread, write_normalized_records
 from .windowing import window_posts
 
 CommandRunner = Callable[[tuple[str, ...]], str]
@@ -115,14 +115,20 @@ class OpenCliCollector:
                         item["source_surface"] = surface
                         records_by_community[community.name].append(item)
                 except Exception as error:
-                    failures.append(
-                        CollectionFailure(
-                            community=community.name,
-                            post_id=None,
-                            stage=f"listing:{community.name}:{surface}",
-                            message=_safe_error(error),
-                        )
+                    failure = CollectionFailure(
+                        community=community.name,
+                        post_id=None,
+                        stage=f"listing:{community.name}:{surface}",
+                        message=_safe_error(error),
                     )
+                    failures.append(failure)
+                    append_failure(paths, {
+                        "community": failure.community,
+                        "post_id": failure.post_id,
+                        "stage": failure.stage,
+                        "error_type": type(error).__name__,
+                        "retryable": True,
+                    })
 
         candidates: list[WindowedPost] = []
         shortlisted_targets: list[tuple[str, ShortlistedPost]] = []
@@ -140,8 +146,6 @@ class OpenCliCollector:
 
         deep_reads: list[ThreadDocument] = []
         for position, (community_name, entry) in enumerate(shortlisted_targets):
-            if position:
-                self._sleeper(self._settings.request_interval_seconds)
             checkpoint = paths.checkpoints_dir / f"{entry.post.post_id}.json"
             prior = self._successful_checkpoints.get(checkpoint)
             if prior is None:
@@ -149,12 +153,17 @@ class OpenCliCollector:
                 if prior is not None and prior.get("status") == "success":
                     self._successful_checkpoints[checkpoint] = prior
             if prior is not None and prior.get("status") == "success":
+                if isinstance(prior.get("thread"), (Mapping, list)):
+                    persist_thread(paths, entry.post.post_id, prior["thread"])
                 deep_reads.append(_thread_from_checkpoint(prior, entry.post))
                 continue
+            if position:
+                self._sleeper(self._settings.request_interval_seconds)
             try:
                 raw_text = self._runner(_read_command(entry.post.post_id, self._settings))
                 raw_thread = _parse_json(raw_text)
                 thread = _thread_from_raw(raw_thread, entry.post)
+                persist_thread(paths, entry.post.post_id, raw_thread)
                 success_document = {"status": "success", "thread": raw_thread}
                 _write_checkpoint(checkpoint, success_document)
                 self._successful_checkpoints[checkpoint] = success_document
@@ -178,6 +187,21 @@ class OpenCliCollector:
                     },
                 )
                 failures.append(failure)
+                append_failure(paths, {
+                    "community": failure.community,
+                    "post_id": failure.post_id,
+                    "stage": failure.stage,
+                    "error_type": type(error).__name__,
+                    "retryable": True,
+                })
+        write_normalized_records(
+            paths,
+            [thread.post for thread in deep_reads],
+            [
+                {"post_id": thread.post.post_id, "parent_id": "", "depth": 1, **asdict(comment)}
+                for thread in deep_reads for comment in thread.comments
+            ],
+        )
         return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures))
 
     def collect_round_two(
@@ -210,13 +234,20 @@ class OpenCliCollector:
                 self._sleeper(self._settings.request_interval_seconds)
             try:
                 raw_text = self._runner(_keyword_search_command(term, max_posts_per_term))
-                _write_raw_listing(paths.raw_dir, "keyword", _safe_path_component(term), raw_text)
+                _write_raw_listing(paths.raw_searches_dir, "keyword", _safe_path_component(term), raw_text)
                 parsed = _parse_records(raw_text)
                 records.extend({**dict(record), "source_surface": f"keyword:{term}"} for record in parsed)
                 current_queries[term] = {"status": "success"}
             except Exception as error:
                 failure = CollectionFailure("", None, f"keyword:{term}", _safe_error(error))
                 failures.append(failure)
+                append_failure(paths, {
+                    "community": failure.community,
+                    "post_id": failure.post_id,
+                    "stage": failure.stage,
+                    "error_type": type(error).__name__,
+                    "retryable": True,
+                })
                 current_queries[term] = {"status": "failed", "message": failure.message}
         _write_checkpoint(checkpoint_path, {
             "candidate_signature": signature, "selected_terms": list(selected_terms),
@@ -276,9 +307,15 @@ def _parse_json(raw_text: str) -> Any:
 
 
 def _write_raw_listing(raw_dir: Path, community: str, surface: str, raw_text: str) -> None:
-    directory = raw_dir / "listings"
+    directory = raw_dir if raw_dir.name == "searches" else raw_dir / "listings"
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / f"{_safe_path_component(community)}__{surface}.json").write_text(raw_text, encoding="utf-8")
+    filename = f"{_safe_path_component(community)}__{surface}.json"
+    (directory / filename).write_text(raw_text, encoding="utf-8")
+    # Keep the legacy raw/listings projection for existing users and fixtures.
+    if raw_dir.name == "searches":
+        legacy = raw_dir.parent / "listings"
+        legacy.mkdir(parents=True, exist_ok=True)
+        (legacy / filename).write_text(raw_text, encoding="utf-8")
 
 
 def _read_checkpoint(path: Path) -> Mapping[str, Any] | None:
@@ -308,7 +345,7 @@ def _thread_from_raw(document: Any, post: Any) -> ThreadDocument:
     for position, record in enumerate(records):
         if not isinstance(record, Mapping):
             continue
-        body = record.get("body")
+        body = record.get("body", record.get("text"))
         if not isinstance(body, str) or not body.strip():
             continue
         identifier = record.get("id")

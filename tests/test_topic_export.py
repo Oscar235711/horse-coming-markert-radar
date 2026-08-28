@@ -160,8 +160,10 @@ def test_export_derives_json_and_seven_sheet_excel_from_one_canonical_analysis(t
             for name in workbook.namelist()
             if name.endswith(".xml")
         )
-    assert workbook_xml.count(":sheet ") == 7
+    assert workbook_xml.count(":sheet ") == len(opportunity_radar.EXCEL_SHEET_NAMES)
     assert all(name in workbook_xml for name in opportunity_radar.EXCEL_SHEET_NAMES)
+    assert "社区库" in workbook_parts
+    assert "话题关键词库" in workbook_parts
     assert "冬季耐久性" in workbook_parts
     assert "Cracking after winter use." in workbook_parts
     assert "HYPERLINK" in workbook_parts

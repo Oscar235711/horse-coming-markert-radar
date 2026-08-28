@@ -25,6 +25,11 @@ def normalize_and_deduplicate(records: Iterable[Mapping[str, Any]]) -> tuple[Nor
 
 
 def _normalize_post(record: Mapping[str, Any]) -> NormalizedPost:
+    # OpenCLI's lightweight listing adapter uses the short Reddit fields
+    # (``id``, ``upvotes`` and ``comments``), while Pushshift/PRAW-shaped
+    # sources use ``name``, ``score`` and ``num_comments``.  Accept both
+    # forms at the normalization boundary so the real crawl keeps its
+    # engagement signal instead of silently turning every post into zero.
     raw_id = _required_text(record, "name", fallback="id")
     post_id = raw_id if raw_id.startswith("t3_") else f"t3_{raw_id}"
     raw_url = _required_text(record, "permalink", fallback="url")
@@ -40,8 +45,12 @@ def _normalize_post(record: Mapping[str, Any]) -> NormalizedPost:
         body=_clean_text(str(record.get("selftext", record.get("body", "")))),
         author=author,
         created_at=_parse_timestamp(record.get("created_utc", record.get("created_at"))),
-        score=_as_non_negative_int(record.get("score", record.get("ups", 0))),
-        comment_count=_as_non_negative_int(record.get("num_comments", record.get("comment_count", 0))),
+        score=_as_non_negative_int(
+            record.get("score", record.get("ups", record.get("upvotes", 0)))
+        ),
+        comment_count=_as_non_negative_int(
+            record.get("num_comments", record.get("comment_count", record.get("comments", 0)))
+        ),
         source_surfaces=(_required_text(record, "source_surface"),),
     )
 

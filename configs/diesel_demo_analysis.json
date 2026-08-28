@@ -9,6 +9,15 @@
     {"term": "egr cooler leak", "discovery_score": 74},
     {"term": "downpipe fitment", "discovery_score": 69}
   ],
+  "keyword_library": {
+    "version": "topic-keywords.v1",
+    "formal_terms": [],
+    "candidates": [
+      {"keyword_id": "kw_cold_weather_regen", "term_en": "cold weather regen", "term_zh": "低温再生", "keyword_type": "pain", "community": "r/Cummins", "topic_key": "cold-weather-regen", "variants": ["winter regen"], "source_post_ids": ["p1"], "source_comment_ids": [], "post_count": 1, "author_count": 1, "signal_types": ["analysis"], "score": 78, "status": "candidate_review"},
+      {"keyword_id": "kw_egr_cooler_leak", "term_en": "egr cooler leak", "term_zh": "EGR冷却器渗漏", "keyword_type": "pain", "community": "r/Duramax", "topic_key": "egr-cooler-leak", "variants": ["cooler seep"], "source_post_ids": ["p3", "p4"], "source_comment_ids": [], "post_count": 2, "author_count": 2, "signal_types": ["analysis"], "score": 74, "status": "candidate_review"},
+      {"keyword_id": "kw_downpipe_fitment", "term_en": "downpipe fitment", "term_zh": "下降管适配", "keyword_type": "fitment", "community": "r/powerstroke", "topic_key": "downpipe-fitment", "variants": ["bolt-on downpipe"], "source_post_ids": ["p5"], "source_comment_ids": [], "post_count": 1, "author_count": 1, "signal_types": ["analysis"], "score": 69, "status": "candidate_review"}
+    ]
+  },
   "topics": [
     {
       "topic_id": "topic_cummins_cold_regen",

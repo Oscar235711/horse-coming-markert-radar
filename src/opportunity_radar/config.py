@@ -137,6 +137,8 @@ def write_community_catalog(path: str | Path, catalog: CommunityCatalog) -> None
                 "category": community.category,
                 "brand": community.brand,
                 "slang": list(community.slang),
+                "community_id": community.community_id or f"r/{community.name}",
+                "status": community.status,
             }
             for community in catalog.communities
         ],
@@ -199,6 +201,8 @@ def _load_communities(document: Mapping[str, Any], *, require_metadata: bool = F
             category = ""
             brand = ""
             slang = ()
+            community_id = f"r/{name}"
+            status = "approved"
         elif isinstance(value, Mapping) and isinstance(value.get("name"), str):
             name = value["name"].strip()
             aliases = _text_list(value.get("aliases"), "aliases", required=require_metadata)
@@ -207,6 +211,8 @@ def _load_communities(document: Mapping[str, Any], *, require_metadata: bool = F
             slang = _text_list(value.get("slang"), "slang", required=require_metadata)
             category = _required_text(value.get("category"), "category") if require_metadata else _optional_text(value.get("category"))
             brand = _required_text(value.get("brand"), "brand") if require_metadata else _optional_text(value.get("brand"))
+            community_id = _optional_text(value.get("community_id")) or f"r/{name}"
+            status = _optional_text(value.get("status")) or "approved"
         else:
             raise ValueError("each community must be a name or mapping with a name")
         if not name:
@@ -222,6 +228,8 @@ def _load_communities(document: Mapping[str, Any], *, require_metadata: bool = F
                 category=category,
                 brand=brand,
                 slang=slang,
+                community_id=community_id,
+                status=status,
             )
         )
     return tuple(communities)

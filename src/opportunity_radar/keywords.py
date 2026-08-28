@@ -23,6 +23,16 @@ _PURCHASE = re.compile(r"\b(buy|bought|purchase|price|cost|order|ordered|recomme
 _PROMOTIONAL = re.compile(r"\b(coupon|promo|affiliate|buy now|free shipping)\b", re.I)
 _TOKEN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)?")
 
+_TERM_ZH = {
+    "ccv reroute": "CCV重定向",
+    "crankcase ventilation": "曲轴箱通风",
+    "dpf delete pipe": "DPF删除管",
+    "egr delete kit": "EGR删除套件",
+    "downpipe": "下降管",
+    "clamp kit": "卡箍套件",
+    "stronger clamp kit": "加强型卡箍套件",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class KeywordCandidate:
@@ -121,6 +131,104 @@ def select_round_two_terms(
         and candidate.unique_user_count >= minimum_users
         and candidate.community_count >= minimum_communities
     )[:max_terms]
+
+
+def build_topic_keyword_library(
+    posts: Sequence[Any], comments: Sequence[Any], analyses: Sequence[PostAnalysis], *, formal_terms: Sequence[str] = ()
+) -> dict[str, Any]:
+    """Build a deterministic, source-linked keyword table from collected text and post analyses."""
+    post_by_id = {_obj_value(post, "post_id"): post for post in posts if _obj_value(post, "post_id")}
+    analysis_by_id = {
+        _obj_value(post, "post_id"): analysis
+        for post, analysis in zip(posts, analyses)
+        if _obj_value(post, "post_id")
+    }
+    aggregate: dict[str, dict[str, Any]] = {}
+
+    def add(term: str, *, post_id: str = "", comment_id: str = "", author: str = "", method: str = "text", topic_key: str = "") -> None:
+        normalized = _normalise(term)
+        if not normalized or len(normalized.split()) < 2 or normalized in {"diesel truck", "pickup truck", "diesel pickup"}:
+            return
+        bucket = aggregate.setdefault(normalized, {"variants": set(), "post_ids": set(), "comment_ids": set(), "authors": set(), "methods": set(), "topics": set()})
+        bucket["variants"].add(str(term).strip())
+        if post_id:
+            bucket["post_ids"].add(post_id)
+        if comment_id:
+            bucket["comment_ids"].add(comment_id)
+        if author:
+            bucket["authors"].add(author)
+        bucket["methods"].add(method)
+        if topic_key:
+            bucket["topics"].add(topic_key)
+
+    for post in posts:
+        post_id = _obj_value(post, "post_id")
+        analysis = analysis_by_id.get(post_id)
+        text = " ".join((_obj_value(post, "title"), _obj_value(post, "body")))
+        for term in _ngrams(text):
+            add(term, post_id=post_id, author=_obj_value(post, "author"), method="ngram")
+        if analysis is not None:
+            topic_key = analysis.topics[0].label if analysis.topics else ""
+            for field in (*analysis.keyword_candidates, *analysis.topic_candidates):
+                if field.value != "unknown" and field.status != "unknown":
+                    add(field.value, post_id=post_id, author=_obj_value(post, "author"), method="analysis", topic_key=topic_key)
+            for field in (*analysis.products, *analysis.pain_points, *analysis.current_solutions, *analysis.gaps):
+                if field.value != "unknown" and field.status != "unknown":
+                    add(field.value, post_id=post_id, author=_obj_value(post, "author"), method="analysis", topic_key=topic_key)
+
+    for comment in comments:
+        post_id = _obj_value(comment, "post_id")
+        comment_id = _obj_value(comment, "comment_id")
+        for term in _ngrams(_obj_value(comment, "body")):
+            add(term, post_id=post_id, comment_id=comment_id, author=_obj_value(comment, "author"), method="comment")
+
+    formal = {_normalise(term) for term in formal_terms if _normalise(term)}
+    candidates: list[dict[str, Any]] = []
+    for term, item in aggregate.items():
+        post_count = len(item["post_ids"])
+        author_count = len(item["authors"])
+        score = min(100, post_count * 12 + author_count * 8 + len(item["comment_ids"]) * 2)
+        candidates.append({
+            "keyword_id": "kw_" + re.sub(r"[^a-z0-9]+", "_", term).strip("_")[:48],
+            "term_en": term,
+            "term_zh": _TERM_ZH.get(term, "待翻译"),
+            "keyword_type": _keyword_type(term),
+            "community": _obj_value(post_by_id.get(next(iter(item["post_ids"]), "")), "subreddit") if item["post_ids"] else "",
+            "topic_key": sorted(item["topics"])[0] if item["topics"] else "",
+            "variants": sorted(item["variants"]),
+            "source_post_ids": sorted(item["post_ids"]),
+            "source_comment_ids": sorted(item["comment_ids"]),
+            "post_count": post_count,
+            "author_count": author_count,
+            "signal_types": sorted(item["methods"]),
+            "score": score,
+            "status": "configured" if term in formal else ("candidate_review" if score >= 20 else "weak_signal"),
+        })
+    candidates.sort(key=lambda item: (-item["score"], item["term_en"]))
+    # Keep the review table useful on real comment-heavy runs. Every retained
+    # row still has source IDs; low-signal tail terms remain reproducible in
+    # raw comments rather than overwhelming the report.
+    candidates = [item for item in candidates if item["post_count"] or item["source_comment_ids"]][:500]
+    return {"version": "topic-keywords.v1", "formal_terms": sorted(formal), "candidates": candidates}
+
+
+def _obj_value(value: Any, key: str) -> str:
+    """Read a field from either a dataclass/object or a normalized mapping."""
+    if isinstance(value, Mapping):
+        raw = value.get(key, "")
+    else:
+        raw = getattr(value, key, "")
+    return str(raw or "")
+
+
+def _keyword_type(term: str) -> str:
+    if re.search(r"\b(leak|failure|failed|broken|crack|regen|clog|problem|issue)\b", term):
+        return "pain"
+    if re.search(r"\b(kit|pipe|tuner|clamp|valve|cooler|downpipe|reroute)\b", term):
+        return "product_or_solution"
+    if re.search(r"\b(towing|hauling|commute|winter|off road|work truck)\b", term):
+        return "scenario"
+    return "phrase"
 
 
 def _shell(term: str) -> dict[str, Any]:

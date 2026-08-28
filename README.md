@@ -6,7 +6,7 @@
 
 - Reddit 社区扫描固定对比最近 30 天 vs 之前 60 天
 - 每社区最多深读 30 个帖子
-- Flash 负责单帖提取，Pro 负责社区级话题归并
+- 有 DeepSeek/Higress 配置时可用 Flash/Pro；未配置时自动使用可解释的本地规则/VOC分析，不阻塞采集和报告生成
 - 所有 JSON 和 XLSX 都从同一份 `analysis.json` 派生
 - 社区词表建议必须先人工审批，审批只生成新版本，不自动切换活动版本
 
@@ -66,6 +66,16 @@ python scripts/build_diesel_demo.py
 ```
 
 输出在 `outputs/diesel-demo/`：`analysis.json`、`report.html`、`community_topics.xlsx` 和 `community_topic_map.json`。报告按“社区 → 话题 → 帖子/评论证据”下钻，内容是演示样例；接入真实 Reddit 运行后，用同一个渲染器生成真实报告。
+
+## 已采集数据的本地快速分析
+
+如果已有 OpenCLI 深读结果保存在 `.local/runs/<run_id>/raw/`，可以跳过模型接口，直接用本地规则/VOC分析重建报告：
+
+```powershell
+python scripts/rebuild_local_analysis.py --run-id <run_id>
+```
+
+该命令会重新生成 `artifacts/analysis.json`、`report.html` 和 `community_topics.xlsx`，并保留原始帖子、评论和证据链接。报告会明确标记 `rule_based`；其中的产品方向只是机会假设，不是开品结论。
 
 ## PowerShell 兼容入口
 

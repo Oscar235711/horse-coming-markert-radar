@@ -1,4 +1,4 @@
-/** Build the seven-sheet Excel projection from one canonical analysis JSON. */
+/** Build the canonical Excel projection from one analysis.json. */
 import fs from "node:fs/promises";
 import { FileBlob, SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
@@ -9,7 +9,17 @@ if (!analysisPath || !outputPath) {
 
 const analysis = JSON.parse(await fs.readFile(analysisPath, "utf8"));
 const topics = Array.isArray(analysis.topics) ? analysis.topics : [];
-const sheets = ["运行概览", "社区热点排行", "话题分析卡", "帖子及评论证据", "弱信号观察区", "排除与失败记录", "候选社区与词表建议"];
+const communityLibrary = Array.isArray(analysis.community_library) ? analysis.community_library : (analysis.communities ?? []).map((name) => ({ display_name: name, subreddit: `r/${name}`, community_id: `r/${name}`, platform: "柴油皮卡", status: "approved", aliases: [], include_terms: [], exclude_terms: [] }));
+const keywordLibrary = analysis.keyword_library && Array.isArray(analysis.keyword_library.candidates)
+  ? analysis.keyword_library.candidates
+  : (analysis.keyword_candidates ?? []).map((item, index) => ({
+      keyword_id: `kw_demo_${index + 1}`, term_en: item.term ?? "", term_zh: item.term_zh ?? "待翻译",
+      keyword_type: item.keyword_type ?? "candidate", community: item.community ?? "", topic_key: item.topic_key ?? "",
+      variants: item.variants ?? [], post_count: item.post_count ?? 0, author_count: item.author_count ?? 0,
+      source_post_ids: item.source_post_ids ?? [], source_comment_ids: item.source_comment_ids ?? [],
+      score: item.discovery_score ?? item.score ?? 0, status: item.status ?? "candidate_review",
+    })) ;
+const sheets = ["运行概览", "社区库", "话题关键词库", "社区热点排行", "话题分析卡", "帖子及评论证据", "弱信号观察区", "排除与失败记录"];
 const workbook = Workbook.create();
 for (const name of sheets) workbook.worksheets.add(name);
 
@@ -53,12 +63,31 @@ function columnName(number) {
   const sheet = workbook.worksheets.getItem("运行概览");
   title(sheet, "社区机会雷达｜运行概览", "F");
   table(sheet, ["生成时间", "社区", "正式话题", "弱信号", "排除记录", "产品输出定位"], [[
-    analysis.generated_at ?? "", values(analysis.communities), topics.filter((topic) => topic.status === "formal").length,
+    analysis.generated_at ?? "", values(communityLibrary.map((item) => item.display_name ?? item.subreddit)), topics.filter((topic) => topic.status === "formal").length,
     topics.filter((topic) => topic.status === "weak_signal").length,
     Array.isArray(analysis.excluded_records) ? analysis.excluded_records.length : 0,
     analysis.product_output_label ?? "opportunity hypothesis, not launch conclusion",
   ]], [24, 18, 12, 12, 12, 38]);
   sheet.getRange("A4").format.numberFormat = "yyyy-mm-dd";
+}
+
+{
+  const sheet = workbook.worksheets.getItem("社区库");
+  title(sheet, "社区库（本轮固定四个社区）", "K");
+  table(sheet, ["社区ID", "Subreddit", "显示名称", "动力平台", "状态", "别名", "纳入词", "排除词", "社区黑话", "配置版本", "话题数"], communityLibrary.map((item) => [
+    item.community_id ?? "", item.subreddit ?? "", item.display_name ?? "", item.platform ?? "", item.status ?? "approved",
+    values(item.aliases), values(item.include_terms), values(item.exclude_terms), values(item.slang), item.config_version ?? "",
+    item.topic_count ?? topics.filter((topic) => String(topic.community ?? "").toLowerCase() === String(item.display_name ?? "").toLowerCase()).length,
+  ]), [24, 20, 20, 18, 14, 28, 34, 30, 30, 22, 10]);
+}
+
+{
+  const sheet = workbook.worksheets.getItem("话题关键词库");
+  title(sheet, "话题关键词库（来源可回溯，候选词需人工确认）", "M");
+  table(sheet, ["关键词ID", "英文关键词", "中文翻译", "类型", "社区", "父级话题", "变体", "来源帖子数", "独立作者数", "来源帖子ID", "来源评论ID", "发现分", "状态"], keywordLibrary.map((item) => [
+    item.keyword_id ?? "", item.term_en ?? "", item.term_zh ?? "待翻译", item.keyword_type ?? "phrase", item.community ?? "", item.topic_key ?? "",
+    values(item.variants), item.post_count ?? 0, item.author_count ?? 0, values(item.source_post_ids), values(item.source_comment_ids), item.score ?? 0, item.status ?? "candidate_review",
+  ]), [28, 28, 18, 20, 18, 28, 32, 12, 12, 32, 32, 10, 18]);
 }
 
 {
@@ -107,12 +136,6 @@ function columnName(number) {
   const sheet = workbook.worksheets.getItem("排除与失败记录");
   title(sheet, "排除与失败记录", "C");
   table(sheet, ["对象", "原因", "说明"], (analysis.excluded_records ?? []).map((item) => [item.canonical_key ?? "", item.reason ?? "", "未进入机会结论。"]), [30, 24, 42]);
-}
-
-{
-  const sheet = workbook.worksheets.getItem("候选社区与词表建议");
-  title(sheet, "候选社区与词表建议", "D");
-  table(sheet, ["类型", "建议", "依据", "状态"], [["词表", "补充痛点、需求和竞品词", "来自已验证话题标签", "待人工审核"]], [16, 34, 38, 16]);
 }
 
 await fs.mkdir(new URL(".", `file:///${outputPath.replaceAll("\\", "/")}`).pathname, { recursive: true }).catch(() => {});

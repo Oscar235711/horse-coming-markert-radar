@@ -21,12 +21,13 @@ from .storage import TopicRegistry
 
 EXCEL_SHEET_NAMES = (
     "运行概览",
+    "社区库",
+    "话题关键词库",
     "社区热点排行",
     "话题分析卡",
     "帖子及评论证据",
     "弱信号观察区",
     "排除与失败记录",
-    "候选社区与词表建议",
 )
 CURRENT_DAYS = 30
 BASELINE_DAYS = 60
@@ -40,6 +41,11 @@ class PostSignal:
     analysis: PostAnalysis
     evidence_urls: Mapping[str, str]
     comment_authors: tuple[str, ...] = ()
+    # Keep comment bodies at the consolidation boundary.  The original
+    # implementation retained only URLs, which made the offline fallback
+    # unable to explain *why* a topic was created even though comments had
+    # already been collected.
+    comments: tuple[Any, ...] = ()
 
     @classmethod
     def from_thread(cls, thread: Any, analysis: PostAnalysis) -> "PostSignal":
@@ -52,6 +58,7 @@ class PostSignal:
             analysis=analysis,
             evidence_urls=evidence_urls,
             comment_authors=tuple(authors),
+            comments=tuple(getattr(thread, "comments", ()) or ()),
         )
 
 
@@ -121,6 +128,49 @@ class TopicExportArtifacts:
     community_topics_json: Path
     workbook_path: Path
     report_path: Path | None = None
+
+
+def build_community_library(
+    communities: Sequence[Any], topics: Sequence[Mapping[str, Any]] = (), config_version: str = ""
+) -> list[dict[str, Any]]:
+    """Return the dedicated, versionable community catalog projection for reports."""
+    topic_rows = [item for item in topics if isinstance(item, Mapping)]
+    rows: list[dict[str, Any]] = []
+    for community in communities:
+        if isinstance(community, Mapping):
+            name = str(community.get("name") or community.get("display_name") or "").strip()
+            aliases = list(community.get("aliases", []) or [])
+            include_terms = list(community.get("include", community.get("include_terms", [])) or [])
+            exclude_terms = list(community.get("exclude", community.get("exclude_terms", [])) or [])
+            slang = list(community.get("slang", []) or [])
+            platform = str(community.get("brand") or community.get("category") or _platform_for_community(name))
+            community_id = str(community.get("community_id") or f"r/{name}")
+            status = str(community.get("status") or "approved")
+        else:
+            name = str(getattr(community, "name", "") or "").strip()
+            aliases = list(getattr(community, "aliases", ()) or ())
+            include_terms = list(getattr(community, "include", ()) or ())
+            exclude_terms = list(getattr(community, "exclude", ()) or ())
+            slang = list(getattr(community, "slang", ()) or ())
+            platform = str(getattr(community, "brand", "") or getattr(community, "category", "") or _platform_for_community(name))
+            community_id = str(getattr(community, "community_id", "") or f"r/{name}")
+            status = str(getattr(community, "status", "approved") or "approved")
+        if not name:
+            continue
+        rows.append({
+            "community_id": community_id,
+            "subreddit": f"r/{name.removeprefix('r/')}",
+            "display_name": name,
+            "platform": platform,
+            "status": status,
+            "aliases": aliases,
+            "include_terms": include_terms,
+            "exclude_terms": exclude_terms,
+            "slang": slang,
+            "config_version": config_version,
+            "topic_count": sum(1 for topic in topic_rows if str(topic.get("community", "")).removeprefix("r/").casefold() == name.removeprefix("r/").casefold()),
+        })
+    return rows
 
 
 class TopicAggregator:
@@ -287,6 +337,32 @@ def export_topic_analysis(
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     canonical = dict(analysis)
+    canonical.setdefault("community_library", _fallback_community_library(canonical))
+    if "keyword_library" not in canonical:
+        legacy_keywords = canonical.get("keyword_candidates", [])
+        canonical["keyword_library"] = {
+            "version": "topic-keywords.v1",
+            "formal_terms": [],
+            "candidates": [
+                {
+                    "keyword_id": f"kw_legacy_{index + 1}",
+                    "term_en": item.get("term", "") if isinstance(item, Mapping) else "",
+                    "term_zh": item.get("term_zh", "待翻译") if isinstance(item, Mapping) else "待翻译",
+                    "keyword_type": item.get("keyword_type", "candidate") if isinstance(item, Mapping) else "candidate",
+                    "community": item.get("community", "") if isinstance(item, Mapping) else "",
+                    "topic_key": item.get("topic_key", "") if isinstance(item, Mapping) else "",
+                    "variants": item.get("variants", []) if isinstance(item, Mapping) else [],
+                    "source_post_ids": item.get("source_post_ids", []) if isinstance(item, Mapping) else [],
+                    "source_comment_ids": item.get("source_comment_ids", []) if isinstance(item, Mapping) else [],
+                    "post_count": item.get("post_count", 0) if isinstance(item, Mapping) else 0,
+                    "author_count": item.get("author_count", 0) if isinstance(item, Mapping) else 0,
+                    "score": item.get("discovery_score", item.get("score", 0)) if isinstance(item, Mapping) else 0,
+                    "status": item.get("status", "candidate_review") if isinstance(item, Mapping) else "candidate_review",
+                }
+                for index, item in enumerate(legacy_keywords)
+            ],
+        }
+    canonical.setdefault("counts", _analysis_counts(canonical))
     analysis_json = directory / "analysis.json"
     community_topics_json = directory / "community_topics.json"
     workbook_path = directory / "community_topics.xlsx"
@@ -317,6 +393,58 @@ def _community_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
         "nodes": ([{"id": f"community:{name}", "type": "community", "label": name} for name in communities]
                   + [{"id": str(item.get("topic_id", "")), "type": "topic", "label": item.get("label_zh", item.get("label_en", "")), "community": item.get("community")} for item in topics]),
         "edges": [{"source": f"community:{item.get('community')}", "target": item.get("topic_id")} for item in topics if item.get("topic_id")],
+    }
+
+
+def _fallback_community_library(analysis: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Create a report-ready community table when callers only provide names."""
+    topics = [item for item in analysis.get("topics", []) if isinstance(item, Mapping)]
+    names = [str(item).removeprefix("r/") for item in analysis.get("communities", []) if item]
+    if not names:
+        names = list(dict.fromkeys(str(item.get("community", "")) for item in topics if item.get("community")))
+    return [
+        {
+            "community_id": f"r/{name}",
+            "subreddit": f"r/{name}",
+            "display_name": name,
+            "platform": _platform_for_community(name),
+            "status": "approved",
+            "aliases": [],
+            "include_terms": [],
+            "exclude_terms": [],
+            "slang": [],
+            "config_version": str(analysis.get("community_catalog_version", "")),
+            "topic_count": sum(1 for topic in topics if str(topic.get("community", "")).removeprefix("r/").casefold() == name.casefold()),
+        }
+        for name in names
+    ]
+
+
+def _platform_for_community(name: str) -> str:
+    normalized = name.casefold().replace("r/", "")
+    if "cummins" in normalized:
+        return "Cummins"
+    if "duramax" in normalized:
+        return "Duramax"
+    if "powerstroke" in normalized or "ford" in normalized:
+        return "Powerstroke"
+    return "柴油皮卡"
+
+
+def _analysis_counts(analysis: Mapping[str, Any]) -> dict[str, int]:
+    """Compute all displayed totals once so JSON, HTML and XLSX agree."""
+    topics = [item for item in analysis.get("topics", []) if isinstance(item, Mapping)]
+    evidence_count = sum(len(item.get("evidence", [])) for item in topics if isinstance(item.get("evidence", []), list))
+    keyword_library = analysis.get("keyword_library", {})
+    keyword_count = len(keyword_library.get("candidates", [])) if isinstance(keyword_library, Mapping) else 0
+    return {
+        "community_count": len(analysis.get("community_library", [])),
+        "topic_count": len(topics),
+        "formal_topic_count": sum(1 for item in topics if item.get("status") == "formal"),
+        "weak_topic_count": sum(1 for item in topics if item.get("status") == "weak_signal"),
+        "evidence_count": evidence_count,
+        "keyword_count": keyword_count,
+        "excluded_count": len(analysis.get("excluded_records", [])),
     }
 
 

@@ -11,6 +11,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -33,7 +34,8 @@ from .deepseek import (
 )
 from .evidence import apply_diesel_evidence_gate
 from .models import Community, CommunityCatalog, RadarConfig, RunManifest
-from .storage import TopicRegistry, create_run_paths, read_manifest, write_manifest
+from .storage import TopicRegistry, create_run_paths, read_manifest, write_keyword_library, write_manifest
+from .keywords import build_topic_keyword_library
 from .topics import (
     EvidenceBackedClaim,
     ProTopicProposal,
@@ -41,6 +43,7 @@ from .topics import (
     TopicAggregator,
     TopicEvidence,
     TopicExportArtifacts,
+    build_community_library,
     export_topic_analysis,
 )
 from .report import render_html
@@ -101,6 +104,7 @@ class RadarCliApp:
         )
         self._exporter = exporter or self._default_exporter
         self._now = now or (lambda: datetime.now(UTC))
+        self._flash_rule_fallback_used = False
 
     def doctor(self) -> dict[str, Any]:
         """Report local readiness without persisting any secrets."""
@@ -312,10 +316,24 @@ class RadarCliApp:
             if thread.post.post_id in analyses_by_post:
                 continue
             try:
-                analysis = self._extract_flash(thread)
+                if self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                    analysis = self._extract_flash(thread)
+                else:
+                    raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
                 analyses_by_post[thread.post.post_id] = analysis
                 self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
             except Exception as error:
+                # The first version must remain runnable before the gateway key is
+                # available. Rule extraction is explicit in the final model_mode.
+                try:
+                    analysis = _rule_extract_post(thread, domain) if not self._environment.get("DEEPSEEK_API_KEY", "").strip() else None
+                except Exception:
+                    analysis = None
+                if analysis is not None and (analysis.topics or analysis.claims):
+                    self._flash_rule_fallback_used = True
+                    analyses_by_post[thread.post.post_id] = analysis
+                    self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
+                    continue
                 flash_failures.append(
                     CollectionFailure(
                         community=thread.post.subreddit,
@@ -346,7 +364,7 @@ class RadarCliApp:
             )
             return state
 
-        analysis = self._aggregate_run(config, eligible_threads, analyses_by_post)
+        analysis = self._aggregate_run(config, eligible_threads, analyses_by_post, paths=paths)
         exported = self._invoke_exporter(paths.artifacts_dir, analysis, ("json", "xlsx"))
         state["artifacts"] = self._artifact_map(exported, ("json", "xlsx"))
         report_path = render_html(analysis, paths.artifacts_dir / "report.html")
@@ -453,6 +471,8 @@ class RadarCliApp:
         config: RadarConfig,
         threads: Sequence[ThreadDocument],
         analyses_by_post: Mapping[str, PostAnalysis],
+        *,
+        paths: Any | None = None,
     ) -> dict[str, Any]:
         registry = TopicRegistry(self._runs_root / ".topic-registry.json")
         combined_topics: list[dict[str, Any]] = []
@@ -471,13 +491,35 @@ class RadarCliApp:
             results.append(result)
             combined_topics.extend(result.analysis.get("topics", []))
             excluded_records.extend(result.analysis.get("excluded_records", []))
+        analyzed_threads = [thread for thread in threads if thread.post.post_id in analyses_by_post]
+        all_analyses = [analyses_by_post[thread.post.post_id] for thread in analyzed_threads]
+        comments = [
+            {
+                "post_id": thread.post.post_id,
+                "comment_id": comment.comment_id,
+                "body": comment.body,
+                "url": comment.url,
+                "author": comment.author,
+            }
+            for thread in analyzed_threads for comment in thread.comments
+        ]
+        community_library = build_community_library(
+            config.communities, combined_topics, config.community_catalog_version,
+        )
+        keyword_library = build_topic_keyword_library(
+            [thread.post for thread in analyzed_threads], comments, all_analyses,
+        )
+        if paths is not None:
+            write_keyword_library(paths, keyword_library)
         return {
             "analysis_version": "1.0",
             "generated_at": self._now().isoformat(),
             "communities": [community.name for community in config.communities],
+            "community_library": community_library,
+            "keyword_library": keyword_library,
             "topics": combined_topics,
             "excluded_records": excluded_records,
-            "model_mode": getattr(self._pro_consolidator, "mode", "injected_pro"),
+            "model_mode": "rule_based" if self._flash_rule_fallback_used or getattr(self._pro_consolidator, "mode", "") == "rule_fallback" else getattr(self._pro_consolidator, "mode", "injected_pro"),
             "product_output_label": "opportunity hypothesis, not launch conclusion",
         }
 
@@ -899,11 +941,14 @@ def _opencli_session_flags() -> tuple[str, ...]:
 class DeepSeekTopicConsolidator:
     """Use DeepSeek Pro to consolidate per-post signals into community topics."""
 
-    mode = "deepseek_pro"
-
     def __init__(self, *, client: DeepSeekClient, model: str) -> None:
         self._client = client
         self._model = model
+        self._fallback_used = False
+
+    @property
+    def mode(self) -> str:
+        return "rule_fallback" if self._fallback_used else "deepseek_pro"
 
     def consolidate(self, community: str, signals: Sequence[Any]) -> Sequence[ProTopicProposal]:
         signal_payload = [
@@ -917,23 +962,27 @@ class DeepSeekTopicConsolidator:
             }
             for signal in signals
         ]
-        document = self._client.chat_json(
-            (
-                {"role": "system", "content": "You consolidate Reddit product signals into evidence-backed community topics."},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "community": community,
-                            "signals": signal_payload,
-                            "instruction": "Return JSON with topics[]. Each topic needs canonical_key, label_en, label_zh, post_ids, evidence, summary, category_tags, brand_tags, confidence.",
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ),
-            model=self._model,
-        )
+        try:
+            document = self._client.chat_json(
+                (
+                    {"role": "system", "content": "You consolidate Reddit product signals into evidence-backed community topics."},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "community": community,
+                                "signals": signal_payload,
+                                "instruction": "Return JSON with topics[]. Each topic needs canonical_key, label_en, label_zh, post_ids, evidence, summary, category_tags, brand_tags, confidence.",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ),
+                model=self._model,
+            )
+        except Exception:
+            self._fallback_used = True
+            return self._rule_fallback(signals)
         proposals: list[ProTopicProposal] = []
         for item in document.get("topics", []) if isinstance(document.get("topics"), list) else []:
             if not isinstance(item, Mapping):
@@ -972,40 +1021,341 @@ class DeepSeekTopicConsolidator:
                 )
             )
         if not proposals:
-            # Keep the run useful when a gateway model returns a valid but empty
-            # consolidation object. Group the already extracted per-post topic
-            # seeds deterministically; these remain weak signals until reviewed.
-            grouped: dict[str, list[Any]] = {}
-            for signal in signals:
-                for candidate in signal.analysis.topics:
-                    label = " ".join(candidate.label.split()).strip()
-                    if label:
-                        grouped.setdefault(label.casefold(), []).append((label, signal))
-            for values in grouped.values():
-                label = values[0][0]
-                evidence = tuple(
-                    TopicEvidence(
-                        post_id=signal.post.post_id,
-                        evidence_id="post",
-                        claim=signal.post.title,
-                        stance="supporting",
-                        translation_zh="",
-                    )
-                    for _, signal in values
-                )
-                post_ids = tuple(dict.fromkeys(signal.post.post_id for _, signal in values))
-                key = "fallback-" + "-".join(label.casefold().split())[:80]
-                proposals.append(
-                    ProTopicProposal(
-                        canonical_key=key,
-                        label_en=label,
-                        label_zh=label,
-                        summary=EvidenceBackedClaim(label, evidence),
-                        post_ids=post_ids,
-                        evidence=evidence,
-                        category_tags=("fallback_rule",),
-                        brand_tags=(),
-                        confidence=0.2,
-                    )
-                )
+            self._fallback_used = True
+            return self._rule_fallback(signals)
         return proposals
+
+    def _rule_fallback(self, signals: Sequence[Any]) -> Sequence[ProTopicProposal]:
+        """Produce an evidence-linked local VOC analysis when Pro is unavailable.
+
+        This is deliberately more than a label fallback: it groups the actual
+        post/comment text into concrete diesel-pickup problem spaces and emits
+        Chinese pains, needs, solution gaps and testable opportunity hypotheses.
+        Every statement remains explicitly a rule-based signal, not a launch
+        conclusion.
+        """
+        grouped: dict[str, list[Any]] = {spec["key"]: [] for spec in _LOCAL_TOPIC_SPECS}
+        for signal in signals:
+            # Topic membership is decided from the original post.  Comments
+            # remain evidence and are used below, but letting every comment
+            # keyword drive membership causes unrelated topics to bleed into
+            # one another (for example a comment mentioning a turbo in a
+            # transmission thread).
+            text = _post_text(signal)
+            matched_specs = [spec for spec in _LOCAL_TOPIC_SPECS if any(re.search(pattern, text) for pattern in spec["patterns"])]
+            # Preserve an auditable bucket for posts that passed the diesel
+            # gate but do not match one of the known opportunity lenses.
+            if not matched_specs:
+                matched_specs = [_LOCAL_TOPIC_SPECS[-1]]
+            for spec in matched_specs[:3]:
+                if signal not in grouped[spec["key"]]:
+                    grouped[spec["key"]].append(signal)
+
+        proposals: list[ProTopicProposal] = []
+        for spec in _LOCAL_TOPIC_SPECS:
+            topic_signals = grouped[spec["key"]]
+            if not topic_signals:
+                continue
+            evidence = _rule_topic_evidence(topic_signals, spec)
+            post_ids = tuple(signal.post.post_id for signal in topic_signals)
+            evidence_for_claims = evidence or tuple(_rule_post_evidence(signal) for signal in topic_signals)
+            claims = lambda values: tuple(EvidenceBackedClaim(value, evidence_for_claims[: min(3, len(evidence_for_claims))]) for value in values)
+            dynamic = _local_dynamic_claims(topic_signals, spec)
+            pains = claims(tuple(dict.fromkeys((*spec["pains"], *dynamic["pains"]))))
+            needs = claims(tuple(dict.fromkeys((*spec["needs"], *dynamic["needs"]))))
+            solutions = claims(tuple(dict.fromkeys((*spec["solutions"], *dynamic["solutions"]))))
+            gaps = claims(tuple(dict.fromkeys((*spec["gaps"], *dynamic["gaps"]))))
+            hypotheses = claims(tuple(dict.fromkeys(spec["hypotheses"])))
+            summary = EvidenceBackedClaim(
+                f"{spec['summary']} 本轮从 {len(post_ids)} 篇帖子及其 {sum(len(getattr(s, 'comments', ())) for s in topic_signals)} 条评论中观察到；这是社区样本信号，不是全市场占有率。",
+                evidence_for_claims[: min(5, len(evidence_for_claims))],
+            )
+            proposals.append(
+                ProTopicProposal(
+                    canonical_key=f"local-{spec['key']}",
+                    label_en=spec["label_en"],
+                    label_zh=spec["label_zh"],
+                    summary=summary,
+                    post_ids=post_ids,
+                    evidence=evidence_for_claims,
+                    vehicles=_rule_values(topic_signals, "vehicle"),
+                    platforms=_rule_values(topic_signals, "platform"),
+                    scenarios=tuple(dict.fromkeys((*_rule_values(topic_signals, "scenario"), *spec["scenarios"]))),
+                    pains=pains,
+                    needs=needs,
+                    current_solutions=solutions,
+                    gaps=gaps,
+                    opportunity_hypotheses=hypotheses,
+                    category_tags=spec["tags"],
+                    brand_tags=_rule_values(topic_signals, "brands"),
+                    competitor_tags=_rule_values(topic_signals, "competitors"),
+                    confidence=min(0.88, 0.45 + 0.08 * len(post_ids) + 0.01 * min(20, sum(len(getattr(s, "comments", ())) for s in topic_signals))),
+                    validation_questions=spec["validation_questions"],
+                )
+            )
+        return proposals
+
+
+# Local, explainable VOC lenses.  The patterns are intentionally broad enough
+# to discover needs outside the original five product categories, but each
+# topic is still tied to exact Reddit evidence and shown as a hypothesis.
+_LOCAL_TOPIC_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "turbo_compounds_egt",
+        "label_en": "Turbo, compound setup and towing EGT",
+        "label_zh": "涡轮/复合增压与拖挂排温",
+        "patterns": (r"\bturbo\b|\bturbos\b|compound|drop[- ]?in|2nd gen|second gen|egt|exhaust gas temperature|spool|boost",),
+        "summary": "用户在涡轮、复合增压和拖挂工况之间权衡响应、排温、排气制动及后续动力升级。",
+        "pains": ("拖挂或爬坡时排气温度偏高、需要反复检查增压系统", "不同涡轮方案在低转响应与后续加油空间之间取舍困难"),
+        "needs": ("按车型、载荷和动力配置给出可比较的涡轮/复合增压适配建议", "在日常响应、排气制动和拖挂可靠性之间取得平衡"),
+        "solutions": ("改用 drop-in 或 second-gen swap", "通过检查增压管路、调整喷油/调校来处理排温"),
+        "gaps": ("现有方案的适配、滞后表现和拖挂效果依赖个人经验，难以在购买前比较", "不同配件组合缺少按载荷工况验证的安装与调校说明"),
+        "hypotheses": ("机会假设：按车型/载荷提供可核对的涡轮组合与排温验证指南，并配套适配件",),
+        "scenarios": ("拖挂/长途", "性能改装"), "tags": ("performance", "towing", "rule_based"),
+        "validation_questions": ("同一车型和载荷下，是否有更多用户遇到排温/响应取舍？", "用户愿意为成套适配和工况验证支付多少？"),
+    },
+    {
+        "key": "tuning_fuel_fitment",
+        "label_en": "Tuner, tune and fuel-system fitment",
+        "label_zh": "调谐器/调校与供油系统适配",
+        "patterns": (r"\btun(?:e|er|ing)\b|hydra|efi ?live|edge|firepunk|lift pump|airdog|fass|fuel bowl|injector|calibrat",),
+        "summary": "用户询问调谐器、调校档位和供油系统如何匹配现有涡轮、喷油嘴及拖挂用途。",
+        "pains": ("买到车辆后不清楚现有调谐器或档位对应的程序", "调校、喷油和供油升级之间的兼容关系不透明"),
+        "needs": ("明确的车型/发动机/硬件到调校档位的适配矩阵", "在温和拖挂与更高动力之间可控切换，并能看懂当前档位"),
+        "solutions": ("Hydra、EFI Live、PPEI、Starlite 等调校或调谐器", "原厂泵、FASS/AirDog 及 fuel-bowl delete 等供油方案"),
+        "gaps": ("购买二手车后常缺少调校文件、档位说明和控制器可读性", "不同品牌方案的安装边界与后续维护成本缺少统一说明"),
+        "hypotheses": ("机会假设：提供可识别当前配置、显示档位并按硬件校验的调谐器/供油套装",),
+        "scenarios": ("二手车接手", "拖挂/日常驾驶"), "tags": ("tuning", "fuel_system", "rule_based"),
+        "validation_questions": ("用户最常缺的是调校文件、控制器界面还是供油硬件适配？", "是否存在因档位/调校不清导致的退货或返工？"),
+    },
+    {
+        "key": "coolant_oil_leak_repair",
+        "label_en": "Coolant, oil and boost leak repair",
+        "label_zh": "冷却液/机油/增压泄漏维修",
+        "patterns": (r"\bleak\b|leaking|seep|coolant|radiator|water pump|oil pan|oil rail|hpop|hose|seal|rtv|gasket|air leak|boost leak",),
+        "summary": "真实维修讨论集中在冷却液、机油、增压管路和密封反复渗漏，以及更换整套总成还是单个零件。",
+        "pains": ("泄漏位置难定位，维修后短时间内再次渗漏", "零件目录常只提供整套软管/总成，用户想买单个接头或密封件"),
+        "needs": ("按发动机代号和年份快速定位泄漏点与替换零件", "有明确密封面、紧固和复检要求的维修配件"),
+        "solutions": ("更换整套软管、散热器、油盘或涡轮", "使用 RTV、垫片、卡箍并重新抽真空/复检"),
+        "gaps": ("零件适配和密封方案分散在评论里，原厂与改装件选择缺少对照", "返工成本高，安装失误或零件质量问题不易区分"),
+        "hypotheses": ("机会假设：开发按平台细分的泄漏维修小套件，附带定位、密封和复检清单",),
+        "scenarios": ("故障维修", "改装后复检"), "tags": ("repair", "reliability", "rule_based"),
+        "validation_questions": ("哪些泄漏点最常导致整套总成更换或二次返工？", "用户更愿意购买单点维修包还是整套升级件？"),
+    },
+    {
+        "key": "transmission_towing_reliability",
+        "label_en": "Transmission reliability for towing",
+        "label_zh": "拖挂场景下的变速箱可靠性",
+        "patterns": (r"transmission|\b47re\b|\b48re\b|\b68rfe\b|\b4r100\b|limp mode|shift|fluid|filter|torque converter|transfer case",),
+        "summary": "用户把变速箱寿命、滤芯/油液维护和拖挂负载联系起来，并在维修、强化和换车之间做决策。",
+        "pains": ("高里程或拖挂后变速箱故障成本高", "原厂维护信息与经销商建议不一致，难以判断是否需要强化"),
+        "needs": ("按里程、负载和改装水平给出维护/强化优先级", "能与调校、涡轮和拖挂工况一起评估的可靠性方案"),
+        "solutions": ("更换滤芯和油液、重建变速箱或安装强化件", "通过论坛经验和维修视频自行判断"),
+        "gaps": ("不同平台和改装组合的维护边界不清晰", "产品、安装和后续调校经常需要多个供应商拼接"),
+        "hypotheses": ("机会假设：按平台和拖挂等级提供变速箱维护/强化组合包及检查表",),
+        "scenarios": ("拖挂", "高里程维修"), "tags": ("transmission", "towing", "rule_based"),
+        "validation_questions": ("哪些拖挂里程或动力配置最容易触发强化需求？", "用户购买时最重视温度监测、滤芯维护还是内部强化？"),
+    },
+    {
+        "key": "suspension_brake_tire_fitment",
+        "label_en": "Lift, brake and tire fitment",
+        "label_zh": "升高/制动/轮胎适配",
+        "patterns": (r"brake|jack stand|lift|leveling|suspension|shock|tire|tyre|wheel|tow vehicle|fifth wheel|5th wheel|load",),
+        "summary": "升高、制动和轮胎选择都围绕载荷、拖挂稳定性、安装安全和车型适配展开。",
+        "pains": ("升高车辆维修和顶车时安全边界不明确", "拖挂车辆需要在耐久、负载和日常舒适之间选轮胎/悬挂"),
+        "needs": ("适配升高高度、轮胎尺寸和拖挂负载的安装清单", "能够验证承载、间隙和制动安全的产品组合"),
+        "solutions": ("更换轮胎、减震器、平衡块或升级前端部件", "参考社区经验和现场测量"),
+        "gaps": ("商品页面常缺少升高高度、负载和工具/安全要求", "轮胎、悬挂和制动方案常被分开购买，缺少整体适配"),
+        "hypotheses": ("机会假设：提供按升高/轮胎/拖挂等级组合的适配包和安全安装说明",),
+        "scenarios": ("拖挂", "车库维修"), "tags": ("fitment", "safety", "rule_based"),
+        "validation_questions": ("用户最常因间隙、承载还是安装工具问题返工？", "是否有明确的拖挂等级与轮胎/悬挂组合需求？"),
+    },
+    {
+        "key": "used_truck_purchase_validation",
+        "label_en": "Used diesel pickup purchase and inspection",
+        "label_zh": "二手柴油皮卡购买与改装核验",
+        "patterns": (r"buy|buying|purchase|seller|marketplace|what would you pay|worth|price|first diesel|mileage|miles|rust|value",),
+        "summary": "首次购买者会同时核验里程、锈蚀、既有调谐器/涡轮/变速箱改装和后续维修预算。",
+        "pains": ("卖家描述与实际改装状态可能不一致", "高里程、锈蚀和既有改装让价格与后续成本难判断"),
+        "needs": ("看车时可执行的发动机、变速箱、锈蚀和改装核验清单", "将改装件品牌/状态与合理价格、维修预算关联起来"),
+        "solutions": ("向社区提问、现场检查、读取故障码并参考同款交易价格", "购买后再逐步替换未知品牌或老化配件"),
+        "gaps": ("产品和改装信息常缺少可验证凭证，购前无法确认适配与剩余寿命", "价格讨论与改装价值、维修风险没有结构化关联"),
+        "hypotheses": ("机会假设：提供按平台/年份的改装识别与购前检查套件，降低接手未知配置的风险",),
+        "scenarios": ("首次购车", "二手车验车"), "tags": ("purchase", "inspection", "rule_based"),
+        "validation_questions": ("哪些未知改装最容易导致用户放弃购买或产生大额返工？", "用户愿意购买实体检查工具包还是数字化清单？"),
+    },
+    {
+        "key": "general_diesel_signal",
+        "label_en": "Other diesel-pickup repair and ownership signals",
+        "label_zh": "其他柴油皮卡维修与使用信号",
+        "patterns": (r"a^",),
+        "summary": "该类帖子与柴油皮卡相关，但暂未稳定归入其他主题，保留用于后续词库发现。",
+        "pains": ("问题场景、产品或车型信息仍需进一步补充",),
+        "needs": ("更多同类帖子和评论来确认是否形成独立主题",),
+        "solutions": ("社区问答或自行维修",),
+        "gaps": ("当前证据不足以形成具体产品方向",),
+        "hypotheses": ("机会假设：先扩充相关关键词和样本，再决定是否拆分为独立主题",),
+        "scenarios": ("日常使用",), "tags": ("weak_signal", "rule_based"),
+        "validation_questions": ("是否有更多帖子能将该信号归入明确的产品/场景？",),
+    },
+)
+
+
+def _signal_text(signal: Any) -> str:
+    parts = [str(getattr(signal.post, "title", "") or ""), str(getattr(signal.post, "body", "") or "")]
+    parts.extend(str(getattr(comment, "body", "") or "") for comment in getattr(signal, "comments", ()) or ())
+    return " ".join(parts).casefold()
+
+
+def _post_text(signal: Any) -> str:
+    return " ".join((str(getattr(signal.post, "title", "") or ""), str(getattr(signal.post, "body", "") or ""))).casefold()
+
+
+def _rule_topic_evidence(signals: Sequence[Any], spec: Mapping[str, Any]) -> tuple[TopicEvidence, ...]:
+    evidence: list[TopicEvidence] = []
+    for signal in signals:
+        post = signal.post
+        title = str(post.title or "").strip() or "未知帖子"
+        body = " ".join(str(post.body or "").split())
+        excerpt = f"{title} — {body[:420]}" if body else title
+        evidence.append(TopicEvidence(post.post_id, "post", excerpt, "supporting", f"原帖：{title}（原文已保留，中文分析见话题卡）"))
+        matching_comments = []
+        for comment in getattr(signal, "comments", ()) or ():
+            comment_body = str(getattr(comment, "body", "") or "")
+            if comment_body and any(re.search(pattern, comment_body.casefold()) for pattern in spec["patterns"]):
+                matching_comments.append(comment)
+        for comment in matching_comments[:2]:
+            cid = str(getattr(comment, "comment_id", "") or "")
+            if not cid:
+                continue
+            cbody = " ".join(str(getattr(comment, "body", "") or "").split())
+            evidence.append(TopicEvidence(post.post_id, cid, cbody[:420], "supporting", "评论补充了该问题的具体表现与解决建议（原文链接可回溯）"))
+    return tuple(evidence)
+
+
+def _local_dynamic_claims(signals: Sequence[Any], spec: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    text = " ".join(_post_text(signal) for signal in signals)
+    dynamic: dict[str, list[str]] = {"pains": [], "needs": [], "solutions": [], "gaps": []}
+    if re.search(r"\bhigh egt|1200|1300|exhaust gas", text):
+        dynamic["pains"].append("有用户报告无负载或爬坡时 EGT 达到 1200–1300°F，担心拖挂时继续升高")
+    if re.search(r"fitment|clearance|doesn't fit|does not fit|whole hose|whole assembly", text):
+        dynamic["gaps"].append("适配/间隙或零件供应方式导致用户考虑改装、加工或更换整套总成")
+    if re.search(r"recommend|which|what should|advice|help", text):
+        dynamic["needs"].append("用户希望在购买前得到针对具体车型、年份和用途的可执行建议")
+    brands = []
+    for name in ("Hydra", "FASS", "AirDog", "PPEI", "Starlite", "Mishimoto", "Fox", "Thuren", "Fleece", "EvilFab", "Stainless Diesel", "KC Turbo", "Kryptonite"):
+        if re.search(rf"(?<![a-z]){re.escape(name.casefold())}(?![a-z])", text):
+            brands.append(name)
+    if brands:
+        dynamic["solutions"].append("帖子提到的现有品牌/方案：" + "、".join(brands))
+    if re.search(r"used|marketplace|bought|purchase|seller", text):
+        dynamic["gaps"].append("二手车接手时既有改装状态和调校文件不透明，增加购后核验成本")
+    return {key: tuple(values) for key, values in dynamic.items()}
+
+
+def _rule_topic_key(label: str) -> str:
+    value = " ".join(label.casefold().replace("power stroke", "powerstroke").split())
+    aliases = {"egr cooler leak": "egr-leak", "downpipe fitment": "downpipe-fitment", "cold weather regen": "cold-regen"}
+    return aliases.get(value, value.replace(" ", "-")[:80])
+
+
+def _rule_label_zh(label: str) -> str:
+    translations = {"egr cooler leak": "EGR冷却器渗漏", "downpipe fitment": "下降管适配", "cold weather regen": "低温再生"}
+    return translations.get(label.casefold(), f"{label}（规则主题）")
+
+
+def _rule_post_evidence(signal: Any) -> TopicEvidence:
+    title = str(signal.post.title or "").strip() or str(signal.post.body or "").strip()[:240] or "未知帖子"
+    return TopicEvidence(signal.post.post_id, "post", title, "supporting", f"原帖标题：{title}")
+
+
+def _rule_claims(signals: Sequence[Any], field_name: str, evidence: Sequence[TopicEvidence]) -> tuple[EvidenceBackedClaim, ...]:
+    values: list[str] = []
+    for signal in signals:
+        for field in getattr(signal.analysis, field_name, ()):
+            value = str(getattr(field, "value", "") or "").strip()
+            if value and value != "unknown" and value not in values:
+                values.append(value)
+    return tuple(EvidenceBackedClaim(value, evidence[:1]) for value in values[:5])
+
+
+def _rule_values(signals: Sequence[Any], field_name: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for signal in signals:
+        raw = getattr(signal.analysis, field_name, None)
+        fields = raw if isinstance(raw, tuple) else (raw,)
+        for field in fields:
+            value = str(getattr(field, "value", "") or "").strip()
+            if value and value != "unknown" and value not in values:
+                values.append(value)
+    return tuple(values[:8])
+
+
+def _rule_extract_post(thread: ThreadDocument, domain: Any) -> PostAnalysis:
+    """Extract a small, auditable diesel signal without a model/API call."""
+    text = f"{thread.post.title} {thread.post.body}".casefold()
+    dictionaries = getattr(domain, "dictionaries", domain)
+
+    def matched(values: Sequence[str]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(
+            str(value).strip() for value in values
+            if str(value).strip() and re.search(rf"(?<![a-z0-9]){re.escape(str(value).casefold())}(?![a-z0-9])", text)
+        ))
+
+    platforms = matched(getattr(dictionaries, "platforms", ()))
+    products = matched(getattr(dictionaries, "products", ()))
+    vehicles = matched(getattr(dictionaries, "vehicle_terms", ()))
+    scenarios = matched(getattr(dictionaries, "scenarios", ()))
+    brands = matched(getattr(dictionaries, "brands", ()))
+    pain_matches = tuple(
+        label for pattern, label in (
+            (r"leak|seep", "leak/seep"),
+            (r"fail|failed|failure|broken|crack", "failure"),
+            (r"fitment|fit|compatib", "fitment"),
+            (r"install|installation|clearance", "installation complexity"),
+            (r"regen|regeneration|dpf", "regeneration/DPF"),
+            (r"clog|clogged", "clogging"),
+        ) if re.search(pattern, text)
+    )
+    solution_matches = matched(("oem", "aftermarket", "replace", "replacement", "tune", "tuner", "clamp", "kit"))
+    goal_matches = matched(("buy", "recommend", "need", "looking for", "what should"))
+    topic_labels: list[str] = []
+    for product in products[:2]:
+        for pain in pain_matches[:2] or ("fitment",):
+            topic_labels.append(f"{product} {pain}")
+    if not topic_labels and products:
+        topic_labels = list(products[:2])
+    if not topic_labels and pain_matches and platforms:
+        topic_labels = [f"{platforms[0]} {pain_matches[0]}"]
+    evidence_ids = ("post",)
+    claim_text = str(thread.post.title or thread.post.body or "").strip()[:500]
+    claims = (EvidenceClaim(claim_text, evidence_ids, (thread.post.url,), "supported"),) if claim_text else ()
+
+    def field(value: str, status: str = "fact") -> AnalysisField:
+        return AnalysisField(value=value, evidence_ids=evidence_ids, status=status)
+
+    pains = tuple(field(value) for value in pain_matches[:5])
+    needs = tuple(field("更可靠的适配与安装信息", "inference") for _ in range(1)) if pains else ()
+    solutions = tuple(field(value) for value in solution_matches[:5])
+    gaps = tuple(field("现有方案可能需要额外返工或适配确认", "inference") for _ in range(1)) if pains else ()
+    hypotheses = tuple(field(f"机会假设：验证 {topic_labels[0] if topic_labels else '该问题'} 的改进方案", "inference") for _ in range(1)) if topic_labels else ()
+    sentiment = field("negative", "inference") if pains else field("neutral", "inference")
+    return PostAnalysis(
+        topics=tuple(TopicCandidate(label, evidence_ids) for label in dict.fromkeys(topic_labels[:3])),
+        claims=claims,
+        platform=field(platforms[0]) if platforms else AnalysisField(),
+        vehicle=field(vehicles[0]) if vehicles else AnalysisField(),
+        scenario=field(scenarios[0]) if scenarios else AnalysisField(),
+        goal=field(goal_matches[0]) if goal_matches else AnalysisField(),
+        pain_points=pains,
+        needs=needs,
+        current_solutions=solutions,
+        gaps=gaps,
+        opportunity_hypotheses=hypotheses,
+        products=tuple(field(value) for value in products[:8]),
+        brands=tuple(field(value) for value in brands[:8]),
+        purchase_intent=tuple(field(value, "inference") for value in goal_matches[:4]),
+        sentiment=sentiment,
+        keyword_candidates=tuple(field(value) for value in (*products[:4], *pain_matches[:4])),
+        topic_candidates=tuple(field(value) for value in topic_labels[:3]),
+    )

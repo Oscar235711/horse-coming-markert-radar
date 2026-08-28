@@ -1,6 +1,8 @@
 version: community-catalog.v1
 communities:
   - name: Cummins
+    community_id: r/Cummins
+    status: approved
     aliases:
       - cummins
       - 5.9 cummins
@@ -18,6 +20,8 @@ communities:
       - "6.7"
       - common rail
   - name: Duramax
+    community_id: r/Duramax
+    status: approved
     aliases:
       - duramax
       - lb7
@@ -35,6 +39,8 @@ communities:
       - lly
       - l5p
   - name: powerstroke
+    community_id: r/powerstroke
+    status: approved
     aliases:
       - powerstroke
       - 6.0 powerstroke
@@ -52,6 +58,8 @@ communities:
       - "6.7"
       - obs
   - name: FordDiesels
+    community_id: r/FordDiesels
+    status: approved
     aliases:
       - forddiesels
       - ford diesels

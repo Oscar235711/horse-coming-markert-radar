@@ -37,3 +37,13 @@ def test_manifest_refuses_a_non_digest_config_reference(tmp_path) -> None:
         opportunity_radar.write_manifest(paths, manifest)
 
     assert not paths.manifest_path.exists()
+
+
+def test_run_paths_include_raw_threads_normalized_records_and_failures_log(tmp_path) -> None:
+    paths = opportunity_radar.create_run_paths(tmp_path / "runs", "run-1")
+
+    assert paths.raw_listings_dir.is_dir()
+    assert paths.raw_searches_dir.is_dir()
+    assert paths.raw_threads_dir.is_dir()
+    assert paths.normalized_dir.is_dir()
+    assert paths.failures_path.name == "failures.jsonl"

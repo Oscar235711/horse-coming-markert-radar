@@ -32,6 +32,8 @@ class Community:
     category: str = ""
     brand: str = ""
     slang: tuple[str, ...] = ()
+    community_id: str = ""
+    status: str = "approved"
 
 
 @dataclass(frozen=True, slots=True)
