@@ -125,6 +125,33 @@ test('analysis integrates persona clusters from qualified evidence and retained 
   assert.ok(analysis.personas.clusters.every((item) => item.representative_users.every((user) => !('age_band' in user))));
 });
 
+test('analysis keeps persona output complete when a small under-threshold segment is suppressed', () => {
+  const analysis = analyzeDetails(fixturePersonaDetails({
+    clusterSizes: { 'diy-led-upgrade': 29, 'housing-protection': 20, 'truck-visibility-fixers': 11 },
+  }), config, {
+    runId: 'persona-suppressed-cluster',
+    authorActivity: fixturePersonaAuthors({
+      clusterSizes: { 'diy-led-upgrade': 29, 'housing-protection': 20, 'truck-visibility-fixers': 11 },
+    }),
+  });
+
+  assert.equal(analysis.personas.status, 'complete');
+  assert.equal(analysis.personas.counts.published_clusters, 2);
+  assert.deepEqual(analysis.personas.clusters.map((item) => item.id), [
+    'diy-led-upgrade',
+    'housing-protection',
+  ]);
+  assert.deepEqual(analysis.personas.missing, [
+    {
+      metric: 'cluster_members',
+      required: 12,
+      actual: 11,
+      cluster_id: 'truck-visibility-fixers',
+      cluster_label: 'Truck Visibility Fixers',
+    },
+  ]);
+});
+
 function fixtureDetails() {
   return [
     {
@@ -168,7 +195,7 @@ function fixtureDetails() {
   ];
 }
 
-function fixturePersonaDetails() {
+function fixturePersonaDetails({ clusterSizes = {} } = {}) {
   const groups = [
     { prefix: 'diy-led-upgrade', subreddit: 'f150', title: 'DIY H11 LED upgrade with CANbus adapter', body: 'I am in Texas. I installed these bulbs myself, but my F-150 still flickers and needs a beam pattern fix under $120.', comments: ['I added the adapter and my F-150 still flickers without the right harness.', 'I installed another bulb set and the cutoff improved, but fitment still needs work.', 'I tested a second adapter and it reduced flicker without adding extra glare.', 'I swapped the relay harness and the warning light finally cleared.', 'I bought another H11 pair and the brightness improved, but I still monitor glare.'] },
     { prefix: 'housing-protection', subreddit: 'projectcar', title: 'Recurring condensation fix with vent kit or protective film', body: 'I am in California. I replaced the housing once, but my budget is under $200 for a better headlight sealing solution.', comments: ['I installed protective film, but moisture still returns after rain.', 'I replaced the assembly and the leak improved for a week before condensation came back.', 'I tested vent kits after another leak and still need a longer-lasting sealing fix.', 'I sealed the back cover and the fogging dropped for two drives before returning.', 'I bought another membrane kit and it improved drainage, but water still gets in.'] },
@@ -178,7 +205,8 @@ function fixturePersonaDetails() {
   let postSequence = 0;
 
   for (const group of groups) {
-    for (let index = 1; index <= 20; index += 1) {
+    const size = clusterSizes[group.prefix] ?? 20;
+    for (let index = 1; index <= size; index += 1) {
       postSequence += 1;
       const username = `${group.prefix}-${String(index).padStart(2, '0')}`;
       details.push({
@@ -210,7 +238,7 @@ function fixturePersonaDetails() {
   return details;
 }
 
-function fixturePersonaAuthors() {
+function fixturePersonaAuthors({ clusterSizes = {} } = {}) {
   const authors = [];
   const groups = [
     { prefix: 'diy-led-upgrade', subreddit: 'f150', state: 'Texas', ageBand: '25-34', budget: 'under $120', lines: ['I live in Texas and my budget is under $120 for an H11 LED upgrade on my F-150.', 'I install these myself and need a CANbus adapter so the bulbs stop flickering.', 'Beam pattern and cutoff matter more than raw brightness when I do the swap.', 'I keep testing DIY upgrade parts that fit well and do not cause glare.'], productConcepts: ['led-headlight-bulb-kit', 'canbus-adapter-kit'], painPoints: ['flicker', 'glare'], terms: ['h11', 'canbus adapter', 'beam pattern'] },
@@ -219,11 +247,13 @@ function fixturePersonaAuthors() {
   ];
 
   for (const group of groups) {
-    for (let index = 1; index <= 20; index += 1) {
+    const size = clusterSizes[group.prefix] ?? 20;
+    for (let index = 1; index <= size; index += 1) {
       const username = `${group.prefix}-${String(index).padStart(2, '0')}`;
       authors.push({
         schema_version: '1.0.0',
         username,
+        source_post_ids: [`${username}-post`],
         source_evidence_ids: [`source-${username}`],
         retained_count: 4,
         excluded_count: 0,

@@ -118,10 +118,10 @@
         "user_code": { "type": "string" },
         "public_username": { "type": "string" },
         "selection_score": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "retained_activity_count": { "type": "integer", "minimum": 0 },
-        "observable_behaviors": { "type": "array", "items": { "type": "string" } },
-        "supporting_evidence_ids": { "type": "array", "items": { "type": "string" } },
-        "supporting_evidence_urls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+        "retained_activity_count": { "type": "integer", "minimum": 3 },
+        "observable_behaviors": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "supporting_evidence_ids": { "type": "array", "items": { "type": "string" }, "minItems": 3, "maxItems": 3 },
+        "supporting_evidence_urls": { "type": "array", "items": { "type": "string", "format": "uri" }, "minItems": 3, "maxItems": 3 },
         "confidence": { "enum": ["high", "medium", "low"] },
         "privacy_note": { "type": "string" }
       }
@@ -148,7 +148,7 @@
       "properties": {
         "id": { "type": "string" },
         "label": { "type": "string" },
-        "user_count": { "type": "integer", "minimum": 0 },
+        "user_count": { "type": "integer", "minimum": 12 },
         "evidence_count": { "type": "integer", "minimum": 0 },
         "signals": { "type": "array", "items": { "type": "string" } },
         "product_interests": { "type": "array", "items": { "type": "string" } },
@@ -159,8 +159,41 @@
         "related_communities": { "type": "array", "items": { "type": "string" } },
         "vocabulary": { "type": "array", "items": { "type": "string" } },
         "aggregate_context": { "$ref": "#/$defs/aggregate_context" },
-        "representative_users": { "type": "array", "items": { "$ref": "#/$defs/representative_user" } }
+        "representative_users": { "type": "array", "items": { "$ref": "#/$defs/representative_user" }, "minItems": 3, "maxItems": 3 }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "complete" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "clusters": { "minItems": 1 },
+          "counts": {
+            "properties": {
+              "published_clusters": { "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "insufficient_sample" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "counts": {
+            "properties": {
+              "published_clusters": { "maximum": 0 }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

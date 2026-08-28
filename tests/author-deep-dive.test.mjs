@@ -28,6 +28,7 @@ test('selectAuthors prioritizes high-quality source-post authors and multi-recor
   assert.equal(selected.find((item) => item.username === 'alice')?.high_quality_source_post_count, 1);
   assert.equal(selected.find((item) => item.username === 'carol')?.qualified_record_count, 2);
   assert.deepEqual(selected.find((item) => item.username === 'carol')?.evidence_ids, ['comment-carol', 'post-carol']);
+  assert.deepEqual(selected.find((item) => item.username === 'carol')?.source_post_ids, ['post-carol']);
 });
 
 test('selectAuthors requires at least one eligible high-quality record and does not admit medium-only authors', () => {
@@ -42,6 +43,21 @@ test('selectAuthors requires at least one eligible high-quality record and does 
   const selected = selectAuthors(qualifiedEvidence, { limit: 5 });
 
   assert.deepEqual(selected.map((item) => item.username), ['alice']);
+});
+
+test('selectAuthors requires at least one eligible high-quality source post and deduplicates repeated author evidence', () => {
+  const qualifiedEvidence = [
+    makeEvidence({ id: 'post-alice', type: 'post', author: 'alice', qualityBand: 'high', evidenceRole: 'direct_experience' }),
+    makeEvidence({ id: 'comment-alice', type: 'comment', postId: 'p1', author: 'alice', qualityBand: 'high', evidenceRole: 'qualified_practitioner' }),
+    makeEvidence({ id: 'comment-bob-1', type: 'comment', postId: 'p2', author: 'bob', qualityBand: 'high', evidenceRole: 'qualified_practitioner' }),
+    makeEvidence({ id: 'comment-bob-2', type: 'comment', postId: 'p2', author: 'bob', qualityBand: 'medium', evidenceRole: 'qualified_practitioner' }),
+    makeEvidence({ id: 'post-alice-duplicate', type: 'post', postId: 'post-alice-duplicate', author: 'alice', qualityBand: 'high', evidenceRole: 'direct_experience' }),
+  ];
+
+  const selected = selectAuthors(qualifiedEvidence, { limit: 5 });
+
+  assert.deepEqual(selected.map((item) => item.username), ['alice']);
+  assert.deepEqual(selected[0].source_post_ids, ['post-alice', 'post-alice-duplicate']);
 });
 
 test('retainRelevantActivity keeps market-relevant public activity and discards unrelated personal history', () => {
@@ -201,9 +217,9 @@ test('collectAuthorActivity enforces author and total limits, writes checkpoints
   };
 
   const authors = [
-    { username: 'alice', evidence_ids: ['post-alice'] },
-    { username: 'private_user', evidence_ids: ['post-private'] },
-    { username: 'charlie', evidence_ids: ['post-charlie'] },
+    { username: 'alice', evidence_ids: ['post-alice'], source_post_ids: ['post-alice'] },
+    { username: 'private_user', evidence_ids: ['post-private'], source_post_ids: ['post-private'] },
+    { username: 'charlie', evidence_ids: ['post-charlie'], source_post_ids: ['post-charlie'] },
   ];
 
   const result = await collectAuthorActivity(authors, adapter, {
@@ -234,6 +250,8 @@ test('collectAuthorActivity enforces author and total limits, writes checkpoints
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'alice.json')), true);
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'charlie.json')), true);
   assert.equal(await exists(path.join(runDir, 'raw', 'authors', 'private_user.json')), false);
+  const aliceCheckpoint = JSON.parse(await fs.readFile(path.join(runDir, 'raw', 'authors', 'alice.json'), 'utf8'));
+  assert.deepEqual(aliceCheckpoint.source_post_ids, ['post-alice']);
 });
 
 test('collectAuthorActivity reapplies stricter caps when resuming from older wider checkpoints', async (t) => {
@@ -244,6 +262,7 @@ test('collectAuthorActivity reapplies stricter caps when resuming from older wid
   await fs.writeFile(path.join(authorsDir, 'alice.json'), `${JSON.stringify({
     schema_version: '1.0.0',
     username: 'alice',
+    source_post_ids: ['post-alice'],
     source_evidence_ids: ['post-alice'],
     retained_count: 2,
     excluded_count: 0,
@@ -261,6 +280,7 @@ test('collectAuthorActivity reapplies stricter caps when resuming from older wid
   await fs.writeFile(path.join(authorsDir, 'charlie.json'), `${JSON.stringify({
     schema_version: '1.0.0',
     username: 'charlie',
+    source_post_ids: ['post-charlie'],
     source_evidence_ids: ['post-charlie'],
     retained_count: 2,
     excluded_count: 0,
@@ -285,8 +305,8 @@ test('collectAuthorActivity reapplies stricter caps when resuming from older wid
   };
 
   const result = await collectAuthorActivity([
-    { username: 'alice', evidence_ids: ['post-alice'] },
-    { username: 'charlie', evidence_ids: ['post-charlie'] },
+    { username: 'alice', evidence_ids: ['post-alice'], source_post_ids: ['post-alice'] },
+    { username: 'charlie', evidence_ids: ['post-charlie'], source_post_ids: ['post-charlie'] },
   ], adapter, {
     runDir,
     afterUtc: '2026-02-28T00:00:00.000Z',
@@ -305,6 +325,7 @@ test('collectAuthorActivity reapplies stricter caps when resuming from older wid
   assert.equal(result.summary.retained_activities, 1);
   const aliceCheckpoint = JSON.parse(await fs.readFile(path.join(authorsDir, 'alice.json'), 'utf8'));
   assert.equal(aliceCheckpoint.retained_activity.length, 1);
+  assert.deepEqual(aliceCheckpoint.source_post_ids, ['post-alice']);
   assert.equal(await exists(path.join(authorsDir, 'charlie.json')), true);
 });
 

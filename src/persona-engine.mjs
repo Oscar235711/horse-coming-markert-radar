@@ -59,7 +59,7 @@ export { DEFAULT_PERSONA_THRESHOLDS };
 export function evaluatePersonaEligibility(evidence, authors, thresholds = DEFAULT_PERSONA_THRESHOLDS) {
   const mergedThresholds = mergeThresholds(thresholds);
   const qualifiedEvidence = filterQualifiedEvidence(evidence);
-  const authorRecords = normalizeAuthorArtifacts(authors);
+  const authorRecords = normalizeAuthorArtifacts(authors, qualifiedEvidence);
   const counts = {
     qualified_evidence: qualifiedEvidence.length,
     qualified_users: unique(qualifiedEvidence.map(authorKey)).length,
@@ -87,7 +87,7 @@ export function evaluatePersonaEligibility(evidence, authors, thresholds = DEFAU
 }
 
 export function aggregateSelfDeclaredContext(authors, { minimumCohort = DEFAULT_PERSONA_THRESHOLDS.demographic_cohort } = {}) {
-  const authorRecords = normalizeAuthorArtifacts(authors);
+  const authorRecords = normalizeAuthorArtifacts(authors, [], { requireSourcePostProvenance: false });
   return {
     age_bands: aggregateContextKind(authorRecords, 'age_band', minimumCohort),
     states: aggregateContextKind(authorRecords, 'state', minimumCohort),
@@ -100,7 +100,7 @@ export function buildPersonas(evidence, authorActivity, config = {}) {
   const qualifiedEvidence = filterQualifiedEvidence(evidence);
   const evidenceByAuthor = groupEvidenceByAuthor(qualifiedEvidence);
   const qualifiedUsers = new Set(evidenceByAuthor.keys());
-  const authorRecords = normalizeAuthorArtifacts(authorActivity)
+  const authorRecords = normalizeAuthorArtifacts(authorActivity, qualifiedEvidence)
     .filter((author) => qualifiedUsers.has(author.username));
   const eligibility = evaluatePersonaEligibility(qualifiedEvidence, authorRecords, thresholds);
   const baseResult = createBaseResult(eligibility, authorRecords);
@@ -123,12 +123,19 @@ export function buildPersonas(evidence, authorActivity, config = {}) {
 
   const clusterCandidates = buildClusterCandidates(userSummaries, thresholds);
   const localMissing = collectLocalMissing(clusterCandidates, thresholds);
-  if (localMissing.length) return withMissing(baseResult, localMissing);
+  const publishedCandidates = clusterCandidates.filter((candidate) => candidate.is_publishable);
+  if (!publishedCandidates.length) {
+    return withMissing(baseResult, localMissing.length ? localMissing : [{
+      metric: 'cluster_members',
+      required: thresholds.cluster_members,
+      actual: 0,
+    }]);
+  }
 
   const aggregateContext = aggregateSelfDeclaredContext(authorRecords, {
     minimumCohort: thresholds.demographic_cohort,
   });
-  const clusters = clusterCandidates.map((candidate) => ({
+  const clusters = publishedCandidates.map((candidate) => ({
     id: candidate.segment.id,
     label: candidate.segment.label,
     user_count: candidate.users.length,
@@ -155,7 +162,7 @@ export function buildPersonas(evidence, authorActivity, config = {}) {
       ...baseResult.counts,
       published_clusters: clusters.length,
     },
-    missing: [],
+    missing: localMissing,
     aggregate_context: aggregateContext,
     clusters,
   };
@@ -185,6 +192,10 @@ function withMissing(baseResult, missing) {
     ...baseResult,
     status: 'insufficient_sample',
     persona_status: 'insufficient_sample',
+    counts: {
+      ...baseResult.counts,
+      published_clusters: 0,
+    },
     missing,
   };
 }
@@ -204,6 +215,8 @@ function buildClusterCandidates(userSummaries, thresholds) {
       ...bucket,
       users: bucket.users.sort(compareUserSummary),
       representative_candidates: bucket.users.filter((user) => user.retained_activity_count >= thresholds.representative_activities),
+      is_publishable: bucket.users.length >= thresholds.cluster_members
+        && bucket.users.filter((user) => user.retained_activity_count >= thresholds.representative_activities).length >= thresholds.representative_users,
     }))
     .sort((left, right) => segmentOrder(left.segment) - segmentOrder(right.segment));
 }
@@ -382,14 +395,33 @@ function groupEvidenceByAuthor(evidence) {
   return byAuthor;
 }
 
-function normalizeAuthorArtifacts(authors) {
-  return (authors ?? [])
-    .map((author) => ({
-      ...author,
-      username: authorKey(author),
-      retained_activity: normalizeRetainedActivity(author?.retained_activity),
-    }))
-    .filter((author) => author.username && author.retained_activity.length > 0)
+function normalizeAuthorArtifacts(authors, evidence = [], { requireSourcePostProvenance = true } = {}) {
+  const highSourcePostsByAuthor = buildHighSourcePostsByAuthor(evidence);
+  const merged = new Map();
+
+  for (const input of authors ?? []) {
+    const username = authorKey(input);
+    if (!username) continue;
+
+    const existing = merged.get(username) ?? {
+      ...input,
+      username,
+      source_post_ids: [],
+      source_evidence_ids: [],
+      retained_activity: [],
+    };
+    existing.source_post_ids = union(existing.source_post_ids, input?.source_post_ids ?? []);
+    existing.source_evidence_ids = union(existing.source_evidence_ids, input?.source_evidence_ids ?? []);
+    existing.retained_activity = dedupeActivities([
+      ...existing.retained_activity,
+      ...normalizeRetainedActivity(input?.retained_activity),
+    ]);
+    merged.set(username, existing);
+  }
+
+  return [...merged.values()]
+    .filter((author) => author.retained_activity.length > 0)
+    .filter((author) => !requireSourcePostProvenance || hasEligibleHighSourcePost(author, highSourcePostsByAuthor))
     .sort((left, right) => left.username.localeCompare(right.username));
 }
 
@@ -553,6 +585,47 @@ function unique(values) {
 
 function safeCode(value) {
   return String(value).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 24).toUpperCase();
+}
+
+function buildHighSourcePostsByAuthor(evidence) {
+  const postsByAuthor = new Map();
+
+  for (const record of evidence ?? []) {
+    const username = authorKey(record);
+    const quality = record?.quality ?? {};
+    if (!username || record?.type !== 'post') continue;
+    if (quality.eligible !== true || quality.quality_band !== 'high' || quality.hard_exclusion === true) continue;
+
+    const bucket = postsByAuthor.get(username) ?? new Set();
+    bucket.add(record.id);
+    postsByAuthor.set(username, bucket);
+  }
+
+  return postsByAuthor;
+}
+
+function hasEligibleHighSourcePost(author, highSourcePostsByAuthor) {
+  const sourcePosts = new Set((author?.source_post_ids ?? []).filter(Boolean));
+  const validPosts = highSourcePostsByAuthor.get(author?.username) ?? new Set();
+  for (const postId of sourcePosts) {
+    if (validPosts.has(postId)) return true;
+  }
+  return false;
+}
+
+function dedupeActivities(activities) {
+  const seen = new Set();
+  const retained = [];
+  for (const activity of activities ?? []) {
+    if (!activity?.id || seen.has(activity.id)) continue;
+    seen.add(activity.id);
+    retained.push(activity);
+  }
+  return retained;
+}
+
+function union(left, right) {
+  return [...new Set([...(left ?? []), ...(right ?? [])].filter(Boolean))].sort();
 }
 
 function mergeThresholds(value) {

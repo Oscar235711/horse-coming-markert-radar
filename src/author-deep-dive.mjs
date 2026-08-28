@@ -123,7 +123,7 @@ export function selectAuthors(qualifiedEvidence, { limit = DEFAULT_AUTHOR_LIMIT 
   }
 
   return [...authors.values()]
-    .filter((entry) => entry.high_quality_evidence_count > 0)
+    .filter((entry) => entry.high_quality_source_post_count > 0 && entry.high_quality_evidence_count > 0)
     .sort((left, right) => (
       right.high_quality_source_post_count - left.high_quality_source_post_count
       || right.high_quality_evidence_count - left.high_quality_evidence_count
@@ -277,6 +277,7 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
       if (remainingBudget <= 0) break;
       const truncatedCheckpoint = truncateCheckpoint(checkpoint, {
         username,
+        sourcePostIds: author?.source_post_ids ?? [],
         sourceEvidenceIds: author?.evidence_ids ?? [],
         limitPerAuthor,
         remainingBudget,
@@ -318,6 +319,7 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
       const payload = {
         schema_version: '1.0.0',
         username,
+        source_post_ids: [...new Set(author?.source_post_ids ?? [])].sort(),
         source_evidence_ids: [...new Set(author?.evidence_ids ?? [])].sort(),
         retained_count: retained.length,
         excluded_count: kept.excluded_count,
@@ -359,6 +361,7 @@ export async function collectAuthorActivity(authors, adapter, options = {}) {
 
 function truncateCheckpoint(checkpoint, {
   username,
+  sourcePostIds,
   sourceEvidenceIds,
   limitPerAuthor,
   remainingBudget,
@@ -375,6 +378,10 @@ function truncateCheckpoint(checkpoint, {
   return {
     schema_version: checkpoint?.schema_version ?? '1.0.0',
     username,
+    source_post_ids: [...new Set([
+      ...(sourcePostIds ?? []),
+      ...(checkpoint?.source_post_ids ?? []),
+    ])].sort(),
     source_evidence_ids: [...new Set(sourceEvidenceIds)].sort(),
     retained_count: retained.length,
     excluded_count: Number(checkpoint?.excluded_count ?? 0),

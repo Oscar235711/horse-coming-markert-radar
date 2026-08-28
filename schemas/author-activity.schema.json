@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "username",
+    "source_post_ids",
     "source_evidence_ids",
     "retained_count",
     "excluded_count",
@@ -17,6 +18,10 @@
   "properties": {
     "schema_version": { "type": "string" },
     "username": { "type": "string", "minLength": 1 },
+    "source_post_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "source_evidence_ids": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }

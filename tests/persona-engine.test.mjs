@@ -46,6 +46,37 @@ test('persona generation refuses insufficient global samples with explicit missi
   ]);
 });
 
+test('deep_dive_authors counts unique usernames with at least one high eligible source post', () => {
+  const fixture = makePersonaFixture({
+    clusterSpecs: [
+      { key: 'diy_led_upgrade', count: 30 },
+      { key: 'housing_protection', count: 30 },
+    ],
+    evidencePerUser: 4,
+  });
+
+  const duplicatedAuthor = fixture.authors[0];
+  const duplicateArtifacts = Array.from({ length: 30 }, () => structuredClone(duplicatedAuthor));
+  const duplicateResult = evaluatePersonaEligibility(fixture.evidence, duplicateArtifacts);
+
+  assert.equal(duplicateResult.status, 'insufficient_sample');
+  assert.deepEqual(duplicateResult.missing, [
+    { metric: 'deep_dive_authors', required: 30, actual: 1 },
+  ]);
+
+  const noHighSourcePost = fixture.authors.map((author, index) => (
+    index >= fixture.authors.length - 31
+      ? { ...author, source_post_ids: [`${author.username}-evidence-2`] }
+      : author
+  ));
+  const invalidSourceResult = evaluatePersonaEligibility(fixture.evidence, noHighSourcePost);
+
+  assert.equal(invalidSourceResult.status, 'insufficient_sample');
+  assert.deepEqual(invalidSourceResult.missing, [
+    { metric: 'deep_dive_authors', required: 30, actual: 29 },
+  ]);
+});
+
 test('aggregateSelfDeclaredContext only emits cohort-safe aggregate age, state, and budget context', () => {
   const smallCohort = makePersonaFixture({
     clusterSpecs: [{ key: 'diy_led_upgrade', count: 9 }],
@@ -105,27 +136,32 @@ test('buildPersonas is deterministic, behavior-only, and keeps representative ca
   assert.ok(diyCluster.representative_users.every((item) => item.observable_behaviors.length > 0));
 });
 
-test('buildPersonas refuses pseudo-personas when a derived cluster misses the 12-user floor', () => {
+test('buildPersonas suppresses only under-threshold clusters when larger segments still qualify', () => {
   const fixture = makePersonaFixture({
     clusterSpecs: [
-      { key: 'diy_led_upgrade', count: 11 },
-      { key: 'housing_protection', count: 49 },
+      { key: 'diy_led_upgrade', count: 29 },
+      { key: 'housing_protection', count: 20 },
+      { key: 'truck_visibility_fixers', count: 11 },
     ],
     evidencePerUser: 4,
   });
 
   const result = buildPersonas(fixture.evidence, fixture.authors, {});
 
-  assert.equal(result.status, 'insufficient_sample');
-  assert.equal(result.persona_status, 'insufficient_sample');
-  assert.deepEqual(result.clusters, []);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.persona_status, 'complete');
+  assert.equal(result.counts.published_clusters, 2);
+  assert.deepEqual(result.clusters.map((item) => item.id), [
+    'diy-led-upgrade',
+    'housing-protection',
+  ]);
   assert.deepEqual(result.missing, [
     {
       metric: 'cluster_members',
       required: 12,
       actual: 11,
-      cluster_id: 'diy-led-upgrade',
-      cluster_label: 'DIY LED Upgraders',
+      cluster_id: 'truck-visibility-fixers',
+      cluster_label: 'Truck Visibility Fixers',
     },
   ]);
 });
@@ -243,6 +279,7 @@ function makeAuthor({
   return {
     schema_version: '1.0.0',
     username,
+    source_post_ids: [`${username}-evidence-1`],
     source_evidence_ids: [`source-${username}`],
     retained_count: activities.length,
     excluded_count: 0,

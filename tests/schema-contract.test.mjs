@@ -119,6 +119,7 @@ test('author activity schema is strict about retained payloads and self-declared
   assert.deepEqual(authorActivity.required, [
     'schema_version',
     'username',
+    'source_post_ids',
     'source_evidence_ids',
     'retained_count',
     'excluded_count',
@@ -232,6 +233,7 @@ test('keyword candidate schema and exploratory search defaults are tracked', asy
 
 test('persona artifact schema enforces aggregate-only demographics and representative traceability', async () => {
   const personas = await schema('user_profile.schema.json');
+  const analysis = await schema('analysis.schema.json');
 
   assert.deepEqual(personas.required, [
     'schema_version',
@@ -258,6 +260,13 @@ test('persona artifact schema enforces aggregate-only demographics and represent
   ]);
   assert.equal(personas.$defs.representative_user.properties.age_band, undefined);
   assert.equal(personas.$defs.representative_user.properties.state, undefined);
+  assert.equal(personas.$defs.representative_user.properties.supporting_evidence_ids.minItems, 3);
+  assert.equal(personas.$defs.representative_user.properties.supporting_evidence_ids.maxItems, 3);
+  assert.equal(personas.$defs.representative_user.properties.supporting_evidence_urls.minItems, 3);
+  assert.equal(personas.$defs.representative_user.properties.supporting_evidence_urls.maxItems, 3);
+  assert.equal(personas.$defs.cluster.properties.user_count.minimum, 12);
+  assert.equal(personas.$defs.cluster.properties.representative_users.minItems, 3);
+  assert.equal(personas.$defs.cluster.properties.representative_users.maxItems, 3);
   assert.deepEqual(personas.$defs.aggregate_context.required, [
     'age_bands',
     'states',
@@ -279,6 +288,8 @@ test('persona artifact schema enforces aggregate-only demographics and represent
     'aggregate_context',
     'representative_users',
   ]);
+  assert.ok(analysis.required.includes('personas'));
+  assert.match(String(analysis.properties.personas.$ref ?? ''), /user_profile\.schema\.json/i);
 });
 
 async function schema(name) {
