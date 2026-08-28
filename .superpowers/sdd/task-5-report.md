@@ -24,11 +24,9 @@
 
 ## Key implementation choice
 
-- To match the Task 5 brief's stricter wording, local cluster shortfalls are treated as an overall `insufficient_sample` result rather than publishing the remaining clusters.
-- In practice this means:
-  - any failure of `cluster_members >= 12` or `representative_users >= 3` with `representative_activities >= 3` prevents persona publication;
-  - the artifact returns explicit `missing` entries instead of a partial persona set;
-  - representative cards never include age, state, city, address, income, or inferred demographics.
+- The final contract follows the V1.2 design: a local cluster shortfall suppresses only that cluster; the artifact remains `complete` when at least one cluster passes its local gates.
+- If no cluster passes, the artifact returns explicit `insufficient_sample` and `missing` entries instead of a pseudo-persona set.
+- Representative cards never include age, state, city, address, income, or inferred demographics.
 
 ## Changes made
 
