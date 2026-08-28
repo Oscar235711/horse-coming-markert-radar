@@ -54,7 +54,7 @@ function Invoke-RadarPythonCli {
   if ($radarConfig) {
     $propagatedNames += $radarConfig.Keys | Where-Object { $_ -match '^(RADAR_|DEEPSEEK_)' }
   }
-  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE"
+  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_LIBRARY_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE"
   $propagatedNames = $propagatedNames | Sort-Object -Unique
 
   $previousValues = @{}

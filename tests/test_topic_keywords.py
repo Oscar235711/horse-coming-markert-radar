@@ -33,3 +33,24 @@ def test_topic_keyword_library_keeps_source_ids_and_separates_brand_only_terms()
     assert "stronger clamp kit" in terms
     assert terms["stronger clamp kit"]["source_post_ids"] == ["t3_a"]
     assert "ford" not in terms
+
+
+def test_topic_keyword_library_filters_reddit_ui_and_url_noise() -> None:
+    post = NormalizedPost(
+        post_id="t3_noise",
+        url="https://www.reddit.com/r/Cummins/comments/a",
+        subreddit="Cummins",
+        title="Stronger clamp kit",
+        body="The stronger clamp kit fixed the issue. https://www.reddit.com/r/Cummins/comments/a",
+        author="owner",
+        created_at=datetime(2026, 8, 25, tzinfo=UTC),
+        score=8,
+        comment_count=0,
+        source_surfaces=("hot",),
+    )
+    library = build_topic_keyword_library((post,), (), (PostAnalysis(topics=(), claims=()),))
+    terms = {item["term_en"] for item in library["candidates"]}
+    assert "stronger clamp kit" in terms
+    assert "https reddit com" not in terms
+    assert "reddit com" not in terms
+    assert "more replies" not in terms

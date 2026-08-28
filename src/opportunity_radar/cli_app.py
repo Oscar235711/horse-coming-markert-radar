@@ -36,6 +36,7 @@ from .evidence import apply_diesel_evidence_gate
 from .models import Community, CommunityCatalog, RadarConfig, RunManifest
 from .storage import TopicRegistry, create_run_paths, read_manifest, write_keyword_library, write_manifest
 from .keywords import build_topic_keyword_library
+from .library import update_project_library
 from .topics import (
     EvidenceBackedClaim,
     ProTopicProposal,
@@ -63,6 +64,7 @@ class RadarCliApp:
         *,
         runs_root: str | Path | None = None,
         config_versions_root: str | Path | None = None,
+        library_root: str | Path | None = None,
         environment: Mapping[str, str] | None = None,
         tool_runner: ToolRunner | None = None,
         collector: OpenCliCollector | None = None,
@@ -82,6 +84,14 @@ class RadarCliApp:
             config_versions_root,
             env_name="RADAR_COMMUNITY_VERSIONS_ROOT",
             default_relative="configs/generated",
+        )
+        library_candidate = library_root
+        if library_candidate is None and "RADAR_LIBRARY_ROOT" not in self._environment and runs_root is not None:
+            library_candidate = Path(runs_root).parent / "library"
+        self._library_root = self._resolve_root(
+            library_candidate,
+            env_name="RADAR_LIBRARY_ROOT",
+            default_relative="library",
         )
         self._tool_runner = tool_runner or self._default_tool_runner
         self._has_custom_tool_runner = tool_runner is not None
@@ -120,10 +130,12 @@ class RadarCliApp:
                 "status": "ok",
                 "runs_root": str(self._runs_root),
                 "config_versions_root": str(self._config_versions_root),
+                "library_root": str(self._library_root),
             },
         }
         self._runs_root.mkdir(parents=True, exist_ok=True)
         self._config_versions_root.mkdir(parents=True, exist_ok=True)
+        self._library_root.mkdir(parents=True, exist_ok=True)
 
         tool_paths = {
             "agent_reach": self._find_executable("RADAR_AGENT_REACH_EXE", "agent-reach"),
@@ -365,6 +377,31 @@ class RadarCliApp:
             return state
 
         analysis = self._aggregate_run(config, eligible_threads, analyses_by_post, paths=paths)
+        # Keep a small, cumulative project library so each run improves the
+        # community/topic/keyword index without copying raw post bodies into
+        # the repository.
+        library_status = update_project_library(
+            self._library_root,
+            analysis,
+            run_id=paths.run_dir.name,
+            posts=[thread.post for thread in eligible_threads],
+            comments=[
+                {
+                    "post_id": thread.post.post_id,
+                    "comment_id": comment.comment_id,
+                    "body": comment.body,
+                    "url": comment.url,
+                    "author": comment.author,
+                }
+                for thread in eligible_threads for comment in thread.comments
+            ],
+            now=self._now(),
+        )
+        analysis["project_library"] = {
+            "version": library_status.get("versions", {}),
+            "counts": library_status.get("counts", {}),
+            "root": "library",
+        }
         exported = self._invoke_exporter(paths.artifacts_dir, analysis, ("json", "xlsx"))
         state["artifacts"] = self._artifact_map(exported, ("json", "xlsx"))
         report_path = render_html(analysis, paths.artifacts_dir / "report.html")

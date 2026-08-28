@@ -23,6 +23,7 @@ from opportunity_radar.collector import _parse_records, _thread_from_raw  # noqa
 from opportunity_radar.config import load_config, load_diesel_domain_config  # noqa: E402
 from opportunity_radar.normalization import normalize_and_deduplicate  # noqa: E402
 from opportunity_radar.report import render_html  # noqa: E402
+from opportunity_radar.library import update_project_library  # noqa: E402
 from opportunity_radar.scoring import score_shortlist  # noqa: E402
 from opportunity_radar.storage import create_run_paths, write_normalized_records  # noqa: E402
 from opportunity_radar.topics import export_topic_analysis  # noqa: E402
@@ -93,10 +94,27 @@ def main() -> int:
         ],
     )
 
-    app = RadarCliApp(runs_root=runs_root, environment={"DEEPSEEK_API_KEY": ""})
+    app = RadarCliApp(runs_root=runs_root, library_root=REPO_ROOT / "library", environment={"DEEPSEEK_API_KEY": ""})
     eligible, audit = app._gate_threads(threads, config, domain)
     analyses = {thread.post.post_id: _rule_extract_post(thread, domain) for thread in eligible}
     analysis = app._aggregate_run(config, eligible, analyses, paths=paths)
+    library_status = update_project_library(
+        app._library_root,
+        analysis,
+        run_id=args.run_id,
+        posts=[thread.post for thread in eligible],
+        comments=[
+            {"post_id": thread.post.post_id, "comment_id": comment.comment_id, "body": comment.body,
+             "url": comment.url, "author": comment.author}
+            for thread in eligible for comment in thread.comments
+        ],
+        now=app._now(),
+    )
+    analysis["project_library"] = {
+        "version": library_status.get("versions", {}),
+        "counts": library_status.get("counts", {}),
+        "root": "library",
+    }
     analysis["collection_source"] = "saved OpenCLI Reddit crawl"
     analysis["analysis_note"] = "本报告由本地规则/VOC分析生成，未调用DeepSeek；产品方向均为机会假设。"
     analysis["crawl_counts"] = {

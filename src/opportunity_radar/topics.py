@@ -208,6 +208,7 @@ class TopicAggregator:
             candidates.append(self._make_topic(community, proposal, accepted_post_ids, valid_evidence, signal_by_id))
 
         _apply_heat_scores(candidates)
+        _add_business_fields(candidates)
         candidates.sort(key=lambda topic: (-topic["heat_score"], topic["canonical_key"]))
         formal = tuple(topic for topic in candidates if topic["status"] == "formal")
         weak = tuple(topic for topic in candidates if topic["status"] == "weak_signal")
@@ -579,6 +580,99 @@ def _apply_heat_scores(topics: list[dict[str, Any]]) -> None:
             for name in weights
         )
         topic["heat_score"] = round(score * 100, 2)
+
+
+def _first_value(values: Any, fallback: str = "未知") -> str:
+    """Return the first non-empty scalar from an analysis field list."""
+    if isinstance(values, str):
+        return values.strip() or fallback
+    if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+        for value in values:
+            if isinstance(value, Mapping) and value.get("text"):
+                return str(value["text"]).strip()
+            if str(value or "").strip():
+                return str(value).strip()
+    return fallback
+
+
+def _add_business_fields(topics: list[dict[str, Any]]) -> None:
+    """Add evidence-calibrated, WhatToSell-inspired decision fields.
+
+    These fields deliberately separate observed community counts from business
+    inference. They make the HTML and XLSX useful to product teams without
+    pretending a Reddit sample is a market forecast.
+    """
+    for topic in topics:
+        heat = float(topic.get("heat_score", 0) or 0)
+        confidence = float(topic.get("confidence", 0) or 0)
+        evidence_count = len(topic.get("evidence", [])) if isinstance(topic.get("evidence"), list) else 0
+        evidence_component = min(1.0, evidence_count / 12.0)
+        score = round(min(10.0, max(0.0, heat / 100 * 4 + confidence * 3 + evidence_component * 2 + (1.0 if topic.get("status") == "formal" else 0.3))), 1)
+        if topic.get("status") == "formal" and score >= 7:
+            decision = {"status": "priority_validate", "label": "优先验证", "reason": "样本重复性、互动和证据强度均达到粗扫优先级"}
+        elif topic.get("status") == "formal":
+            decision = {"status": "validate", "label": "进入验证", "reason": "已有正式话题证据，但仍需业务验证"}
+        elif score >= 3:
+            decision = {"status": "observe", "label": "继续观察", "reason": "存在明确问题，但样本尚未达到正式话题门槛"}
+        else:
+            decision = {"status": "skip", "label": "暂不排序", "reason": "当前证据不足"}
+
+        complaint = _first_value(topic.get("pains"), _first_value(topic.get("summary"), "未知"))
+        opening = _first_value(topic.get("opportunity_hypotheses"), _first_value(topic.get("gaps"), "待验证"))
+        platforms = list(topic.get("platforms", []) or [])
+        vehicles = list(topic.get("vehicles", []) or [])
+        scenarios = list(topic.get("scenarios", []) or [])
+        topic["opportunity_score"] = score
+        topic["decision"] = decision
+        topic["top_buyer_complaint"] = complaint
+        topic["best_opening_angle"] = opening
+        topic["demand_validation"] = {
+            "posts": int(topic.get("post_count", 0) or 0),
+            "authors": int(topic.get("author_count", 0) or 0),
+            "commenters": int(topic.get("commenter_count", 0) or 0),
+            "current_posts": int(topic.get("current_post_count", 0) or 0),
+            "baseline_posts": int(topic.get("baseline_post_count", 0) or 0),
+            "trend": topic.get("trend", "unknown"),
+            "note": "社区样本信号，不代表 Reddit 全量市场占有率。",
+        }
+        topic["seller_insight"] = {
+            "who_should_sell": "具备柴油皮卡适配、安装和售后能力的团队",
+            "who_should_avoid": "无法核对车型适配或承接售后验证的通用铺货团队",
+            "positioning_angle": opening,
+            "competition_note": _first_value(topic.get("competitor_tags"), "未从当前样本确认"),
+            "basis": "推断：由话题的场景、方案缺口和竞品提及生成，需业务复核。",
+        }
+        topic["business_profile"] = {
+            "pricing": "未知，需结合目标SKU和竞品价格验证",
+            "margin": "未知，需结合采购、加工和售后成本验证",
+            "shipping": "未知，需按尺寸、重量和套件复杂度验证",
+            "returns": "未知，适配件需重点验证退货风险",
+            "seasonality": "未知，需按最近90天与历史基线持续观察",
+            "basis": "未知/待验证，不将社区讨论当作成本事实。",
+        }
+        topic["why_not_done"] = {
+            "reasons": list(topic.get("gaps", []) or []) or ["当前样本未确认未被解决的具体原因"],
+            "cost_supply_chain_impact": "待验证：需要评估车型适配、SKU数量、开模/加工与库存成本。",
+            "business_model_conflict": "未知：需访谈用户和渠道确认是否存在安装、售后或合规边界。",
+        }
+        topic["manufacturing_profile"] = {
+            "platform_fitment": list(dict.fromkeys([*platforms, *vehicles])) or ["未知"],
+            "material_process": "待工程验证",
+            "tooling": "待工程验证",
+            "sku_complexity": "高" if len(set(platforms + vehicles)) >= 4 else ("中" if platforms or vehicles else "未知"),
+            "installation": "待验证：报告只保留社区提到的安装问题，不替代工程说明。",
+        }
+        topic["seller_verdict"] = (
+            f"{decision['label']}：这是基于社区样本的机会假设，不是开品结论。"
+            if decision["status"] != "skip" else "暂不排序：先补充可回溯证据后再判断。"
+        )
+        topic["coverage"] = {
+            "posts": int(topic.get("post_count", 0) or 0),
+            "authors": int(topic.get("author_count", 0) or 0),
+            "commenters": int(topic.get("commenter_count", 0) or 0),
+            "evidence": evidence_count,
+            "communities": [topic.get("community")] if topic.get("community") else [],
+        }
 
 
 def _excluded(canonical_key: str, reason: str) -> dict[str, str]:

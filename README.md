@@ -19,6 +19,7 @@
 - 输出社区库、话题关键词库、社区热点排行、话题分析卡、帖子/评论证据和弱信号观察区。
 - 支持 DeepSeek/Higress；未配置模型接口时，仍可用本地规则/VOC分析完成采集和基础报告。
 - 当前不做用户主页深挖，不生成网络图，重点是先跑通真实数据链路。
+- 每次运行还会自动更新项目根目录的 `library/communities.json`、`library/topics.json` 和 `library/keywords.json`，用于跨运行累计观察；它们只保存索引和统计，不保存原文或密钥。
 
 当前完整迁移版本位于 `feature/community-radar` 分支。后续合并到 `main` 后，可去掉克隆命令中的 `-b feature/community-radar`。
 
@@ -117,7 +118,7 @@ RADAR_NODE_EXE=C:\Program Files\nodejs\node.exe
 
 ```text
 DEEPSEEK_BASE_URL=https://higress.suncentgroup.com/gzsyb/v1
-DEEPSEEK_API_KEY=填写公司分配的Token
+在 `.env` 中配置 `DEEPSEEK_API_KEY`（填写公司分配的 Token）。
 DEEPSEEK_FLASH_MODEL=deepseek-v4-flash
 DEEPSEEK_PRO_MODEL=deepseek-v4-pro
 ```
@@ -210,6 +211,17 @@ configs/diesel_90d.yaml
 ```
 
 如需调整时间范围、深读数量或评论数量，只修改配置文件并提交说明，不要直接改动运行目录中的快照。
+
+每次运行结束后，项目库会自动累计本轮见到的社区、稳定话题和关键词候选：
+
+```text
+library/
+├─ communities.json
+├─ topics.json
+└─ keywords.json
+```
+
+项目库是跨运行的观察索引，不会自动扩张本轮固定的四个扫描社区，也不会把候选词直接变成正式检索词。
 
 ## 七、常用命令
 

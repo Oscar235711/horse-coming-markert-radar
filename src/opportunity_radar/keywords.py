@@ -16,6 +16,16 @@ _STOPWORDS = frozenset({
     "a", "an", "and", "after", "any", "are", "at", "be", "been", "but", "by", "for", "from", "get",
     "i", "in", "is", "it", "my", "need", "of", "on", "or", "our", "so", "still", "that", "the", "this",
     "to", "what", "which", "with", "you", "your", "diesel", "truck", "part", "option",
+    "more", "replies", "reply", "comments", "comment", "see", "view", "gallery", "share",
+    "http", "https", "www", "com", "reddit", "org", "amp", "removed", "deleted", "edit",
+    "as", "well", "if", "don", "doesn", "didn", "isn", "won", "wouldn", "t", "s", "ve", "re", "ll",
+    "now", "right", "sure", "know", "make", "no",
+})
+_NOISE_TOKENS = frozenset({
+    "http", "https", "www", "com", "reddit", "org", "amp", "comments", "comment", "replies",
+    "reply", "gallery", "share", "view", "more", "removed", "deleted", "edit", "as", "well", "if",
+    "don", "doesn", "didn", "isn", "won", "wouldn", "t", "s", "ve", "re", "ll", "now", "right", "sure",
+    "know", "make", "no", "miles",
 })
 _PAIN = re.compile(r"\b(leak|leaked|seep|seeping|fail|failed|broken|crack|cracked|regen|clog|issue|problem)\b", re.I)
 _WORKAROUND = re.compile(r"\b(fix|fixed|replace|replaced|install|installed|clamp|solution)\b", re.I)
@@ -147,7 +157,7 @@ def build_topic_keyword_library(
 
     def add(term: str, *, post_id: str = "", comment_id: str = "", author: str = "", method: str = "text", topic_key: str = "") -> None:
         normalized = _normalise(term)
-        if not normalized or len(normalized.split()) < 2 or normalized in {"diesel truck", "pickup truck", "diesel pickup"}:
+        if not _useful_phrase(normalized):
             return
         bucket = aggregate.setdefault(normalized, {"variants": set(), "post_ids": set(), "comment_ids": set(), "authors": set(), "methods": set(), "topics": set()})
         bucket["variants"].add(str(term).strip())
@@ -269,16 +279,32 @@ def _ngrams(text: str) -> tuple[str, ...]:
     for size in (2, 3, 4):
         for offset in range(len(tokens) - size + 1):
             phrase = " ".join(tokens[offset:offset + size])
+            window = tokens[offset:offset + size]
             if (tokens[offset] not in _STOPWORDS and tokens[offset + size - 1] not in _STOPWORDS
-                    and any(token not in _STOPWORDS for token in tokens[offset:offset + size])):
+                    and any(token not in _STOPWORDS for token in window)
+                    and not any(token in _NOISE_TOKENS for token in window)):
                 terms.add(phrase)
     return tuple(sorted(terms))
 
 
 def _keep(term: str, formal: frozenset[str], brands: frozenset[str]) -> bool:
     tokens = term.split()
-    return bool(term and term not in formal and len(tokens) >= 2 and not all(token in _STOPWORDS for token in tokens)
+    return bool(_useful_phrase(term) and term not in formal and len(tokens) >= 2 and not all(token in _STOPWORDS for token in tokens)
                 and not any(brand in tokens for brand in brands))
+
+
+def _useful_phrase(term: str) -> bool:
+    """Reject URL fragments and Reddit UI text before they enter the library."""
+    tokens = term.split()
+    if not term or len(tokens) < 2 or term in {"diesel truck", "pickup truck", "diesel pickup"}:
+        return False
+    if any(token in _NOISE_TOKENS for token in tokens):
+        return False
+    if any(token.isdigit() and len(token) >= 2 for token in tokens):
+        return False
+    if not any(any(char.isalpha() for char in token) for token in tokens):
+        return False
+    return True
 
 
 def _normalise(value: object) -> str:

@@ -54,6 +54,7 @@ from .models import (
 )
 from .normalization import normalize_and_deduplicate
 from .keywords import KeywordCandidate, build_topic_keyword_library, discover_diesel_keywords, select_round_two_terms
+from .library import load_project_library, update_project_library
 from .scoring import score_shortlist
 from .storage import (
     TopicRegistry, RunPaths, append_failure, create_run_paths, persist_thread,
@@ -105,6 +106,8 @@ __all__ = [
     "PRO_MODEL",
     "KeywordSearchSettings",
     "KeywordCandidate",
+    "load_project_library",
+    "update_project_library",
     "build_topic_keyword_library",
     "ReportSettings",
     "ProTopicProposal",

@@ -181,6 +181,10 @@ def test_run_resume_status_export_and_governance_round_trip_without_network(tmp_
     ]
     assert resumed["counts"]["topic_count"] == 1
     assert resumed["counts"]["failure_count"] == 0
+    project_library = tmp_path / "library"
+    assert (project_library / "communities.json").exists()
+    assert (project_library / "topics.json").exists()
+    assert (project_library / "keywords.json").exists()
 
     status = app.status("fixture-run")
     rendered_status = json.dumps(status, ensure_ascii=False)

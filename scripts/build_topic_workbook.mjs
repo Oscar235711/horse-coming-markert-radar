@@ -51,6 +51,11 @@ function table(sheet, headers, rows, widths) {
 }
 
 function values(items) { return Array.isArray(items) ? items.join("；") : ""; }
+function objectValue(item, key, fallback = "未知") {
+  return item && typeof item === "object" && item[key] !== undefined && item[key] !== null && String(item[key]).trim() !== ""
+    ? item[key]
+    : fallback;
+}
 function safeText(value) { return String(value ?? "").replaceAll('"', '""'); }
 function urlFormula(url) { return `=HYPERLINK("${safeText(url)}","打开证据")`; }
 function columnName(number) {
@@ -104,13 +109,17 @@ function columnName(number) {
 
 {
   const sheet = workbook.worksheets.getItem("话题分析卡");
-  title(sheet, "话题分析卡（所有结论均为机会假设）", "N");
-  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "痛点", "需求", "当前解决方案", "缺口", "机会假设", "车辆/平台/场景", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
+  title(sheet, "话题分析卡（所有结论均为机会假设）", "V");
+  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "痛点", "需求", "当前解决方案", "缺口", "机会假设", "机会分", "建议", "Top买家抱怨", "最佳切入角", "需求验证", "卖家视角", "为什么未解决", "制造画像", "车辆/平台/场景", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
     topic.topic_id, topic.label_zh, topic.label_en, topic.summary, values(topic.pains), values(topic.needs),
     values(topic.current_solutions), values(topic.gaps), values(topic.opportunity_hypotheses),
+    objectValue(topic, "opportunity_score", 0), objectValue(objectValue(topic, "decision", {}), "label"), objectValue(topic, "top_buyer_complaint"), objectValue(topic, "best_opening_angle"),
+    [objectValue(objectValue(topic, "demand_validation", {}), "posts", 0), objectValue(objectValue(topic, "demand_validation", {}), "authors", 0), objectValue(objectValue(topic, "demand_validation", {}), "commenters", 0)].join(" / "),
+    objectValue(objectValue(topic, "seller_insight", {}), "positioning_angle"), values(objectValue(objectValue(topic, "why_not_done", {}), "reasons", [])),
+    JSON.stringify(objectValue(topic, "manufacturing_profile", {}), null, 0),
     [values(topic.vehicles), values(topic.platforms), values(topic.scenarios)].filter(Boolean).join(" / "),
     [values(topic.category_tags), values(topic.brand_tags), values(topic.competitor_tags)].filter(Boolean).join("；"), values(topic.validation_questions), values(topic.supporting_views), values(topic.opposing_views),
-  ]), [26, 20, 22, 35, 24, 24, 24, 24, 34, 30, 26, 30, 30, 30]);
+  ]), [26, 20, 22, 35, 24, 24, 24, 24, 34, 10, 14, 28, 30, 20, 30, 28, 36, 30, 26, 30, 30, 30]);
 }
 
 {
