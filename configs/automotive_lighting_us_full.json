@@ -173,7 +173,10 @@
     "subreddit:fuckyourheadlights (glare OR \"beam pattern\" OR cutoff) (LED OR HID OR retrofit)",
     "subreddit:Automotive (\"headlight film\" OR \"protective film\" OR \"paint protection\")",
     "subreddit:projectcar (\"retrofit projector\" OR \"bi-led projector\" OR \"projector kit\")",
-    "subreddit:CarModification (\"headlight film\" OR \"headlight tint\" OR \"lens restoration\")"
+    "subreddit:CarModification (\"headlight film\" OR \"headlight tint\" OR \"lens restoration\")",
+    "subreddit:f150 \"tail light\"",
+    "subreddit:Silverado \"tail light\"",
+    "subreddit:Wrangler \"tail light\""
   ],
   "subreddits": [
     "MechanicAdvice",
