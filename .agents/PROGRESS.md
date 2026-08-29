@@ -26,3 +26,8 @@ Required fields:
 - `[details]`: concise facts only, include exact branch and exact commit at preflight and every resume
 
 恢复时必须新增一行 `resume` 记录，不得覆盖历史。
+
+[2026-08-29 13:36 CST] [preflight] [complete] [branch=codex/automotive-lighting-reddit-radar, commit=1028f191370db5810f128c87c2bba51f02902b89, worktree clean, remote transport contract verified]
+[2026-08-29 13:37 CST] [resume] [started] [branch=codex/automotive-lighting-reddit-radar, commit=1028f191370db5810f128c87c2bba51f02902b89, resumed Task 7-10 release verification]
+[2026-08-29 13:39 CST] [round-one-search] [partial] [public-json mini pilot v12-pilot-20260829-continue completed with 8 runtime fetch failures and zero candidates; no unrelated work stopped]
+[2026-08-29 13:40 CST] [verification] [complete] [135 node tests and five Windows checks passed; offline report artifact set generated; strict live-secret scan had no matches]
