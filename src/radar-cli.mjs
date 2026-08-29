@@ -375,8 +375,8 @@ export async function executeRadarRun({
 function normalizeRunId(runId) {
   const normalized = String(runId ?? '').trim();
   if (!normalized) throw new Error('Invalid run id: value is required.');
-  if (normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
-    throw new Error(`Invalid run id: ${normalized}. Run IDs must not contain path separators or "..".`);
+  if (normalized === '.' || normalized === '..' || normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error(`Invalid run id: ${normalized}. Run IDs must be safe single-segment names.`);
   }
   return normalized;
 }
@@ -440,7 +440,12 @@ function createRuntimeBoundOpenCliAdapter({
 
 function execFileWithinRuntimeBudget(file, args, options, { stage, maxRuntimeMinutes } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(file, args, options, (error, stdout = '', stderr = '') => {
+    let settled = false;
+    const childOptions = { ...(options ?? {}) };
+    delete childOptions.timeout;
+    const child = execFile(file, args, childOptions, (error, stdout = '', stderr = '') => {
+      if (settled) return;
+      settled = true;
       if (!error) {
         resolve({ stdout, stderr });
         return;
@@ -457,7 +462,34 @@ function execFileWithinRuntimeBudget(file, args, options, { stage, maxRuntimeMin
       error.stderr = stderr;
       reject(error);
     });
+    const timeoutMs = Number(options?.timeout);
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        Promise.resolve(terminateProcessTree(child?.pid)).finally(() => {
+          reject(createRuntimeLimitError({ stage, maxRuntimeMinutes }));
+        });
+      }, timeoutMs);
+      child.once?.('close', () => clearTimeout(timer));
+      child.once?.('error', () => clearTimeout(timer));
+    }
   });
+}
+
+function terminateProcessTree(pid) {
+  if (!pid) return Promise.resolve();
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+    });
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // The process may have exited between timeout detection and termination.
+  }
+  return Promise.resolve();
 }
 
 async function walkFiles(rootDir, currentDir, files) {
