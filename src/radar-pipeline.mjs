@@ -211,11 +211,12 @@ export function createPublicJsonAdapter({ fetchImpl = fetch, baseUrl = 'https://
 export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync } = {}) {
   if (!executablePath) throw new Error('OpenCLI executable path is required');
   async function invoke(args) {
-    const { stdout } = await execImpl(executablePath, args, {
+    const invocation = buildOpenCliInvocation(executablePath, args);
+    const { stdout } = await execImpl(invocation.file, invocation.args, {
       encoding: 'utf8',
       maxBuffer: 20 * 1024 * 1024,
       windowsHide: true,
-      shell: process.platform === 'win32',
+      ...invocation.options,
     });
     const value = String(stdout).trim();
     if (!value.startsWith('[') && !value.startsWith('{')) throw new Error(`OpenCLI returned non-JSON output: ${value.slice(0, 240)}`);
@@ -310,6 +311,24 @@ export function createOpenCliAdapter({ executablePath, execImpl = execFileAsync 
       if (!rows.length) throw reasons[0] ?? new Error(`No public activity returned for ${username}`);
       return finalizeAuthorActivityItems(rows, { limit, afterUtc });
     },
+  };
+}
+
+export function buildOpenCliInvocation(executablePath, args, {
+  platform = process.platform,
+  comSpec = process.env.ComSpec || 'cmd.exe',
+} = {}) {
+  const normalizedPath = String(executablePath ?? '');
+  const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value)) : [];
+  const baseOptions = { shell: false };
+  if (platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(normalizedPath)) {
+    return { file: normalizedPath, args: normalizedArgs, options: baseOptions };
+  }
+
+  return {
+    file: comSpec,
+    args: ['/d', '/c', 'call', path.resolve(normalizedPath), ...normalizedArgs],
+    options: baseOptions,
   };
 }
 

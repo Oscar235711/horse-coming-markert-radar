@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildOpenCliSearchArgs,
+  buildOpenCliInvocation,
   createOpenCliAdapter,
   createPublicJsonAdapter,
   parseRedditAtom,
@@ -36,6 +37,23 @@ test('OpenCLI search arguments keep the executable path external and constrain t
   assert.ok(args.includes('--time'));
   assert.ok(args.includes('year'));
   assert.ok(!args.includes('opencli'));
+});
+
+test('Windows .cmd invocation quotes a compound Reddit query as one argument', () => {
+  const spec = buildOpenCliInvocation(
+    '.tools\\opencli.cmd',
+    ['reddit', 'search', '("headlight bulb" OR "led headlight bulb")', '--limit', '30'],
+    { platform: 'win32', comSpec: 'C:\\Windows\\System32\\cmd.exe' },
+  );
+
+  assert.equal(spec.file, 'C:\\Windows\\System32\\cmd.exe');
+  assert.equal(spec.options.shell, false);
+  assert.deepEqual(spec.args.slice(0, 3), ['/d', '/c', 'call']);
+  assert.match(spec.args[3], /opencli\.cmd/);
+  assert.equal(spec.args[4], 'reddit');
+  assert.equal(spec.args[6], '("headlight bulb" OR "led headlight bulb")');
+  assert.equal(spec.args[7], '--limit');
+  assert.equal(spec.args[8], '30');
 });
 
 test('OpenCLI detail parsing keeps synthetic comment IDs stable across row-order changes and uses post-level links only', async () => {
