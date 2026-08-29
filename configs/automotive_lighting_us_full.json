@@ -208,6 +208,16 @@
     "round_two_minimum_users": 2,
     "round_two_minimum_communities": 2
   },
+  "opportunity_engine": {
+    "thresholds": {
+      "validated_entry": {
+        "unique_users": 7,
+        "communities": 2,
+        "direct_experience": 3,
+        "score": 55
+      }
+    }
+  },
   "analysis": {
     "mode": "rules_with_optional_llm",
     "language": "zh-CN",
