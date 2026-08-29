@@ -54,6 +54,24 @@ RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
 .\scripts\radar.ps1 run -Transport opencli
 ```
 
+如需先做远程/公开 JSON 契约回归，优先使用：
+
+```powershell
+.\scripts\radar.ps1 run `
+  -ResearchConfig "configs\automotive_lighting_us_mini.json" `
+  -Transport public-json
+```
+
+如需复现 2026-08-28 的 200 帖真实运行边界，使用：
+
+```powershell
+.\scripts\radar.ps1 run `
+  -ResearchConfig "configs\automotive_lighting_us_full.json" `
+  -Transport opencli
+```
+
+`automotive_lighting_us_full.json` 会保留 14 个锚点词并把帖子上限拉到 200；在 Windows + Chrome 登录态 + OpenCLI 条件下，完整长跑通常需要约 2-3 小时。
+
 如果本机没有可用的Reddit浏览器登录态，可改用：
 
 ```powershell
@@ -61,6 +79,14 @@ RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
 ```
 
 报告位于`.local\runs\<run_id>\report.html`。同一`RunId`重复执行时，已完成帖子直接读取检查点，只重试失败项。运行中发现的仓库问题写入`optimization_backlog.jsonl`，不会阻止后续帖子抓取。
+
+阅读结果时请区分三类状态：
+
+- `manifest.status`：技术执行状态，只反映运行是否完成、部分完成或失败；
+- `sample_status`：样本是否足够支撑当前分析；
+- `persona_status`：画像是否达到发布门槛。
+
+真实 200 帖运行即使 `manifest.status=complete`，也可能因为当前质量门要求较严格而出现 `sample_status=insufficient`、`persona_status=insufficient_sample`，并最终得到 `opportunities=0`。这表示“规则下证据不足”，不是程序异常。
 
 ### 历史CSV详情采集
 

@@ -299,6 +299,7 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
           <p><strong>地理规则：</strong>${escapeHtml(analysis.scope?.geography_rule ?? '未知')}</p>
           <p><strong>分析引擎：</strong>${escapeHtml(analysis.analysis_engine?.active_result ?? 'unknown')}</p>
           <p><strong>运行状态：</strong>${escapeHtml(manifest.status ?? 'unknown')}</p>
+          <p><strong>sample_status：</strong>${escapeHtml(manifest.sample_status ?? 'unknown')}</p>
           <p><strong>persona_status：</strong>${escapeHtml(analysis.personas?.persona_status ?? analysis.personas?.status ?? 'unknown')}</p>
           <p><strong>隐私：</strong>${escapeHtml(analysis.privacy_note ?? '未知')}</p>
         </aside>

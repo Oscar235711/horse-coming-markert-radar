@@ -6,14 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('GitHub Actions supports manual and scheduled public-JSON runs with artifacts', async () => {
+test('GitHub Actions stays read-only, uses the public-JSON mini profile by default, uploads artifacts, and does not print secrets', async () => {
   const workflow = await fs.readFile(path.join(repoRoot, '.github', 'workflows', 'reddit-lighting-radar.yml'), 'utf8');
 
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /schedule:/);
+  assert.match(workflow, /default:\s+configs\/automotive_lighting_us_mini\.json/);
   assert.match(workflow, /--transport public-json/);
   assert.match(workflow, /actions\/upload-artifact@/);
   assert.match(workflow, /RADAR_LLM_API_KEY: \$\{\{ secrets\.RADAR_LLM_API_KEY \}\}/);
   assert.match(workflow, /permissions:\s*\n\s*contents: read/);
+  assert.doesNotMatch(workflow, /contents:\s*write/);
+  assert.doesNotMatch(workflow, /printenv|env\s*$|echo\s+.*RADAR_LLM|set\s+-x/im);
   assert.doesNotMatch(workflow, /git push/);
 });

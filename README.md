@@ -19,6 +19,9 @@
 
 当前可执行入口覆盖美国全车灯品类，不做季节性分析。默认配置保留原研究的14个车灯锚点词，并扩展雾灯、尾灯、刹车灯、转向灯、DRL、辅助灯、总成、透镜、线束、继电器和CANbus适配等词族。
 
+- `configs/automotive_lighting_us_mini.json`：公开 JSON / GitHub Actions 默认小样本契约，用于格式、接口和 artifact 回归；
+- `configs/automotive_lighting_us_full.json`：本地 200 帖全量配置，用于真实 OpenCLI 长跑验证；Windows + Chrome 登录态下通常需要约 2-3 小时。
+
 本地优先使用OpenCLI：
 
 ```powershell
@@ -35,17 +38,23 @@
 
 输出保存在`.local/runs/<run_id>/`：
 
-- `manifest.json`：运行状态、通道、数量和产物索引；
+- `manifest.json`：运行状态、`sample_status`、`persona_status`、通道、数量和产物索引；
 - `candidates.json`：去重并完成高信号评分的候选帖子；
 - `raw/details/*.json`：标准化帖子和最多20条高分评论；
 - `analysis.json`与`evidence.jsonl`：规则分析和英文原文证据；
+- `keyword_candidates.json`：探索词候选、第二轮使用词和状态；
 - `audience_map.json`：产品/解决方案—Reddit社区二部图；
+- `quality_evidence.jsonl`与`excluded_evidence.jsonl`：质量门保留/排除证据清单；
+- `opportunities.json`：正式机会、候选信号、痛点与竞品/现有产品的分离产物；
+- `personas.json`：画像结果或样本不足缺口；
 - `report.html`：可离线打开的中文卖家报告和Audience Map；
 - `optimization_backlog.jsonl`与`failures.jsonl`：优化项和单项失败记录。
 
+`manifest.status` 只表示技术执行状态（`complete|partial|failed`）；`sample_status` 和 `persona_status` 单独反映样本是否足够、画像是否可发布。真实 200 帖运行即使技术完成，也可能因为当前质量门仍较严格而出现“正式机会 0、persona insufficient_sample”的结果，这属于规则边界，不等于运行失败。
+
 使用相同`-RunId`重跑会跳过已完成详情并重试失败项。Qwen或DeepSeek可通过`.env.example`所列OpenAI-compatible环境变量选择性启用；失败时自动保留规则结果。
 
-GitHub Actions工作流支持手动触发和每月1日、15日定时运行，远程默认使用公开JSON通道并上传报告与证据artifact。工作流只读仓库，不执行push。
+GitHub Actions工作流支持手动触发和每月1日、15日定时运行，远程默认使用 `configs/automotive_lighting_us_mini.json` + 公开JSON通道并上传 artifact。工作流只读仓库，不执行 push，也不打印 Secrets。
 
 Opportunity Radar GitHub + Skill MVP 实施计划
 1. 项目目标与边界

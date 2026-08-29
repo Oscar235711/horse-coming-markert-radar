@@ -1,0 +1,225 @@
+{
+  "schema_version": "1.0.0",
+  "name": "US Automotive Lighting Full Deep Dive (200-post batch)",
+  "market": {
+    "country": "US",
+    "language": "en",
+    "unknown_geography_policy": "retain_as_unknown_exclude_from_us_conclusions"
+  },
+  "market_rules": {
+    "schema_version": "1.0.0",
+    "minimum_quality_score": 50,
+    "geography": {
+      "target_country": "US",
+      "target_signals": [
+        "\\b(?:usa|u\\.s\\.|united states|america|texas|california|florida|washington|ohio|michigan|pennsylvania|illinois|arizona|georgia|north carolina)\\b",
+        "\\bf-?150\\b",
+        "\\bsilverado\\b",
+        "\\btacoma\\b",
+        "\\bwrangler\\b",
+        "\\bcrown ?victoria\\b"
+      ],
+      "non_target_signals": [
+        "\\b(?:canada|ontario|australia|europe|philippines|india|united kingdom|uk|mot)\\b",
+        "\\bcartalkuk\\b",
+        "\\bcarsph\\b",
+        "\\bi20[_ -]?india\\b"
+      ],
+      "unknown_policy": "retain_as_unknown_exclude_from_us_conclusions"
+    },
+    "dictionaries": {
+      "products": [
+        "headlight",
+        "headlamp",
+        "headlight bulb",
+        "led",
+        "hid",
+        "halogen",
+        "fog light",
+        "tail light",
+        "brake light",
+        "turn signal",
+        "daytime running light",
+        "light bar",
+        "headlight assembly",
+        "projector",
+        "housing",
+        "wiring harness",
+        "relay",
+        "canbus",
+        "adapter"
+      ],
+      "vehicles": [
+        "f-150",
+        "silverado",
+        "tacoma",
+        "wrangler",
+        "ram",
+        "jeep",
+        "ford",
+        "chevrolet",
+        "toyota"
+      ],
+      "fitment": [
+        "h11",
+        "9005",
+        "9006",
+        "h7",
+        "h4",
+        "9012",
+        "h13",
+        "dust cap",
+        "fitment"
+      ],
+      "competitors": [
+        "SEALIGHT",
+        "Sylvania",
+        "Philips",
+        "AUXITO"
+      ],
+      "retailers": [
+        "Amazon",
+        "AutoZone",
+        "O'Reilly",
+        "Walmart"
+      ],
+      "slang": [
+        "flicker",
+        "hyperflash",
+        "beam pattern",
+        "cutoff"
+      ],
+      "stopwords": [
+        "car",
+        "cars",
+        "light",
+        "lights"
+      ]
+    },
+    "relevance": {
+      "required_any": [
+        "\\bheadlights?\\b",
+        "\\bheadlamps?\\b",
+        "\\bfog lights?\\b",
+        "\\b(?:tail|brake|turn signal) lights?\\b",
+        "\\b(?:led|hid|halogen) bulbs?\\b",
+        "\\b(?:h11|9005|9006|h7|h4|9012|h13)\\b",
+        "\\b(?:f-?150|silverado|tacoma|wrangler|ram)\\b",
+        "\\b(?:canbus|projector|headlight assembly|wiring harness)\\b"
+      ],
+      "excluded_communities": [],
+      "excluded_patterns": []
+    },
+    "component_weight_adjustments": {}
+  },
+  "keywords": {
+    "anchors": [
+      "headlight bulb",
+      "led headlight bulb",
+      "headlight bulb replacement",
+      "dim headlights",
+      "headlight upgrade",
+      "halogen headlight bulb",
+      "hid headlight bulb",
+      "h11 headlight bulb",
+      "9005 headlight bulb",
+      "9006 headlight bulb",
+      "h7 headlight bulb",
+      "h4 headlight bulb",
+      "9012 headlight bulb",
+      "h13 headlight bulb"
+    ],
+    "expanded": [
+      "fog light",
+      "tail light",
+      "brake light",
+      "turn signal light",
+      "daytime running light DRL",
+      "auxiliary driving light",
+      "off road light bar",
+      "headlight assembly",
+      "projector retrofit",
+      "headlight wiring harness",
+      "headlight relay",
+      "CANbus adapter",
+      "headlight glare",
+      "headlight condensation",
+      "headlight flicker",
+      "headlight overheating",
+      "headlight fitment"
+    ],
+    "candidate_only_brands": [
+      "SEALIGHT",
+      "Sylvania",
+      "Philips",
+      "AUXITO"
+    ]
+  },
+  "query_groups": [
+    "(\"headlight bulb\" OR \"led headlight bulb\" OR \"headlight upgrade\")",
+    "(\"headlight bulb replacement\" OR \"dim headlights\" OR \"halogen headlight bulb\" OR \"hid headlight bulb\")",
+    "(\"h11 headlight bulb\" OR \"9005 headlight bulb\" OR \"9006 headlight bulb\" OR \"h7 headlight bulb\")",
+    "(\"h4 headlight bulb\" OR \"9012 headlight bulb\" OR \"h13 headlight bulb\")",
+    "(\"fog light\" OR \"tail light\" OR \"brake light\" OR \"turn signal light\")",
+    "(\"daytime running light\" OR DRL OR \"auxiliary driving light\" OR \"off road light bar\")",
+    "(\"headlight assembly\" OR \"projector retrofit\" OR \"headlight wiring harness\" OR \"CANbus adapter\")",
+    "(\"headlight glare\" OR \"headlight condensation\" OR \"headlight flicker\" OR \"headlight fitment\")",
+    "(\"headlight condensation\" OR \"headlight fogging\" OR \"water in headlight\" OR \"headlight moisture\")",
+    "(\"headlight flicker\" OR \"headlight hyperflash\" OR \"canbus error\" OR \"headlight error code\")",
+    "(\"headlight harness\" OR \"headlight wiring\" OR \"headlight relay\" OR \"headlight socket\")",
+    "(\"projector retrofit\" OR \"LED projector\" OR \"laser headlight\" OR \"headlight lens replacement\")",
+    "(\"headlight brightness\" OR \"beam pattern\" OR \"headlight cutoff\" OR \"headlight output\")",
+    "(\"headlight life\" OR \"bulb burned out\" OR \"headlight lifespan\" OR \"cheap led headlight\")"
+  ],
+  "subreddits": [
+    "MechanicAdvice",
+    "AskMechanics",
+    "Cartalk",
+    "Automotive",
+    "projectcar",
+    "CarModification",
+    "Trucks",
+    "Jeep",
+    "f150",
+    "Silverado",
+    "ToyotaTacoma",
+    "Wrangler",
+    "fuckyourheadlights",
+    "AutoDIY",
+    "Ram1500"
+  ],
+  "limits": {
+    "posts": 200,
+    "deep_dive_posts": 200,
+    "comments_per_post": 20,
+    "search_results_per_query": 30,
+    "profile_users": 15,
+    "profile_items_per_user": 30,
+    "round_two_terms": 10,
+    "round_two_posts_per_term": 5,
+    "round_two_minimum_score": 60,
+    "round_two_minimum_users": 2,
+    "round_two_minimum_communities": 2
+  },
+  "analysis": {
+    "mode": "rules_with_optional_llm",
+    "language": "zh-CN",
+    "evidence_language": "original",
+    "llm": {
+      "enabled_by_default": false,
+      "compatible_providers": [
+        "Qwen",
+        "DeepSeek"
+      ],
+      "base_url_env": "RADAR_LLM_BASE_URL",
+      "api_key_env": "RADAR_LLM_API_KEY",
+      "model_env": "RADAR_LLM_MODEL"
+    }
+  },
+  "transport": {
+    "local": "opencli",
+    "remote": "public-json",
+    "request_interval_ms": 1200,
+    "timeout_ms": 30000
+  }
+}

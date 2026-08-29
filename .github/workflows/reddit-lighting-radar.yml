@@ -6,7 +6,7 @@ on:
       config:
         description: Research config path
         required: true
-        default: configs/automotive_lighting_us_pilot.json
+        default: configs/automotive_lighting_us_mini.json
         type: string
       use_llm:
         description: Enable optional OpenAI-compatible enrichment
@@ -43,7 +43,7 @@ jobs:
         continue-on-error: true
         run: >-
           node scripts/run-radar.mjs
-          --config "${{ inputs.config || 'configs/automotive_lighting_us_pilot.json' }}"
+          --config "${{ inputs.config || 'configs/automotive_lighting_us_mini.json' }}"
           --transport public-json
           --run-id "github-${{ github.run_id }}-${{ github.run_attempt }}"
           --output-root .local/runs

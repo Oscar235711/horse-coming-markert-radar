@@ -63,12 +63,14 @@
       "required": [
         "analysis",
         "evidence",
+        "keyword_candidates",
         "audience_map",
         "keyword_cloud",
         "opportunities",
         "personas",
         "quality_evidence",
         "excluded_evidence",
+        "manifest",
         "report",
         "optimization_backlog",
         "failures"
@@ -76,12 +78,14 @@
       "properties": {
         "analysis": { "const": "analysis.json" },
         "evidence": { "const": "evidence.jsonl" },
+        "keyword_candidates": { "const": "keyword_candidates.json" },
         "audience_map": { "const": "audience_map.json" },
         "keyword_cloud": { "const": "keyword_cloud.json" },
         "opportunities": { "const": "opportunities.json" },
         "personas": { "const": "personas.json" },
         "quality_evidence": { "const": "quality_evidence.jsonl" },
         "excluded_evidence": { "const": "excluded_evidence.jsonl" },
+        "manifest": { "const": "manifest.json" },
         "report": { "const": "report.html" },
         "optimization_backlog": { "const": "optimization_backlog.jsonl" },
         "failures": { "const": "failures.jsonl" }

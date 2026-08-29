@@ -21,7 +21,7 @@ const config = {
   transport: { request_interval_ms: 0, timeout_ms: 1000 },
 };
 
-test('runner produces normalized data, analysis, graph, and offline report in one run directory', async (t) => {
+test('V1.2 runner produces the complete auditable artifact contract', async (t) => {
   const runDir = await fs.mkdtemp(path.join(os.tmpdir(), 'radar-runner-'));
   t.after(() => fs.rm(runDir, { recursive: true, force: true }));
   const adapter = {
@@ -40,7 +40,14 @@ test('runner produces normalized data, analysis, graph, and offline report in on
     assert.equal(await exists(path.join(runDir, name)), true, name);
   }
   const manifest = JSON.parse(await fs.readFile(path.join(runDir, 'manifest.json'), 'utf8'));
+  const analysis = JSON.parse(await fs.readFile(path.join(runDir, 'analysis.json'), 'utf8'));
+  const keywordCandidates = JSON.parse(await fs.readFile(path.join(runDir, 'keyword_candidates.json'), 'utf8'));
+  const keywordCloud = JSON.parse(await fs.readFile(path.join(runDir, 'keyword_cloud.json'), 'utf8'));
   const opportunitiesArtifact = JSON.parse(await fs.readFile(path.join(runDir, 'opportunities.json'), 'utf8'));
+  const personas = JSON.parse(await fs.readFile(path.join(runDir, 'personas.json'), 'utf8'));
+  const html = await fs.readFile(path.join(runDir, 'report.html'), 'utf8');
+  const qualifiedEvidenceLines = countJsonlLines(await fs.readFile(path.join(runDir, 'quality_evidence.jsonl'), 'utf8'));
+  const excludedEvidenceLines = countJsonlLines(await fs.readFile(path.join(runDir, 'excluded_evidence.jsonl'), 'utf8'));
   assert.equal(result.analysis.run_id, 'runner-run');
   assert.equal(result.analysis.opportunities.length, 0);
   assert.ok(result.analysis.candidate_signals.length >= 1);
@@ -48,12 +55,33 @@ test('runner produces normalized data, analysis, graph, and offline report in on
   assert.equal(result.audienceMap.edges.length, 0);
   assert.equal(result.keywordCloud.terms.length >= 1, true);
   assert.equal(result.manifest.status, 'complete');
+  assert.equal(result.manifest.sample_status, 'insufficient');
   assert.equal(result.manifest.persona_status, 'insufficient_sample');
+  assert.equal(result.manifest.artifacts.manifest, 'manifest.json');
+  assert.equal(result.manifest.artifacts.keyword_candidates, 'keyword_candidates.json');
   assert.equal(result.manifest.artifacts.keyword_cloud, 'keyword_cloud.json');
   assert.equal(result.manifest.artifacts.personas, 'personas.json');
   assert.equal(result.manifest.artifacts.quality_evidence, 'quality_evidence.jsonl');
+  assert.equal(manifest.artifacts.manifest, 'manifest.json');
+  assert.equal(manifest.artifacts.keyword_candidates, 'keyword_candidates.json');
   assert.equal(manifest.artifacts.opportunities, 'opportunities.json');
+  assert.equal(manifest.sample_status, result.manifest.sample_status);
+  assert.equal(manifest.persona_status, result.manifest.persona_status);
+  assert.equal(keywordCandidates.candidates.length, result.manifest.counts.keyword_candidates);
   assert.equal(manifest.counts.keyword_cloud_terms, result.keywordCloud.terms.length);
+  assert.equal(keywordCloud.terms.length, result.keywordCloud.terms.length);
+  assert.equal(personas.persona_status, result.manifest.persona_status);
+  assert.equal(qualifiedEvidenceLines + excludedEvidenceLines, analysis.evidence.length);
+  assert.ok(opportunitiesArtifact.pain_points.length >= 1);
+  const painIds = new Set(opportunitiesArtifact.pain_points.map((item) => item.id));
+  assert.equal(opportunitiesArtifact.opportunities.some((item) => painIds.has(item.id)), false);
+  assert.equal(opportunitiesArtifact.candidate_signals.some((item) => painIds.has(item.id)), false);
+  assert.match(html, /sample_status/);
+  assert.match(html, new RegExp(`运行状态：</strong>${result.manifest.status}`));
+  assert.match(html, new RegExp(`sample_status：</strong>${result.manifest.sample_status}`));
+  assert.match(html, new RegExp(`persona_status：</strong>${result.manifest.persona_status}`));
+  assert.match(html, new RegExp(`<strong>${qualifiedEvidenceLines}</strong><span>合格证据</span>`));
+  assert.match(html, new RegExp(`<strong>${result.analysis.candidate_signals.length}</strong><span>候选信号</span>`));
   assert.deepEqual(await validateAgainstSchemaFile(repoRoot, 'run-manifest.schema.json', result.manifest), []);
   assert.deepEqual(await validateAgainstSchemaFile(repoRoot, 'run-manifest.schema.json', manifest), []);
   assert.equal(opportunitiesArtifact.run_id, 'runner-run');
@@ -62,4 +90,9 @@ test('runner produces normalized data, analysis, graph, and offline report in on
 
 async function exists(filePath) {
   try { await fs.access(filePath); return true; } catch { return false; }
+}
+
+function countJsonlLines(text) {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split('\n').length : 0;
 }

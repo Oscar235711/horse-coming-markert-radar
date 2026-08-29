@@ -3,20 +3,35 @@
 ## 当前车灯雷达输入
 
 - `configs/automotive_lighting_us_pilot.json`：美国市场、14个锚点词、受控扩展词、社区和样本限制。
+- `configs/automotive_lighting_us_mini.json`：公开 JSON / CI 默认小样本配置，用于格式、workflow 和 artifact 契约回归。
+- `configs/automotive_lighting_us_full.json`：本地 200 帖真实运行配置，用于 OpenCLI 长跑与格式定版验证。
 - Reddit适配器输出：OpenCLI与公开JSON通道必须标准化为相同帖子/评论字段。
 - `.local/runs/<run_id>/config.snapshot.json`：每次运行的不可变配置快照。
 
 ## 当前车灯雷达输出
 
-- `manifest.json`：运行ID、状态、采集通道、数量和产物路径。
+- `manifest.json`：运行ID、技术状态、`sample_status`、`persona_status`、采集通道、数量和产物路径。
 - `candidates.json`：标题扫描、去重、地域分类及高信号评分结果。
 - `raw/details/*.json`：每篇标准化帖子及最多20条评论，契约见`schemas/normalized-evidence.schema.json`。
 - `analysis.json`：规则分析或可选LLM增强后的唯一报告数据源。
 - `evidence.jsonl`：英文原文、Reddit链接、社区、分数和地域状态。
+- `keyword_candidates.json`：探索词候选、第二轮查询词、来源证据和状态（`formal`/`exploratory_used`/`candidate_review` 等）。
 - `audience_map.json`：产品—社区二部图，契约见`schemas/audience-map.schema.json`。
+- `quality_evidence.jsonl`：通过质量门、允许进入正式机会/画像判断的证据子集。
+- `excluded_evidence.jsonl`：被质量门排除但仍需审计留痕的证据子集。
+- `opportunities.json`：正式机会、候选信号、痛点、竞品/现有产品的分离报告产物。
+- `personas.json`：画像结果或样本不足缺口；不允许输出伪画像。
 - `report.html`：完全离线的中文卖家报告和Audience Map，不重新调用模型。
 - `failures.jsonl`：搜索/详情读取失败；单项失败不得中断后续抓取。
 - `optimization_backlog.jsonl`：问题、证据、影响、建议、优先级和处理状态。
+
+`manifest.status` 与业务样本状态分离：
+
+- `status=complete|partial|failed` 只表示技术执行是否完成；
+- `sample_status=sufficient|insufficient` 单独表示样本是否达到分析门槛；
+- `persona_status=complete|insufficient_sample` 单独表示画像是否达到发布门槛。
+
+因此，`status=complete` 且 `sample_status=insufficient` / `persona_status=insufficient_sample` 是允许且需要如实展示的结果，尤其在 `automotive_lighting_us_full.json` 的 200 帖运行中，当前质量门较严时正式机会可能仍为 0。
 
 ## 历史柴油基线输入
 
