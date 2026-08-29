@@ -31,3 +31,5 @@ Required fields:
 [2026-08-29 13:37 CST] [resume] [started] [branch=codex/automotive-lighting-reddit-radar, commit=1028f191370db5810f128c87c2bba51f02902b89, resumed Task 7-10 release verification]
 [2026-08-29 13:39 CST] [round-one-search] [partial] [public-json mini pilot v12-pilot-20260829-continue completed with 8 runtime fetch failures and zero candidates; no unrelated work stopped]
 [2026-08-29 13:40 CST] [verification] [complete] [135 node tests and five Windows checks passed; offline report artifact set generated; strict live-secret scan had no matches]
+[2026-08-29 16:46 CST] [resume] [complete] [branch=codex/automotive-lighting-reddit-radar, commit=a34b04e, resumed formal run after Windows .cmd argument fix and explicit US threshold configuration]
+[2026-08-29 16:47 CST] [report] [complete] [formal-us-lighting-20260829-r3 produced 3 formal opportunities, 4 candidate signals, 231 candidates, 231 details, 2308 comments, 4 unresolved author-activity failures]
