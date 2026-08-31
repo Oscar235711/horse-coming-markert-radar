@@ -469,7 +469,36 @@ class RadarCliApp:
 
         if "progress" in inspect.signature(self._collector.collect).parameters:
             collect_arguments["progress"] = report_collection_progress
-        collection = self._collector.collect(config.communities, **collect_arguments)
+        # Once the collection stage has been persisted, resume from its raw
+        # files instead of reopening Chrome. This is essential for long
+        # analysis jobs: a browser interruption must not overwrite good
+        # evidence with an empty collection result.
+        completed_stages = state.get("completed_stages", ())
+        raw_listing_exists = any(paths.raw_listings_dir.glob("*.json"))
+        if "collected" in completed_stages and raw_listing_exists and hasattr(self._collector, "load_from_raw"):
+            raw_arguments = {
+                "paths": paths,
+                "as_of": self._now(),
+                "shortlist_limit": config.shortlist_per_community,
+            }
+            if scope is not None:
+                raw_arguments["scope"] = scope
+            collection = self._collector.load_from_raw(config.communities, **raw_arguments)
+        else:
+            collection = self._collector.collect(config.communities, **collect_arguments)
+        if not collection.candidates and not collection.deep_reads and collection.failures:
+            state["counts"]["failure_count"] = len(collection.failures)
+            state["failures"] = [self._failure_to_dict(failure) for failure in collection.failures]
+            state["status"] = "incomplete"
+            state["stage"] = "collecting"
+            state["progress"] = {
+                "stage": "collecting",
+                "completed": 0,
+                "total": len(config.communities),
+                "message": "采集未返回有效帖子，任务暂停等待重试。",
+            }
+            self._write_state(paths.state_path, state)
+            return state
         state["counts"]["community_count"] = len(config.communities)
         state["counts"]["candidate_count"] = len(collection.candidates)
         state["counts"]["shortlist_count"] = len(collection.shortlisted)

@@ -300,6 +300,91 @@ class OpenCliCollector:
         )
         return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures), coverage)
 
+    def load_from_raw(
+        self,
+        communities: Iterable[Community],
+        *,
+        paths: RunPaths,
+        as_of: datetime,
+        shortlist_limit: int = 30,
+        scope: CollectionScope | None = None,
+    ) -> CollectionResult:
+        """Rebuild a collection result from already saved raw files.
+
+        Resume must not call Chrome again after the collection stage has
+        completed. This also lets a long-running analysis survive a terminal
+        or browser interruption without replacing valid evidence with an
+        empty collection result.
+        """
+        communities = tuple(communities)
+        records_by_community: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        failures: list[CollectionFailure] = []
+        for community in communities:
+            listing_paths = sorted(paths.raw_listings_dir.glob(f"{_safe_path_component(community.name)}__*.json"))
+            if not listing_paths:
+                failures.append(CollectionFailure(community.name, None, "listing:raw", "已完成采集但找不到原始列表文件"))
+                continue
+            for listing_path in listing_paths:
+                surface = listing_path.stem.split("__", 1)[-1]
+                try:
+                    records = _parse_records(listing_path.read_text(encoding="utf-8"))
+                    for record in records:
+                        item = dict(record)
+                        row_surfaces = item.pop("source_surfaces", ())
+                        if isinstance(row_surfaces, list) and row_surfaces:
+                            for row_surface in row_surfaces:
+                                records_by_community[community.name].append({**item, "source_surface": str(row_surface)})
+                        else:
+                            item["source_surface"] = str(item.get("source_surface") or surface)
+                            records_by_community[community.name].append(item)
+                except Exception as error:
+                    failures.append(CollectionFailure(community.name, None, f"listing:raw:{surface}", _safe_error(error)))
+
+        candidates: list[WindowedPost] = []
+        shortlisted_targets: list[tuple[str, ShortlistedPost]] = []
+        coverage: dict[str, CollectionCoverage] = {}
+        for community in communities:
+            normalized = normalize_and_deduplicate(records_by_community.get(community.name, ()))
+            community_candidates = window_posts(
+                normalized,
+                as_of=as_of,
+                start_date=scope.start_date if scope else None,
+                end_date=scope.end_date if scope else None,
+            )
+            candidates.extend(community_candidates)
+            if scope is not None:
+                dates = sorted(item.post.created_at.date() for item in community_candidates)
+                coverage[community.name] = CollectionCoverage(
+                    community=community.name,
+                    requested_start=scope.start_date,
+                    requested_end=scope.end_date,
+                    actual_start=dates[0] if dates else None,
+                    actual_end=dates[-1] if dates else None,
+                    status="complete" if dates and dates[0] <= scope.start_date else "partial",
+                    scanned_posts=len(community_candidates),
+                )
+            effective_limit = scope.deep_read_limit_per_community if scope else min(shortlist_limit, 30)
+            shortlist = score_stratified_shortlist(community_candidates, limit=effective_limit) if scope else score_shortlist(community_candidates, limit=effective_limit)
+            shortlisted_targets.extend((community.name, entry) for entry in shortlist)
+
+        shortlisted = [entry for _, entry in shortlisted_targets]
+        deep_reads: list[ThreadDocument] = []
+        for community_name, entry in shortlisted_targets:
+            thread_path = paths.raw_threads_dir / f"{entry.post.post_id.removeprefix('t3_')}.json"
+            if not thread_path.exists():
+                failures.append(CollectionFailure(community_name, entry.post.post_id, "deep_read:raw", "已完成采集但找不到原始帖子文件"))
+                continue
+            try:
+                deep_reads.append(_thread_from_raw(json.loads(thread_path.read_text(encoding="utf-8")), entry.post))
+            except Exception as error:
+                failures.append(CollectionFailure(community_name, entry.post.post_id, "deep_read:raw", _safe_error(error)))
+        write_normalized_records(
+            paths,
+            [thread.post for thread in deep_reads],
+            [{"post_id": thread.post.post_id, "parent_id": "", "depth": 1, **asdict(comment)} for thread in deep_reads for comment in thread.comments],
+        )
+        return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures), coverage)
+
     def collect_round_two(
         self,
         terms: Iterable[str], *, paths: RunPaths, as_of: datetime,
