@@ -107,7 +107,44 @@ class RunManager:
                 memory = {**memory, **dict(disk)}
         if not memory:
             raise FileNotFoundError(run_id)
+        # Older CLI runs only write state after the whole collection pass.
+        # Derive a best-effort live milestone from checkpoint files so the
+        # browser can still show useful progress while that pass is running.
+        memory = self._with_live_progress(memory, self._runs_root / run_id)
         return memory
+
+    @staticmethod
+    def _with_live_progress(state: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+        if state.get("status") not in {"queued", "running"} or state.get("progress"):
+            return state
+        selected = state.get("selected_communities")
+        communities = selected if isinstance(selected, list) and selected else list(FIXED_COMMUNITIES)
+        scope = state.get("collection_scope") if isinstance(state.get("collection_scope"), Mapping) else {}
+        depth = str(scope.get("depth", state.get("depth", "standard")))
+        per_community = {"quick": 30, "standard": 80, "deep": 150}.get(depth, 80)
+        listings = list((run_dir / "raw" / "listings").glob("*.json"))
+        threads = list((run_dir / "raw" / "threads").glob("*.json"))
+        if threads:
+            total = max(1, per_community * len(communities))
+            state["stage"] = "deep_read"
+            state["progress"] = {
+                "stage": "deep_read",
+                "completed": min(len(threads), total),
+                "total": total,
+                "message": f"已获取 {min(len(threads), total)}/{total} 篇深读。",
+            }
+            counts = dict(state.get("counts", {})) if isinstance(state.get("counts"), Mapping) else {}
+            counts["deep_read_count"] = max(int(counts.get("deep_read_count", 0) or 0), len(threads))
+            state["counts"] = counts
+        elif listings:
+            state["stage"] = "collecting"
+            state["progress"] = {
+                "stage": "collecting",
+                "completed": min(len(listings), len(communities)),
+                "total": len(communities),
+                "message": "社区列表已返回，正在准备深读。",
+            }
+        return state
 
     def wait(self, run_id: str, *, timeout: float | None = None) -> None:
         thread = self._threads.get(run_id)
