@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -144,7 +145,7 @@ class CodexAnalysisClient:
             try:
                 returned = self._runner(arguments, prompt)
                 raw = output_path.read_text(encoding="utf-8") if output_path.exists() else returned
-                document = json.loads(raw)
+                document = _parse_json_object(raw)
                 if not isinstance(document, Mapping):
                     raise ValueError("Codex result must be a JSON object")
                 return document
@@ -172,7 +173,6 @@ class CodexAnalysisClient:
             if entrypoint.is_file():
                 return (shutil.which("node") or "node", str(entrypoint))
         return (executable,)
-
     def _default_runner(self, arguments: tuple[str, ...], prompt: str) -> str:
         # On Windows the Codex CLI can leave descendants holding stdout or
         # stderr handles open.  Capturing those pipes with ``communicate``
@@ -194,13 +194,18 @@ class CodexAnalysisClient:
                     stdin=source,
                     stdout=stdout,
                     stderr=stderr,
-                    check=True,
+                    check=False,
                     cwd=self._workspace,
                     timeout=self._timeout_seconds,
                 )
             # The caller primarily consumes --output-last-message.  Return
             # stdout only as a compatibility fallback if that file is absent.
-            return stdout_path.read_text(encoding="utf-8", errors="replace")
+            # Some Codex Windows/network fallbacks write the final structured
+            # response to stderr and return a non-zero code; preserve both
+            # streams so _parse_json_object can still recover that response.
+            stdout_text = stdout_path.read_text(encoding="utf-8", errors="replace")
+            stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
+            return stdout_text or stderr_text
         finally:
             for path in (input_path, stdout_path, stderr_path):
                 try:
@@ -210,6 +215,28 @@ class CodexAnalysisClient:
                     # leaving this small temp file is safer than masking the
                     # original Codex error.
                     pass
+
+
+def _parse_json_object(raw: str) -> Mapping[str, Any]:
+    """Read a schema object even when Codex prefixes logs on stderr."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("Codex returned an empty response")
+    try:
+        document = json.loads(raw)
+        if isinstance(document, Mapping):
+            return document
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    starts = [match.start() for match in re.finditer(r"(?m)^\s*\{", raw)]
+    for start in reversed(starts):
+        try:
+            document, _end = decoder.raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(document, Mapping):
+            return document
+    raise ValueError("Codex returned no JSON object")
 
 
 class CodexTopicConsolidator:
