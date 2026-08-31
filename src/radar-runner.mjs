@@ -9,7 +9,10 @@ import { writeReportArtifacts } from './radar-report.mjs';
 
 export async function runLightingRadar({ config, adapter, runDir, runId, llmAnalyzer = null }) {
   const collection = await runRadarPipeline({ config, adapter, runDir, runId });
-  const rules = analyzeDetails(collection.details, config, { runId: collection.manifest.run_id });
+  const rules = analyzeDetails(collection.details, config, {
+    runId: collection.manifest.run_id,
+    authorActivity: collection.authorActivity,
+  });
   const keywordCandidates = await readKeywordCandidates(runDir);
   const analysis = {
     ...(await analyzeWithOptionalLlm(rules, llmAnalyzer)),
@@ -29,6 +32,7 @@ export async function runLightingRadar({ config, adapter, runDir, runId, llmAnal
   const keywordCloud = buildKeywordCloud(cloudCandidates, analysis.evidence, {
     runId: collection.manifest.run_id,
     scope: config.market,
+    displayThresholds: config.keywords?.display_thresholds ?? null,
   });
   const manifest = {
     ...collection.manifest,

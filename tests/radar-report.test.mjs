@@ -43,6 +43,9 @@ test('report HTML is a self-contained WhatToSell-style report with keyword cloud
   assert.match(html, /研究范围、关键词与失败记录/);
   assert.match(html, /未知项/);
   assert.match(html, /My H11 LED headlights flicker/);
+  assert.match(html, /class="evidence-community"/);
+  assert.match(html, /id="evidence-export"/);
+  assert.doesNotMatch(html, /制造复杂度/);
   assert.doesNotMatch(html, /<script[^>]+src=/i);
   assert.doesNotMatch(html, /<link[^>]+href=/i);
   assert.doesNotMatch(html, /fetch\(/i);

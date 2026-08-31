@@ -211,6 +211,7 @@
           "items": { "type": "string" }
         },
         "basis": { "type": "string" }
+        ,"source": { "type": "string" }
       }
     },
     "commercial": {
@@ -229,6 +230,7 @@
         "manufacturing_complexity": { "$ref": "#/$defs/commercial_field" },
         "shipping_complexity": { "$ref": "#/$defs/commercial_field" },
         "return_risk": { "$ref": "#/$defs/commercial_field" }
+        ,"market_potential": { "$ref": "#/$defs/commercial_field" }
       }
     },
     "competitor_signal": {
@@ -334,6 +336,31 @@
         "existing_product_signals": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "reference_products": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "evidence_ids"],
+            "properties": {
+              "name": { "type": "string" }, "brand": { "type": ["string", "null"] },
+              "specification": { "type": ["string", "null"] }, "packaging": { "type": ["string", "null"] },
+              "official_url": { "type": ["string", "null"] }, "amazon_url": { "type": ["string", "null"] },
+              "source_url": { "type": ["string", "null"] },
+              "market_heat": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["status", "value"],
+                "properties": {
+                  "status": { "enum": ["fact", "inference", "unknown"] },
+                  "value": { "type": ["string", "number", "null"] },
+                  "basis": { "type": ["string", "null"] }
+                }
+              },
+              "evidence_ids": { "type": "array", "items": { "type": "string" } }
+            }
+          }
         },
         "entry_gaps": {
           "type": "array",

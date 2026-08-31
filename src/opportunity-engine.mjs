@@ -19,6 +19,10 @@ const DEFAULT_CONCEPTS = [
   { id: 'canbus-adapter-kit', label: 'CANbus 适配套件', category: 'electrical', patterns: ['canbus adapter', 'wiring harness', 'relay kit'], opportunity_type: 'validated_entry' },
   { id: 'headlight-vent-membrane-kit', label: '头灯透气膜维修套件', category: 'repair-accessory', patterns: ['vent membrane kit', 'breather vent'], opportunity_type: 'emerging_product' },
   { id: 'protective-headlight-film', label: '车灯保护膜', category: 'protection', patterns: ['headlight film', 'protective film', 'light film'], opportunity_type: 'adjacent_bundle' },
+  { id: 'anti-flicker-harness', label: '防闪烁线束套件', category: 'electrical-accessory', patterns: ['anti-flicker harness', 'error canceler', 'canbus adapter'], opportunity_type: 'adjacent_bundle' },
+  { id: 'headlight-dust-cap-kit', label: '头灯防尘盖适配套件', category: 'fitment-accessory', patterns: ['dust cap', 'headlight dust cover'], opportunity_type: 'adjacent_bundle' },
+  { id: 'headlight-restoration-kit', label: '车灯翻新套件', category: 'maintenance-accessory', patterns: ['headlight restoration', 'lens restoration', 'headlight cleaner'], opportunity_type: 'adjacent_bundle' },
+  { id: 'headlight-install-tool-kit', label: '车灯安装工具套件', category: 'installation-accessory', patterns: ['headlight install tool', 'bulb retainer', 'installation adapter'], opportunity_type: 'adjacent_bundle' },
 ];
 
 const DEFAULT_PAINS = {
@@ -125,12 +129,32 @@ export function buildOpportunityCandidates(evidence, painRecords, config = {}) {
           .filter((item) => /\b(?:bought|installed|sells?|available|brand|returned|replacement|kit|adapter|film|bulb)\b/i.test(evidenceText(item)))
           .map((item) => item.id),
       ),
+      reference_products: qualifiedMatched
+        .filter((item) => /\b(?:bought|installed|sells?|available|brand|returned|replacement|kit|adapter|film|bulb)\b/i.test(evidenceText(item)))
+        .map((item) => extractReferenceProduct(item, concept, competitorTerms)),
       entry_gaps: pains,
       pain_points: pains,
       fitment_tags: extractFitment(qualifiedMatched.map(evidenceText).join('\n')),
       is_concrete_product: isConcreteSellableConcept(concept),
     }];
   });
+}
+
+function extractReferenceProduct(item, candidate, competitorTerms) {
+  const text = evidenceText(item);
+  const brand = competitorTerms.find((term) => containsTerm(text, term)) ?? '';
+  const title = String(item.title ?? '').trim();
+  return {
+    name: brand ? `${brand} · ${candidate.label}` : (title || `${candidate.label}（讨论提及）`),
+    brand: brand || null,
+    specification: extractFitment(text).join(' · ') || null,
+    packaging: null,
+    official_url: null,
+    amazon_url: null,
+    market_heat: { status: 'unknown', value: null },
+    source_url: item.url ?? null,
+    evidence_ids: [item.id],
+  };
 }
 
 export function classifyOpportunities(candidates, config = {}) {
@@ -174,6 +198,7 @@ export function classifyOpportunities(candidates, config = {}) {
       solution_ideas: unique(candidate.pain_points.map((pain) => SOLUTION_IDEAS[pain] ?? `${candidate.label} 仍需补充可验证解决方案`)),
       competitor_signals: candidate.competitor_signals,
       existing_product_signals: candidate.existing_product_signals,
+      reference_products: candidate.reference_products,
       entry_gaps: candidate.entry_gaps,
       claims: buildClaims(candidate),
       commercial: buildCommercial(candidate),
@@ -262,15 +287,25 @@ function buildClaims(candidate) {
 }
 
 function buildCommercial(candidate) {
-  const prices = candidate.qualified_evidence.flatMap((item) => [...evidenceText(item).matchAll(/\$\s*(\d+(?:\.\d{1,2})?)/g)].map((match) => Number(match[1])));
+  // A dollar amount in a discussion is not a product price unless the same
+  // sentence identifies this concept. Keep unknowns out of the report rather
+  // than turning vehicle prices, installation fees, or budgets into a band.
+  const productTerms = [candidate.id, candidate.label, ...(candidate.patterns ?? [])]
+    .filter(Boolean)
+    .map((term) => String(term).replace(/[.*+?^${}()|[\\]\\]/g, '\\$&'));
+  const productPattern = new RegExp(`(?:${productTerms.join('|')})`, 'i');
+  const prices = candidate.qualified_evidence.flatMap((item) => {
+    const text = evidenceText(item);
+    const sentences = text.split(/(?<=[.!?])\s+/).filter((sentence) => productPattern.test(sentence));
+    return sentences.flatMap((sentence) => [...sentence.matchAll(/\$\s*(\d+(?:\.\d{1,2})?)/g)].map((match) => Number(match[1])))
+      .filter((price) => price > 2 && price < 2000);
+  });
   return {
-    pricing_band: prices.length ? { status: 'fact', value: `$${Math.min(...prices)}–$${Math.max(...prices)}`, evidence_ids: candidate.qualified_evidence_ids } : { status: 'unknown', value: null },
-    margin_potential: { status: 'unknown', value: null },
+    pricing_band: prices.length ? { status: 'fact', source: 'product-bound', value: `$${Math.min(...prices)}–$${Math.max(...prices)}`, evidence_ids: candidate.qualified_evidence_ids } : { status: 'unknown', value: null },
+    market_potential: { status: 'unknown', value: null },
     manufacturing_complexity: { status: 'unknown', value: null },
     shipping_complexity: { status: 'unknown', value: null },
-    return_risk: candidate.entry_gaps.some((pain) => /适配|闪烁|眩光/.test(pain))
-      ? { status: 'inference', value: '可能偏高', basis: '合格样本出现适配、电子兼容或光型问题' }
-      : { status: 'unknown', value: null },
+    return_risk: { status: 'unknown', value: null },
   };
 }
 

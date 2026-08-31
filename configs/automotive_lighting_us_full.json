@@ -113,6 +113,13 @@
     "component_weight_adjustments": {}
   },
   "keywords": {
+    "display_thresholds": {
+      "min_unique_users": 2,
+      "min_threads": 2,
+      "min_communities": 1,
+      "min_thread_share": 0.01,
+      "total_threads": 231
+    },
     "anchors": [
       "headlight bulb",
       "led headlight bulb",
@@ -217,6 +224,15 @@
         "score": 55
       }
     }
+  },
+  "persona_thresholds": {
+    "qualified_evidence": 200,
+    "qualified_users": 60,
+    "deep_dive_authors": 30,
+    "cluster_members": 12,
+    "representative_users": 3,
+    "representative_activities": 3,
+    "demographic_cohort": 10
   },
   "analysis": {
     "mode": "rules_with_optional_llm",

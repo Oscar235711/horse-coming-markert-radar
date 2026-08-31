@@ -37,3 +37,14 @@ test('keyword cloud emits deterministic categories, filters, and representative 
   assert.deepEqual(protectiveFilm.representative_evidence.map((item) => item.evidence_id), ['comment-c1', 'post-p1']);
   assert.equal(relayHarnessFix.representative_evidence.some((item) => item.evidence_id === 'noise-1'), false);
 });
+
+test('keyword cloud keeps low-frequency discoveries in candidates but hides them from the display cloud', () => {
+  const { candidates, evidence } = createKeywordCloudInputs();
+  const cloud = buildKeywordCloud(candidates, evidence, {
+    runId: 'keyword-threshold-run',
+    displayThresholds: { min_unique_users: 2, min_threads: 1, min_communities: 2, total_threads: 10, min_thread_share: 0.1 },
+  });
+  assert.equal(cloud.terms.some((term) => term.term === 'relay harness fix'), false);
+  assert.equal(cloud.terms.some((term) => term.term === 'headlight protective film'), true);
+  assert.equal(cloud.filters.display_thresholds.min_unique_users, 2);
+});

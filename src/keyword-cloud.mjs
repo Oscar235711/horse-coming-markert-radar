@@ -8,11 +8,12 @@ const CATEGORY_PRIORITY = [
   'use_case',
 ];
 
-export function buildKeywordCloud(keywordCandidates, evidence, { runId = 'unknown-run', scope = {} } = {}) {
+export function buildKeywordCloud(keywordCandidates, evidence, { runId = 'unknown-run', scope = {}, displayThresholds = null } = {}) {
   const evidenceById = new Map((evidence ?? []).map((item) => [item.id, item]));
   const terms = (keywordCandidates ?? [])
     .filter((candidate) => candidate?.term)
     .filter((candidate) => candidate.status !== 'rejected')
+    .filter((candidate) => meetsDisplayThreshold(candidate, displayThresholds))
     .map((candidate) => buildCloudTerm(candidate, evidenceById))
     .sort((left, right) => (
       right.display_weight - left.display_weight
@@ -34,8 +35,23 @@ export function buildKeywordCloud(keywordCandidates, evidence, { runId = 'unknow
       categories: unique(terms.flatMap((term) => term.categories)).sort(),
       statuses: unique(terms.map((term) => term.status)).sort(),
       minimum_score: 0,
+      display_thresholds: displayThresholds ?? {},
     },
   };
+}
+
+function meetsDisplayThreshold(candidate, thresholds) {
+  if (!thresholds) return true;
+  const users = Number(candidate.unique_user_count ?? 0);
+  const threads = Number(candidate.thread_count ?? candidate.threads?.length ?? candidate.evidence_ids?.length ?? 0);
+  const communities = Number(candidate.community_count ?? candidate.communities?.length ?? 0);
+  const minUsers = Number(thresholds.min_unique_users ?? 0);
+  const minThreads = Number(thresholds.min_threads ?? 0);
+  const minCommunities = Number(thresholds.min_communities ?? 0);
+  if (users < minUsers || threads < minThreads || communities < minCommunities) return false;
+  const share = Number(thresholds.min_thread_share ?? thresholds.min_community_share ?? 0);
+  const totalThreads = Number(thresholds.total_threads ?? 0);
+  return !share || !totalThreads || threads / totalThreads >= share;
 }
 
 function buildCloudTerm(candidate, evidenceById) {

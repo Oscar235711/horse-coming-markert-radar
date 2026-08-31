@@ -77,6 +77,7 @@
         "manufacturing_complexity": { "$ref": "#/$defs/commercial_field" },
         "shipping_complexity": { "$ref": "#/$defs/commercial_field" },
         "return_risk": { "$ref": "#/$defs/commercial_field" }
+        ,"market_potential": { "$ref": "#/$defs/commercial_field" }
       }
     },
     "formal_opportunity": {
@@ -147,6 +148,10 @@
         "entry_gaps": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "reference_products": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
         }
       }
     },
