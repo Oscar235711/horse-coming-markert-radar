@@ -39,6 +39,7 @@ class CodexAnalysisClient:
         self._workspace = Path(workspace or Path(__file__).resolve().parents[2]).resolve()
         self._schema_root = Path(schema_root or self._workspace / "schemas").resolve()
         self._executable = str(executable or ("codex" if runner is not None else shutil.which("codex") or "codex"))
+        self._command_prefix = self._resolve_command_prefix(self._executable)
         configured_timeout = timeout_seconds if timeout_seconds is not None else os.environ.get("RADAR_CODEX_TIMEOUT_SECONDS", "180")
         try:
             self._timeout_seconds = max(30, int(configured_timeout))
@@ -126,7 +127,7 @@ class CodexAnalysisClient:
         for _attempt in range(3):
             output_path = Path(tempfile.gettempdir()) / f"opportunity-radar-codex-{uuid4().hex}.json"
             arguments = (
-                self._executable,
+                *self._command_prefix,
                 "exec",
                 "--ephemeral",
                 "--sandbox",
@@ -150,22 +151,65 @@ class CodexAnalysisClient:
             except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
                 last_error = error
             finally:
-                output_path.unlink(missing_ok=True)
+                try:
+                    output_path.unlink(missing_ok=True)
+                except PermissionError:
+                    pass
         raise CodexAnalysisError("Codex分析失败或返回无效JSON，可从检查点继续运行。") from last_error
 
+    @staticmethod
+    def _resolve_command_prefix(executable: str) -> tuple[str, ...]:
+        """Resolve the Windows npm shim to the Node entrypoint.
+
+        ``codex.cmd`` works from an interactive PowerShell, but feeding it a
+        redirected stdin from Python can leave the shim waiting indefinitely.
+        Calling the bundled JavaScript entrypoint with Node is equivalent and
+        behaves consistently for the task runner and the browser server.
+        """
+        path = Path(executable)
+        if path.suffix.casefold() in {".cmd", ".ps1"} and path.name.casefold().startswith("codex"):
+            entrypoint = path.parent / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+            if entrypoint.is_file():
+                return (shutil.which("node") or "node", str(entrypoint))
+        return (executable,)
+
     def _default_runner(self, arguments: tuple[str, ...], prompt: str) -> str:
-        completed = subprocess.run(
-            arguments,
-            input=prompt,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=True,
-            cwd=self._workspace,
-            timeout=self._timeout_seconds,
-        )
-        return completed.stdout
+        # On Windows the Codex CLI can leave descendants holding stdout or
+        # stderr handles open.  Capturing those pipes with ``communicate``
+        # then waits forever even after Codex has written the structured
+        # output file.  Use temporary files for all three streams instead.
+        token = uuid4().hex
+        input_path = Path(tempfile.gettempdir()) / f"opportunity-radar-codex-input-{token}.json"
+        stdout_path = Path(tempfile.gettempdir()) / f"opportunity-radar-codex-stdout-{token}.log"
+        stderr_path = Path(tempfile.gettempdir()) / f"opportunity-radar-codex-stderr-{token}.log"
+        input_path.write_text(prompt, encoding="utf-8")
+        try:
+            with (
+                input_path.open("rb") as source,
+                stdout_path.open("wb") as stdout,
+                stderr_path.open("wb") as stderr,
+            ):
+                completed = subprocess.run(
+                    arguments,
+                    stdin=source,
+                    stdout=stdout,
+                    stderr=stderr,
+                    check=True,
+                    cwd=self._workspace,
+                    timeout=self._timeout_seconds,
+                )
+            # The caller primarily consumes --output-last-message.  Return
+            # stdout only as a compatibility fallback if that file is absent.
+            return stdout_path.read_text(encoding="utf-8", errors="replace")
+        finally:
+            for path in (input_path, stdout_path, stderr_path):
+                try:
+                    path.unlink(missing_ok=True)
+                except PermissionError:
+                    # A timed-out Windows child may briefly retain a handle;
+                    # leaving this small temp file is safer than masking the
+                    # original Codex error.
+                    pass
 
 
 class CodexTopicConsolidator:
