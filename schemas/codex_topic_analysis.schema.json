@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["topics"],
+  "properties": {"topics": {"type": "array", "items": {"$ref": "#/$defs/topic"}}},
+  "$defs": {
+    "evidenceRef": {"type": "object", "additionalProperties": false, "required": ["post_id", "evidence_id"], "properties": {"post_id": {"type": "string"}, "evidence_id": {"type": "string"}}},
+    "claim": {"type": "object", "additionalProperties": false, "required": ["text", "evidence"], "properties": {"text": {"type": "string"}, "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceRef"}}}},
+    "evidence": {"type": "object", "additionalProperties": false, "required": ["post_id", "evidence_id", "claim", "stance", "translation_zh"], "properties": {"post_id": {"type": "string"}, "evidence_id": {"type": "string"}, "claim": {"type": "string"}, "stance": {"enum": ["supporting", "opposing"]}, "translation_zh": {"type": "string"}}},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+    "topic": {
+      "type": "object", "additionalProperties": false,
+      "required": ["canonical_key", "label_en", "label_zh", "post_ids", "summary", "evidence", "vehicles", "platforms", "scenarios", "user_types", "pains", "consequences", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "risks", "product_decision", "category_tags", "brand_tags", "competitor_tags", "confidence", "validation_questions"],
+      "properties": {
+        "canonical_key": {"type": "string"}, "label_en": {"type": "string"}, "label_zh": {"type": "string"},
+        "post_ids": {"$ref": "#/$defs/strings"}, "summary": {"$ref": "#/$defs/claim"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+        "vehicles": {"$ref": "#/$defs/strings"}, "platforms": {"$ref": "#/$defs/strings"}, "scenarios": {"$ref": "#/$defs/strings"}, "user_types": {"$ref": "#/$defs/strings"},
+        "pains": {"$ref": "#/$defs/claims"}, "consequences": {"$ref": "#/$defs/claims"}, "needs": {"$ref": "#/$defs/claims"}, "current_solutions": {"$ref": "#/$defs/claims"}, "gaps": {"$ref": "#/$defs/claims"}, "opportunity_hypotheses": {"$ref": "#/$defs/claims"}, "risks": {"$ref": "#/$defs/claims"},
+        "product_decision": {"enum": ["improve_existing", "new_fitment_sku", "accessory_bundle", "new_product", "content_service", "no_product"]},
+        "category_tags": {"$ref": "#/$defs/strings"}, "brand_tags": {"$ref": "#/$defs/strings"}, "competitor_tags": {"$ref": "#/$defs/strings"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "validation_questions": {"$ref": "#/$defs/strings"}
+      }
+    }
+  }
+}

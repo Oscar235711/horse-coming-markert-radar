@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["topics", "claims", "platform", "vehicle", "year", "scenario", "goal", "user_type", "pain_points", "pain_severity", "consequences", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "products", "brands", "competitors", "purchase_intent", "sentiment", "supporting_views", "opposing_views", "keyword_candidates", "topic_candidates"],
+  "properties": {
+    "topics": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/topic"}},
+    "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+    "platform": {"$ref": "#/$defs/field"}, "vehicle": {"$ref": "#/$defs/field"},
+    "year": {"$ref": "#/$defs/field"}, "scenario": {"$ref": "#/$defs/field"},
+    "goal": {"$ref": "#/$defs/field"}, "user_type": {"$ref": "#/$defs/field"}, "sentiment": {"$ref": "#/$defs/field"},
+    "pain_points": {"$ref": "#/$defs/fields"}, "pain_severity": {"$ref": "#/$defs/fields"}, "consequences": {"$ref": "#/$defs/fields"}, "needs": {"$ref": "#/$defs/fields"},
+    "current_solutions": {"$ref": "#/$defs/fields"}, "gaps": {"$ref": "#/$defs/fields"},
+    "opportunity_hypotheses": {"$ref": "#/$defs/fields"}, "products": {"$ref": "#/$defs/fields"},
+    "brands": {"$ref": "#/$defs/fields"}, "competitors": {"$ref": "#/$defs/fields"},
+    "purchase_intent": {"$ref": "#/$defs/fields"}, "keyword_candidates": {"$ref": "#/$defs/fields"},
+    "topic_candidates": {"$ref": "#/$defs/fields"}, "supporting_views": {"$ref": "#/$defs/fields"}, "opposing_views": {"$ref": "#/$defs/fields"}
+  },
+  "$defs": {
+    "field": {"type": "object", "additionalProperties": false, "required": ["value", "evidence_ids", "status"], "properties": {"value": {"type": "string"}, "evidence_ids": {"type": "array", "items": {"type": "string"}}, "status": {"enum": ["fact", "inference", "unknown"]}}},
+    "fields": {"type": "array", "items": {"$ref": "#/$defs/field"}},
+    "topic": {"type": "object", "additionalProperties": false, "required": ["label", "evidence_ids"], "properties": {"label": {"type": "string"}, "evidence_ids": {"type": "array", "items": {"type": "string"}}}},
+    "claim": {"type": "object", "additionalProperties": false, "required": ["claim", "evidence_ids", "urls"], "properties": {"claim": {"type": "string"}, "evidence_ids": {"type": "array", "items": {"type": "string"}}, "urls": {"type": "array", "items": {"type": "string"}}}}
+  }
+}

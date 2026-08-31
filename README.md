@@ -1,160 +1,261 @@
-# horse-coming-markert-radar
-马来——北美产品机会雷达
-🐴 训练方案-Opportunity Radar
+# Opportunity Radar｜柴油皮卡 Reddit 社区机会雷达
 
-## GitHub版本快速开始
+Opportunity Radar 是 SuncentAuto 的本地市场探索工具。它把 Reddit 的公开讨论整理为：
 
-```powershell
-.\scripts\radar.ps1 init
-.\scripts\install-tools.ps1
-.\scripts\setup-local-runtime.ps1
-.\scripts\radar.ps1 paths
-.\scripts\radar.ps1 doctor
-.\scripts\radar.ps1 status
+```text
+网页选择社区、日期和采集深度
+→ OpenCLI 分页采集帖子、评论和回复
+→ 本机 Codex 提取 VOC
+→ 社区内聚类
+→ analysis.json
+→ 社区图谱、右侧预览、完整话题报告和 Excel
 ```
 
-所有电脑专属路径写入被Git忽略的`.env`；仓库代码不包含个人用户名、固定盘符、Cookie或API Key。完整说明见[基线使用指南](docs/BASELINE_GUIDE.md)。
+当前固定四个社区：`r/Cummins`、`r/Duramax`、`r/powerstroke`、`r/FordDiesels`。不做用户主页深挖，也不会自动扩展社区。
 
-Opportunity Radar GitHub + Skill MVP 实施计划
-1. 项目目标与边界
-建设公司私有仓库 suncentauto/opportunity-radar，为北美柴油皮卡改装新品探索提供：
-●全品类粗扫和指定主题探索两种模式。
-●Reddit帖子、评论及公开用户主页分析。
-●新品方向、产品改进点、竞品反馈和用户画像。
-●千问、DeepSeek API分析能力。
-●可被Codex调用的 SKILL.md。
-●可被Hermes周期执行的统一命令。
-●中文结论、英文证据的HTML和DOCX报告。
-第一期明确不建设网站，不接内部访谈、订单和购买数据。网站仅作为Skill连续运行成功、报告被业务采用后的产品化阶段。
-涉及DPF/EGR delete、排放绕过或其他灰色改装的讨论不从研究数据中删除，系统将其标记为需求、争议或风险信号，但不生成具体违规操作教程。
-2. 核心实现
-仓库与技术架构
-采用Python 3.12单仓库：
-●src/opportunity_radar/：CLI、配置、采集、分析、用户画像、报告和本地存储。
-●configs/：默认配置、品类配置、月度/季节配置及待确认建议。
-●skills/opportunity-radar/SKILL.md：Codex自然语言调用说明。
-使用SQLite保存去重缓存、历史运行索引和趋势基线；每次任务的完整产物保存到Git忽略的 .local/runs/<run_id>/。
-Reddit获取通过Agent Reach选择OpenCLI或rdt-cli通道。专用Reddit小号登录态只存于公司受控电脑，不进入仓库、配置、日志或报告。
-模型层使用统一的OpenAI兼容适配器：
-●千问：配置DashScope兼容地址、API Key环境变量和模型名。官方接口文档
-●DeepSeek：配置DeepSeek地址、API Key环境变量和模型名。官方接口文档
-●默认优先千问，失败时按配置决定是否切换DeepSeek；模型切换不得改变分析JSON结构。
-分析流水线
-1.合并默认、品类、月度和本次任务配置，并保存不可变快照。
-2.搜索Reddit帖子并读取评论、作者、时间、热度、Subreddit和原始链接。
-3.去重，过滤纯广告和明显机器人内容。
-4.提取主题、改装场景、车辆平台、痛点、现有方案、解决方案不足、竞品提及、购买信号、新词和黑话。
-5.情绪分析针对“配置的主题或竞品”，输出正面、中性、负面，不分析无关的一般情绪。
-6.根据独立用户数、讨论量、互动量及上期变化，标记新出现、上升、稳定和下降话题。
-7.选择最多30名高相关作者，读取其近180天、最多50条公开活动，聚合为3–6类人群，并展示最多10名代表用户。
-8.生成统一 analysis.json，再由固定模板生成HTML和DOCX，不允许两种报告分别重新调用模型。
-9.生成下一期关键词、黑话和竞品词变更建议；必须人工确认后才能写入新配置版本。
-任务按阶段保存检查点。帖子获取、评论获取、用户主页和模型分析均可独立重试；部分主页无法访问时仍生成报告，并标明用户样本不足。
-3. 公共接口、配置与产物
-CLI接口
-●radar doctor  
-检查Python依赖、Agent Reach、Reddit登录态、千问/DeepSeek API和报告环境。
-●radar run --config <path> [--set key=value]  
-执行全品类或指定主题探索，是Codex和Hermes共用入口。
-●radar status --run-id <id>  
-查看当前阶段、采集数量、失败数量、Token和预计成本。
-●radar report --run-id <id> --formats html,docx  
-从已有 analysis.json 重建报告。
-●radar config suggest --run-id <id>  
-生成下一期配置建议及证据。
-●radar config approve --suggestion <path> --period YYYY-MM  
-人工确认后生成新的月度配置，不覆盖历史配置。
-配置Schema
-配置固定包含：
-●search.mode：broad 或 topic
-●search.start_date/end_date；未指定时默认回看90天
-●search.categories
-●search.subreddits
-●search.include_keywords
-●search.exclude_keywords
-●search.slang
-●search.competitors[]：竞品名及关键词
-●sentiment.targets：主题和竞品
-●limits.posts/comments
-●profiles.enabled/max_users/lookback_days/max_items_per_user
-●llm.provider/base_url/model/api_key_env
-●report.language=zh-CN
-●report.evidence_language=original
-配置优先级固定为：
-默认配置 < 品类配置 < 月度配置 < 本次CLI覆盖
-默认样本：
-●指定主题：100篇帖子、600条评论。
-●全品类粗扫：300篇帖子、1500条评论。
-●用户画像：30名候选、最多10名代表用户。
-结果类型
-AnalysisResult 必须包括：
-●探索范围和运行指标
-●主题、情绪、热词及趋势
-●竞品分析
-●新品机会和产品改进机会
-●用户人群及代表用户
-●原文证据索引
-●下期配置建议
-●模型、Token、成本和失败记录
-每项产品机会包含：机会类型、用户场景、问题、现有方案、方案缺口、产品假设、相关车辆/平台、人群、趋势、置信度和证据ID。
-HTML为单文件、离线可打开的交互报告；DOCX使用相同章节和数据生成静态图表及表格。两份报告均包含：
-●一页核心结论
-●讨论量、情绪、热词和Subreddit分布
-●新出现及上升主题
-●竞品优缺点
-●新品和改进方向
-●用户画像及代表用户
-●下期配置建议
-●英文原文证据和Reddit链接附录
-4. 开发顺序与测试
-实施顺序
-1.搭建Python包、CLI、核心Schema、私有仓库CI和密钥忽略规则。
-2.完成配置合并、验证、快照和月度版本管理。
-3.完成Agent Reach适配、帖子/评论/主页标准化、去重、缓存和断点续跑。
-4.完成千问、DeepSeek适配及结构化分析流水线。
-5.完成产品机会、竞品、情绪、趋势和用户画像聚合。
-6.完成HTML与DOCX固定模板。
-7.完成Codex Skill、Hermes调用示例、安装文档和业务使用说明。
-8.用真实专用小号执行指定主题与全品类验收。
-自动化测试
-●配置优先级、字段校验、月度版本及快照不可变测试。
-●Reddit搜索结果、评论树、作者主页的模拟适配测试。
-●去重、限流、断点续跑及部分失败测试。
-●千问与DeepSeek模拟服务的JSON Schema一致性测试。
-●HTML与DOCX核心数字、Top机会和画像一致性测试。
-●无网络环境下HTML离线打开测试。
-●仓库、日志和报告的API Key/Cookie扫描测试。
-●不可访问主页、空搜索结果、模型超时、无效JSON和API限流测试。
-业务验收
-●全品类和指定主题两种任务均可完成。
-●时间、关键词、Subreddit、竞品、情绪和样本量均可自定义。
-●100条人工标注评论上，主题及正中负综合准确率达到80%。
-●每个新品或改进结论至少有一条真实可点击证据，虚构链接为0。
-●HTML与DOCX的核心数字和结论完全一致。
-●指定主题默认30分钟内完成，全品类默认60分钟内完成；限流时必须显示原因。
-●Codex能通过Skill从自然语言生成配置并完成任务。
-●Hermes能按配置无人值守运行并返回报告路径。
-●AI配置建议未经人工确认不得进入正式月度配置。
-5. Hermes运行与默认假设
-●公司私有GitHub仓库，运行环境为公司受控电脑/Hermes内部环境。
-●前三个月在每月1日和15日09:00（Asia/Shanghai）运行；之后每月1日09:00运行。
-●每期与上一次相同范围结果比较；满一年后形成1–12月季节配置。
-●8月初始重点词包含返校季、DPF、EGR、改装合法性及已知黑话；后续根据实际数据提交增删和权重调整建议。
-●中文输出分析结论，英文保留原始证据。
-●API Key使用环境变量；Cookie继续由Agent Reach/rdt-cli本地管理。
-●第一期不建设网站、不做多人权限、不接内部VOC、不训练模型。
-●网站产品化时继续复用现有CLI、配置Schema、SQLite历史数据和 analysis.json，不重写采集分析核心。
+报告用于发现和排序信号。任何改款、SKU、组合包或新品方向都是“机会假设”，不是开品结论；没有业务数据时不推断价格、利润、制造工艺或供应链结论。
 
-## 6. 2026-08-26 已验证基线
+## 1. 当前已实现
 
-当前仓库已加入第一轮真实Reddit测试形成的可复用基线：
+- 网页可选一个或多个社区，以及最近 30、90、180、365 天或自定义日期。
+- 快速、标准、深度三档，分别最多深读 30、80、150 篇/社区。
+- 项目自带 OpenCLI 插件，按 `new` 分页，并补充 `top`、`controversial`、`hot`。
+- 精确日期过滤、帖子 ID 去重、覆盖状态和断点续跑。
+- 深读保留评论正文、作者、层级、评论 ID 和 Reddit 永久链接。
+- 分层选择高互动、月份均衡、具体问题和争议/弱信号帖。
+- 本机 `codex exec --ephemeral --sandbox read-only` 两阶段分析，不依赖 DeepSeek。
+- VOC“场景—任务—痛点—后果—当前方案—方案不足—产品判断”报告。
+- 点击社区展开话题；点击话题先打开右侧预览；预览底部再进入完整报告。
+- URL Hash 保存社区、话题和页面状态，支持关闭、浏览器前进和后退。
+- HTML 和 Excel 只读取同一份 `analysis.json` 与 `report_metrics`，数字口径一致。
+- 项目级社区、话题和关键词累计库位于 `library/`。
 
-- 41条去重帖子及完整正文获取链路；
-- 353条评论获取链路；
-- AI预复核、聚类、产品机会卡和用户画像Excel生成器；
-- 用户公开历史帖子与评论深挖脚本；
-- 90天柴油皮卡扫描配置；
-- 分析结果和用户画像JSON Schema；
-- Cookie/API Key忽略和敏感信息检查。
+## 2. 环境安装
 
-使用入口和本地验收方法见 [基线使用指南](docs/BASELINE_GUIDE.md)，当前能力与限制见 [CURRENT_BASELINE.md](docs/CURRENT_BASELINE.md)。
+要求：Windows、Python 3.12+、Node.js、已登录 Codex CLI、Chrome、OpenCLI 扩展，以及 Chrome 中已经登录的 Reddit 小号。
+
+```powershell
+git clone -b feature/community-radar https://github.com/Oscar235711/horse-coming-markert-radar.git
+cd horse-coming-markert-radar
+
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[dev]"
+.\scripts\radar.ps1 init
+```
+
+如 PowerShell 阻止脚本，仅对当前窗口临时放行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+安装/准备 OpenCLI、Node 和 Excel 运行库：
+
+```powershell
+.\scripts\install-tools.ps1
+.\scripts\setup-local-runtime.ps1
+```
+
+OpenCLI 已存在时，可跳过 `install-tools.ps1`。如命令不在 PATH，在本机 `.env` 设置：
+
+```text
+RADAR_OPENCLI_EXE=C:\Users\你的用户名\AppData\Roaming\npm\opencli.cmd
+RADAR_NODE_EXE=C:\Program Files\nodejs\node.exe
+RADAR_CODEX_EXE=C:\你本机的路径\codex.exe
+```
+
+安装本项目的 Reddit 分页和证据深读插件：
+
+```powershell
+.\scripts\install-opencli-plugin.ps1
+```
+
+每位同事使用自己的 Reddit 小号和 Chrome 会话，不复制 Cookie，不把 Cookie 写入项目。
+
+## 3. 环境检查
+
+```powershell
+.\scripts\radar.ps1 doctor
+```
+
+检查项包括 Python、OpenCLI、项目分页插件、Chrome Reddit 会话、四个社区、Codex、Node 和 Excel 环境。DeepSeek 是可选项，未配置不会阻塞默认流程。
+
+Codex 单篇分析默认最多等待 180 秒；网络较慢时可在本机 `.env` 调大：
+
+```text
+RADAR_CODEX_TIMEOUT_SECONDS=300
+```
+
+也可单独确认插件：
+
+```powershell
+opencli validate opportunity-reddit
+opencli opportunity-reddit range Cummins `
+  --start-date 2026-08-01 --end-date 2026-08-31 --limit 10 `
+  -f json --window foreground --site-session persistent
+```
+
+## 4. 推荐使用方式：本地网页
+
+```powershell
+.\scripts\radar.ps1 serve
+```
+
+默认打开 `http://127.0.0.1:8765`。网页中可以：
+
+- 选择四个社区中的一个或多个；
+- 选择预设时间或自定义起止日期（最多 365 天）；
+- 选择快速、标准、深度；
+- 启动任务、查看阶段进度和失败原因；
+- 打开完成的 HTML 报告或下载 Excel。
+
+同一时间只运行一个采集任务，避免 Chrome 会话冲突和 Reddit 限流。
+
+如不希望自动打开浏览器：
+
+```powershell
+.\scripts\radar.ps1 serve -NoOpen -Port 8765
+```
+
+## 5. 命令行运行
+
+自定义时间、社区和深度：
+
+```powershell
+.\scripts\radar.ps1 run `
+  -RunConfigPath configs/diesel_90d.yaml `
+  -RunId 20260831T-demo `
+  -StartDate 2026-01-01 `
+  -EndDate 2026-08-31 `
+  -Depth standard `
+  -AnalysisEngine codex `
+  -Communities "Cummins,Duramax,powerstroke,FordDiesels"
+```
+
+等价 Python 命令：
+
+```powershell
+.\.venv\Scripts\python -m opportunity_radar run `
+  --config configs/diesel_90d.yaml `
+  --start-date 2026-01-01 --end-date 2026-08-31 `
+  --depth standard --analysis-engine codex `
+  --communities Cummins,Duramax,powerstroke,FordDiesels
+```
+
+断点续跑、查看状态和重新导出：
+
+```powershell
+.\scripts\radar.ps1 resume -RunId <run_id>
+.\scripts\radar.ps1 status -RunId <run_id>
+.\scripts\radar.ps1 export -RunId <run_id> -Formats json,xlsx,html
+```
+
+查看并批准本轮发现的候选话题关键词（不会自动改动四个正式社区）：
+
+```powershell
+.\.venv\Scripts\python -m opportunity_radar keywords suggest --run-id <run_id>
+.\.venv\Scripts\python -m opportunity_radar keywords approve --file <keyword_suggestions.json>
+```
+
+## 6. 三档采集规模
+
+| 档位 | 每社区列表上限 | 每社区深读上限 |
+|---|---:|---:|
+| 快速 | 300 | 30 |
+| 标准 | 1,000 | 80 |
+| 深度 | 1,000 | 150 |
+
+标准档深读按以下思路混合选择：高互动/讨论深度、月份均衡、问题具体、争议/反对观点。不会只按赞数筛选。
+
+如果到达列表上限仍没有覆盖用户选择的开始日期，该社区会标记为 `partial`，报告只显示实际覆盖日期，不声称是 Reddit 全量数据。
+
+## 7. 分析规则
+
+Codex 分两阶段运行：
+
+1. 帖子级提取平台、车型/年份、用户类型、场景、任务、痛点、严重度/后果、需求、当前方案、方案不足、购买/维修意向、关键词和观点。
+2. 只在同一社区内，按“用户面对的同类任务或问题”归并话题。
+
+每个判断均区分：
+
+- `fact`：原文直接支持；
+- `inference`：基于多条证据的 AI 推断；
+- `unknown`：当前证据无法判断。
+
+产品判断只能为：改进现有产品、新增车型/年份 SKU、配件或组合包、新产品开发、内容/工具/服务机会、暂不形成产品机会。没有证据时必须选择最后一项。
+
+正式话题门槛：至少 3 篇不同帖子和 3 名作者，或至少 2 篇帖子和 10 名独立评论者。未达到门槛的内容进入弱信号区，不生成“其他规则主题”。
+
+## 8. 产物位置
+
+```text
+.local/runs/<run_id>/
+├─ config.snapshot.yaml
+├─ raw/
+│  ├─ listings/
+│  └─ threads/
+├─ normalized/
+│  ├─ posts.jsonl
+│  └─ comments.jsonl
+├─ checkpoints/
+├─ artifacts/
+│  ├─ analysis.json
+│  ├─ community_topics.json
+│  ├─ community_topics.xlsx
+│  ├─ report.html
+│  └─ community_topic_map.json
+├─ failures.jsonl
+└─ run_manifest.json
+```
+
+Excel 固定包含：运行概览、社区库、话题关键词库、社区热点排行、话题分析卡、帖子及评论证据、弱信号观察区、排除与失败记录。
+
+统一数字定义写入 `analysis.json.report_metrics`：扫描去重帖、深读帖、进入分析帖、支撑话题帖、发帖作者、评论者、独立参与者、采集评论和被引用证据。
+
+## 9. 项目累计库
+
+```text
+library/
+├─ communities.json
+├─ topics.json
+└─ keywords.json
+```
+
+每轮运行自动累计社区、稳定话题和候选关键词索引。它不会自动扩展本轮四个社区，也不会把候选词自动升级为正式检索词。Excel 的“社区库”和“话题关键词库”是本轮可阅读投影。
+
+## 10. 测试
+
+```powershell
+python -m pytest
+node --test opencli-plugin/opportunity-reddit/*.test.mjs
+opencli validate opportunity-reddit
+```
+
+## 11. 常见问题
+
+### OpenCLI 找不到项目插件
+
+```powershell
+.\scripts\install-opencli-plugin.ps1
+opencli validate opportunity-reddit
+```
+
+### Reddit 不可读或未登录
+
+确认 Chrome 已打开、OpenCLI 扩展已连接，并在该 Chrome 会话中登录 reddit.com。项目不会替用户登录或导出 Cookie。
+
+### 429 或页面失败
+
+停止反复新建任务，稍后用原 `run_id` 执行 `resume`。单个帖子失败会记录在任务和 Excel 中。
+
+### Codex 分析失败
+
+确认 `codex` 命令已登录且可用，或在 `.env` 设置 `RADAR_CODEX_EXE`。失败的帖子分析有检查点，可续跑；Reddit 文本始终作为不可信数据，只读传给 Codex。
+
+### Excel 未生成
+
+运行 `doctor` 检查 Node 和 `@oai/artifact-tool` 运行库，然后对现有 `run_id` 执行 `export`，无需重新采集。
+
+## 12. 安全边界
+
+禁止提交：`.env`、`.local/`、`.venv/`、Cookie、API Key、Codex 认证信息和原始 Reddit 用户数据。报告保留市场讨论，但不生成违规操作教程。

@@ -1,0 +1,78 @@
+version: community-catalog.v1
+communities:
+  - name: Cummins
+    community_id: r/Cummins
+    status: approved
+    aliases:
+      - cummins
+      - 5.9 cummins
+      - 6.7 cummins
+    include:
+      - cummins
+      - ram diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ram
+    slang:
+      - "5.9"
+      - "6.7"
+      - common rail
+  - name: Duramax
+    community_id: r/Duramax
+    status: approved
+    aliases:
+      - duramax
+      - lb7
+      - l5p
+    include:
+      - duramax
+      - gm diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Chevrolet/GMC
+    slang:
+      - lb7
+      - lly
+      - l5p
+  - name: powerstroke
+    community_id: r/powerstroke
+    status: approved
+    aliases:
+      - powerstroke
+      - 6.0 powerstroke
+      - 6.7 powerstroke
+    include:
+      - powerstroke
+      - ford diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ford
+    slang:
+      - "6.0"
+      - "6.7"
+      - obs
+  - name: FordDiesels
+    community_id: r/FordDiesels
+    status: approved
+    aliases:
+      - forddiesels
+      - ford diesels
+      - ford diesel forum
+    include:
+      - forddiesels
+      - ford diesels
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ford
+    slang:
+      - idi
+      - super duty
+      - power stroke

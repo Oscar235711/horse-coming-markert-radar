@@ -12,6 +12,10 @@ node_modules/
 .venv/
 .local/
 .tools/
+.superpowers/sdd/
 *.log
 *.inspect.ndjson
 *_preview.png
+__pycache__/
+*.py[cod]
+*.egg-info/

@@ -1,79 +1,65 @@
-# Opportunity Radar MVP Baseline
+# Community Radar 使用指南
 
-这是Suncentauto北美柴油皮卡改装机会雷达的本地可版本化基线。当前固化已验证的数据链路，不包含Cookie、API Key或任何登录凭据。
-
-## 已固定的能力
-
-1. Reddit候选帖子扫描结果处理；
-2. 完整帖子与评论批量读取；
-3. 中文Excel证据包生成；
-4. AI预复核、需求聚类和产品机会卡第一版；
-5. 代表用户公开历史深挖测试；
-6. 数据、安全和画像选择规则。
-
-## 新电脑首次安装
+## 首次准备
 
 ```powershell
-git clone https://github.com/Oscar235711/horse-coming-markert-radar.git
-cd horse-coming-markert-radar
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .[dev]
 .\scripts\radar.ps1 init
 .\scripts\install-tools.ps1
 .\scripts\setup-local-runtime.ps1
 .\scripts\radar.ps1 paths
 .\scripts\radar.ps1 doctor
-.\scripts\radar.ps1 status
 ```
 
-`init`会创建被Git忽略的`.env`及`.local`目录，不会覆盖已经存在的`.env`。相对路径始终按仓库根目录解析，因此仓库可以放在任意磁盘和目录。
+`doctor` 会检查 Python、依赖、Agent Reach/OpenCLI 路径、Reddit `whoami`、四个种子社区、DeepSeek 变量、运行目录和 Excel 导出环境。没有 `DEEPSEEK_API_KEY` 时只会警告。
+通过 `.\scripts\radar.ps1 doctor` 运行时，会把 `.env` 中的 `RADAR_*` 与 `DEEPSEEK_*` 安全注入 Python CLI 子进程；直接运行 `python -m opportunity_radar doctor` 时，请先在当前 shell 导出这些变量。
 
-`install-tools.ps1`会把固定版本的Agent Reach和OpenCLI安装到仓库自己的`.tools`目录，不要求全局安装，也不会包含或复制Chrome Cookie。`setup-local-runtime.ps1`会优先读取`.env`中的`RADAR_NODE_MODULES`，未设置时自动查找当前Windows用户的Codex运行时。
-
-如果`install-tools.ps1`提示缺少`uv`或`npm`，先安装Python环境管理器uv和Node.js，或者在`.env`中配置`RADAR_UV_EXE`、`RADAR_NPM_EXE`。如需使用电脑上已有的Agent Reach/OpenCLI，也可通过`RADAR_AGENT_REACH_EXE`、`RADAR_OPENCLI_EXE`覆盖项目内版本。
-
-## 放入本地数据后检查
-
-GitHub不包含原始Reddit数据、Cookie、API Key或历史报告。把采集结果放入`.env`配置的`RADAR_DATA_ROOT`后再运行：
+## 日常运行
 
 ```powershell
-.\scripts\radar.ps1 verify-baseline
-.\scripts\radar.ps1 report
+python -m opportunity_radar run --config configs/diesel_90d.yaml
+python -m opportunity_radar resume --run-id <run_id>
+python -m opportunity_radar status --run-id <run_id>
+python -m opportunity_radar export --run-id <run_id> --formats json,xlsx
 ```
 
-已有数据在其他目录时，可以直接修改`.env`，例如：
-
-```text
-RADAR_DATA_ROOT=E:\opportunity-radar-data\processed
-RADAR_OUTPUT_ROOT=E:\opportunity-radar-data\outputs
-```
-
-## 继续采集
+PowerShell 等价入口：
 
 ```powershell
-.\scripts\radar.ps1 fetch-details `
-  -EvidenceCsv ".local\data\evidence_candidates.csv" `
-  -OutputDir ".local\data\details_all"
+.\scripts\radar.ps1 run -RunConfigPath configs/diesel_90d.yaml
+.\scripts\radar.ps1 resume -RunId <run_id>
+.\scripts\radar.ps1 export -RunId <run_id> -Formats json,xlsx
 ```
 
-## 用户主页深挖测试
+`export` 当前仅支持 `json` 与 `xlsx`。`json` 只重建 JSON 产物；`xlsx` 才会调用 Node 工作簿生成器。`html` 等未实现格式会直接报错。
+
+## 社区建议审批
 
 ```powershell
-.\scripts\radar.ps1 deep-dive `
-  -Users "ace_mcgee68,Lucky_Wrongdoer1270,Lil-quacker" `
-  -OutputDir ".local\data\user_deep_dive_test"
+python -m opportunity_radar communities suggest --run-id <run_id>
+python -m opportunity_radar communities approve --suggestion .local\runs\<run_id>\suggestions\community_suggestions.json --suggestion-id <id>
 ```
 
-## 安全边界
+审批会生成新的社区版本文件，但不会自动替换当前活动版本。
+如果想延续一个中断运行，只能使用 `resume --run-id <run_id>`；新的 `run --run-id <run_id>` 会在目录已存在时明确失败，避免混入旧 checkpoint。
 
-- 不提交Cookie和API Key；
-- 只读取公开内容；
-- 不提取或推断真实姓名、住址、联系方式、健康、种族、精确收入等敏感信息；
-- 与研究无关或敏感的主页历史不进入画像；
-- 排放相关讨论可以作为需求信号，但系统不生成违规操作教程。
+## 三人协作分工
 
-## 下一阶段
+1. 采集同学只负责 `.env`、浏览器登录态和 `doctor` / `live-reddit-smoke.ps1`
+2. 分析同学运行 `run` / `resume` / `status` / `export`，共享 `run_id` 和导出路径
+3. 策略同学查看建议文件并审批生成新版本配置
 
-1. 生成统一`analysis.json`；
-2. 接入千问/DeepSeek结构化分析；
-3. 封装Codex Skill；
-4. 生成HTML和DOCX；
-5. 接入Hermes周期运行。
+## 本地安全边界
+
+- `.env`、Cookie、原始数据、运行产物都不进入 Git
+- `state.json` 和 `manifest.json` 只保存摘要、计数和路径，不保存密钥
+- 建议文件只引用证据 URL，不保存登录态
+
+## 显式联机冒烟
+
+```powershell
+.\scripts\live-reddit-smoke.ps1
+```
+
+这个脚本只做最小 Reddit 连通性检查，适合在切换电脑、Chrome 配置或 OpenCLI 版本后手动运行。

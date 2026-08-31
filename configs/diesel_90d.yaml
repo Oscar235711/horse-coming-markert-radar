@@ -1,17 +1,82 @@
 project: opportunity-radar-diesel-90d
 market: north_america
 time_range_days: 90
+community_catalog_path: community_catalog.v1.yaml
 
 platforms:
   - powerstroke
   - cummins
   - duramax
 
-subreddits:
-  - powerstroke
-  - FordDiesels
-  - Cummins
-  - Duramax
+communities:
+  - name: Cummins
+    aliases:
+      - cummins
+      - 5.9 cummins
+      - 6.7 cummins
+    include:
+      - cummins
+      - ram diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ram
+    slang:
+      - "5.9"
+      - "6.7"
+      - common rail
+  - name: Duramax
+    aliases:
+      - duramax
+      - lb7
+      - l5p
+    include:
+      - duramax
+      - gm diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Chevrolet/GMC
+    slang:
+      - lb7
+      - lly
+      - l5p
+  - name: powerstroke
+    aliases:
+      - powerstroke
+      - 6.0 powerstroke
+      - 6.7 powerstroke
+    include:
+      - powerstroke
+      - ford diesel
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ford
+    slang:
+      - "6.0"
+      - "6.7"
+      - obs
+  - name: FordDiesels
+    aliases:
+      - forddiesels
+      - ford diesels
+      - ford diesel forum
+    include:
+      - forddiesels
+      - ford diesels
+    exclude:
+      - WTB
+      - forsale
+    category: diesel_platform
+    brand: Ford
+    slang:
+      - idi
+      - super duty
+      - power stroke
 
 categories:
   dpf_delete_pipe:
@@ -33,6 +98,103 @@ categories:
     label_zh: PCV/CCV重定向套件
     priority: B
 
+# V2 uses these as auditable market dictionaries, not as a closed product catalog.
+dictionaries:
+  platforms:
+    - cummins
+    - powerstroke
+    - power stroke
+    - duramax
+    - 5.9 cummins
+    - 6.7 cummins
+    - 6.0 powerstroke
+    - 6.7 powerstroke
+    - lb7
+    - lly
+    - l5p
+  products:
+    - dpf delete pipe
+    - egr delete kit
+    - emissions delete combo kit
+    - diesel downpipe
+    - downpipe
+    - dpf delete tuner
+    - tuner
+    - pcv ccv reroute kit
+    - egr cooler
+    - egr valve
+    - crankcase ventilation kit
+  vehicle_terms:
+    - ram 2500
+    - ram 3500
+    - ford super duty
+    - f-250
+    - f-350
+    - silverado 2500hd
+    - sierra 2500hd
+  scenarios:
+    - towing
+    - hauling
+    - daily driving
+    - work truck
+    - off-road
+    - winter use
+  brands:
+    - ford
+    - ram
+    - chevrolet
+    - gmc
+  slang:
+    - delete
+    - def
+    - soot
+    - regen
+    - common rail
+    - blow by
+
+exclusions:
+  non_diesel_terms:
+    - motorcycle
+    - motorbike
+    - mustang
+    - camaro
+    - corvette
+    - infiniti
+    - subaru
+    - civic
+    - golf gti
+    - wrx
+  excluded_subreddits:
+    - motorcycles
+    - mustang
+    - subaru
+    - cars
+  promotional_terms:
+    - coupon
+    - promo code
+    - affiliate
+    - buy now
+    - free shipping
+
+keyword_search:
+  enabled: true
+  max_candidate_keywords: 20
+  max_posts_per_keyword: 10
+  require_human_approval: true
+
+report:
+  formats:
+    - json
+    - xlsx
+    - html
+  offline_html: true
+
+deepseek:
+  base_url_env: DEEPSEEK_BASE_URL
+  api_key_env: DEEPSEEK_API_KEY
+  flash_model_env: DEEPSEEK_FLASH_MODEL
+  pro_model_env: DEEPSEEK_PRO_MODEL
+
 collection:
   search_limit: 50
   comments_per_post: 100
@@ -44,7 +206,7 @@ collection:
   request_interval_seconds: 3
 
 user_deep_dive:
-  enabled: true
+  enabled: false
   candidate_users_per_topic: 15
   target_valid_users_per_topic: 6
   posts_per_user: 30

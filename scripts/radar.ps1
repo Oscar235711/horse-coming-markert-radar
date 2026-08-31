@@ -1,13 +1,28 @@
 param(
   [Parameter(Position = 0, Mandatory = $true)]
-  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report")]
+  [ValidateSet("init", "paths", "doctor", "serve", "status", "verify-baseline", "fetch-details", "deep-dive", "report", "run", "resume", "export", "communities-suggest", "communities-approve", "keywords-suggest", "keywords-approve")]
   [string]$Command,
   [string]$EvidenceCsv,
   [string]$OutputDir,
   [string]$Users,
   [string]$DataRoot,
   [string]$OutputRoot,
-  [string]$ConfigPath
+  [string]$ConfigPath,
+  [string]$RunConfigPath,
+  [string]$RunId,
+  [string]$Formats,
+  [string]$Suggestion,
+  [string]$SuggestionId,
+  [string]$StartDate,
+  [string]$EndDate,
+  [ValidateSet("quick", "standard", "deep")]
+  [string]$Depth,
+  [ValidateSet("codex", "rules", "deepseek")]
+  [string]$AnalysisEngine,
+  [string]$Communities,
+  [string]$HostAddress,
+  [int]$Port,
+  [switch]$NoOpen
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +51,39 @@ $openCliExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_
 $nodeFallbacks = @()
 if ($env:USERPROFILE) { $nodeFallbacks += (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe") }
 $nodeExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_NODE_EXE" -Config $radarConfig) -CommandName "node" -FallbackPaths $nodeFallbacks
+$pythonFallbacks = @(
+  (Join-Path $repoRoot ".venv\Scripts\python.exe"),
+  (Join-Path $repoRoot ".venv\Scripts\python")
+)
+$pythonExe = Find-RadarExecutable -ExplicitPath (Get-RadarSetting -Name "RADAR_PYTHON_EXE" -Config $radarConfig) -CommandName "python" -FallbackPaths $pythonFallbacks
+
+function Invoke-RadarPythonCli {
+  param([string[]]$Arguments)
+  if (-not $pythonExe) { throw "Python not found. Install Python 3.12+ or set RADAR_PYTHON_EXE in $ConfigPath" }
+  $propagatedNames = @()
+  if ($radarConfig) {
+    $propagatedNames += $radarConfig.Keys | Where-Object { $_ -match '^(RADAR_|DEEPSEEK_)' }
+  }
+  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_LIBRARY_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE"
+  $propagatedNames = $propagatedNames | Sort-Object -Unique
+
+  $previousValues = @{}
+  try {
+    foreach ($name in $propagatedNames) {
+      $previousValues[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+      $value = Get-RadarSetting -Name $name -Config $radarConfig
+      if ($null -ne $value -and $value -ne "") {
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+      }
+    }
+    & $pythonExe "-m" "opportunity_radar" @Arguments
+  }
+  finally {
+    foreach ($name in $propagatedNames) {
+      [Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
+    }
+  }
+}
 
 switch ($Command) {
   "init" {
@@ -65,13 +113,23 @@ switch ($Command) {
     } | ConvertTo-Json
   }
   "doctor" {
-    if (-not $agentReachExe) { throw "Agent Reach not found. Set RADAR_AGENT_REACH_EXE or RADAR_AGENT_REACH_HOME in $ConfigPath" }
-    if (-not $openCliExe) { throw "OpenCLI not found. Install it or set RADAR_OPENCLI_EXE in $ConfigPath" }
-    & $agentReachExe doctor --json
-    & $openCliExe reddit --help | Select-Object -First 5
+    Invoke-RadarPythonCli -Arguments @("doctor")
+  }
+  "serve" {
+    $serveConfig = if ($RunConfigPath) { $RunConfigPath } else { Join-Path $repoRoot "configs\diesel_90d.yaml" }
+    $arguments = @("serve", "--config", $serveConfig)
+    if ($HostAddress) { $arguments += @("--host", $HostAddress) }
+    if ($Port) { $arguments += @("--port", [string]$Port) }
+    if ($NoOpen) { $arguments += "--no-open" }
+    Invoke-RadarPythonCli -Arguments $arguments
   }
   "status" {
-    Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
+    if ($RunId) {
+      Invoke-RadarPythonCli -Arguments @("status", "--run-id", $RunId)
+    }
+    else {
+      Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
+    }
   }
   "verify-baseline" {
     & (Join-Path $PSScriptRoot "verify-baseline.ps1") -DataRoot $DataRoot -OutputRoot $OutputRoot
@@ -97,5 +155,42 @@ switch ($Command) {
       $env:RADAR_DATA_ROOT = $previousDataRoot
       $env:RADAR_OUTPUT_ROOT = $previousOutputRoot
     }
+  }
+  "run" {
+    if (-not $RunConfigPath) { throw "run requires -RunConfigPath" }
+    $arguments = @("run", "--config", $RunConfigPath)
+    if ($RunId) { $arguments += @("--run-id", $RunId) }
+    if ($StartDate) { $arguments += @("--start-date", $StartDate) }
+    if ($EndDate) { $arguments += @("--end-date", $EndDate) }
+    if ($Depth) { $arguments += @("--depth", $Depth) }
+    if ($AnalysisEngine) { $arguments += @("--analysis-engine", $AnalysisEngine) }
+    if ($Communities) { $arguments += @("--communities", $Communities) }
+    Invoke-RadarPythonCli -Arguments $arguments
+  }
+  "resume" {
+    if (-not $RunId) { throw "resume requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("resume", "--run-id", $RunId)
+  }
+  "export" {
+    if (-not $RunId) { throw "export requires -RunId" }
+    $arguments = @("export", "--run-id", $RunId)
+    if ($Formats) { $arguments += @("--formats", $Formats) }
+    Invoke-RadarPythonCli -Arguments $arguments
+  }
+  "communities-suggest" {
+    if (-not $RunId) { throw "communities-suggest requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("communities", "suggest", "--run-id", $RunId)
+  }
+  "communities-approve" {
+    if (-not $Suggestion -or -not $SuggestionId) { throw "communities-approve requires -Suggestion and -SuggestionId" }
+    Invoke-RadarPythonCli -Arguments @("communities", "approve", "--suggestion", $Suggestion, "--suggestion-id", $SuggestionId)
+  }
+  "keywords-suggest" {
+    if (-not $RunId) { throw "keywords-suggest requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("keywords", "suggest", "--run-id", $RunId)
+  }
+  "keywords-approve" {
+    if (-not $Suggestion) { throw "keywords-approve requires -Suggestion (approval JSON file)" }
+    Invoke-RadarPythonCli -Arguments @("keywords", "approve", "--file", $Suggestion)
   }
 }
