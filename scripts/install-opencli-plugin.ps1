@@ -6,19 +6,24 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $pluginPath = Join-Path $repoRoot "opencli-plugin\opportunity-reddit"
 
 if (-not (Get-Command opencli -ErrorAction SilentlyContinue)) {
-    throw "未找到 opencli。请先安装 OpenCLI，再运行此脚本。"
+    throw "opencli was not found. Install OpenCLI first."
 }
 if (-not (Test-Path -LiteralPath $pluginPath -PathType Container)) {
-    throw "找不到项目插件目录：$pluginPath"
+    throw "Plugin directory was not found: $pluginPath"
 }
 
-& opencli plugin install $pluginPath
-if ($LASTEXITCODE -ne 0) {
-    throw "OpenCLI 插件安装失败（exit $LASTEXITCODE）。"
+$installedPlugins = (& opencli plugin list --format json 2>$null | Out-String)
+if ($installedPlugins -match '"name"\s*:\s*"opportunity-reddit"') {
+    Write-Host "Opportunity Radar Reddit plugin is already installed; validating it." -ForegroundColor Yellow
+} else {
+    & opencli plugin install $pluginPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "OpenCLI plugin installation failed (exit $LASTEXITCODE)."
+    }
 }
 & opencli validate opportunity-reddit
 if ($LASTEXITCODE -ne 0) {
-    throw "OpenCLI 插件校验失败（exit $LASTEXITCODE）。"
+    throw "OpenCLI plugin validation failed (exit $LASTEXITCODE)."
 }
 
-Write-Host "Opportunity Radar Reddit 分页/深读插件安装成功。" -ForegroundColor Green
+Write-Host "Opportunity Radar Reddit plugin installed successfully." -ForegroundColor Green
