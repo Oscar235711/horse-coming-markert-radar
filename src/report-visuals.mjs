@@ -94,7 +94,23 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
   const ns = 'http://www.w3.org/2000/svg';
   let graphView;
   let lastMapTrigger = null;
+  let hoveredNodeId = '';
   const mapHistory = [];
+  // Apply a temporary mask without rebuilding SVG or moving the hovered node.
+  // Only direct edges count; neighbors' other connections remain hidden.
+  function previewNeighbors(nodeId = '') {
+    hoveredNodeId = nodeId;
+    const edges = graphView.edges.filter(edge => edge.source === nodeId || edge.target === nodeId);
+    const visible = new Set([nodeId, ...edges.flatMap(edge => [edge.source, edge.target])]);
+    svg.querySelectorAll('.graph-node').forEach(element => {
+      const hidden = Boolean(nodeId) && !visible.has(element.dataset.id);
+      element.style.visibility = hidden ? 'hidden' : '';
+      element.setAttribute('aria-hidden', String(hidden));
+    });
+    svg.querySelectorAll('.graph-edge').forEach(element => {
+      element.style.visibility = nodeId && element.dataset.source !== nodeId && element.dataset.target !== nodeId ? 'hidden' : '';
+    });
+  }
   function svgNode(tag, attributes = {}, text) {
     const element = document.createElementNS(ns, tag);
     Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, value));
@@ -176,6 +192,7 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
     return chunks;
   }
   function renderMap() {
+    hoveredNodeId = '';
     graphView = selectGraphView(graph, mapState);
     if (!graphView.focus) mapState.focusId = '';
     const communityList = $('map-community-list');
@@ -192,7 +209,7 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
     $('map-metrics').textContent = communities.length + ' 社区 · ' + products.length + ' 产品 · ' + graphView.eligibleEdges.length + ' 证据关系';
     $('map-view-toggle').textContent = mapState.mode === 'all' && !graphView.focus ? '社区总览' : '显示全部关系';
     $('map-back').hidden = mapHistory.length === 0;
-    $('map-help').textContent = graphView.focus ? '当前聚焦：' + graphView.focus.label + ' · 点击相邻节点继续探索' : mapState.mode === 'all' ? '实心：产品机会 · 空心：社区 · 连线：讨论证据' : '点击社区展开相关产品，也可从左侧产品列表反查社区';
+    $('map-help').textContent = graphView.focus ? '当前聚焦：' + graphView.focus.label + ' · 悬停查看直接关联，点击继续探索' : mapState.mode === 'all' ? '实心：产品机会 · 空心：社区 · 悬停只显示直接关联，移开恢复全图' : '点击社区展开相关产品，也可从左侧产品列表反查社区';
     svg.replaceChildren();
     if (!graphView.nodes.length) { svg.appendChild(svgNode('text', { x: 500, y: 350, 'text-anchor': 'middle', fill: '#817b72', 'font-size': 18 }, '没有匹配数据，请调整搜索或筛选')); return; }
     const positions = new Map();
@@ -223,6 +240,10 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
       group.appendChild(label);
       group.appendChild(svgNode('text', { y: radius + 22 + chunks.length * 16, class: 'node-meta' }, node.type === 'community' ? count + ' 个产品概念' : node.entry_type === 'adjacent_bundle' ? '邻近配套' : '产品机会'));
       group.addEventListener('click', event => { event.stopPropagation(); selectNode(node.id, group); });
+      group.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') previewNeighbors(node.id); });
+      group.addEventListener('pointerleave', () => { if (hoveredNodeId === node.id) previewNeighbors(); });
+      group.addEventListener('focus', () => previewNeighbors(node.id));
+      group.addEventListener('blur', () => previewNeighbors());
       group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(node.id, group); } });
       svg.appendChild(group);
     });
@@ -243,6 +264,7 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
   $('map-back').addEventListener('click', () => { mapState.focusId = mapHistory.pop() ?? ''; closeMapDetail(); renderMap(); if (mapState.focusId) showMapDetail(mapState.focusId); });
   $('map-detail-close').addEventListener('click', closeMapDetail);
   svg.addEventListener('click', event => { if (event.target === svg) closeMapDetail(); });
+  svg.addEventListener('pointerleave', () => previewNeighbors());
   renderMap();
 
   const canvas = $('keyword-wordcloud');
@@ -365,11 +387,12 @@ export function installReportVisuals({ analysis, audienceMap, keywordCloud }) {
   });
   $('keyword-cloud-detail-close').addEventListener('click', () => showCloudDetail(null));
   $('cloud-legend').innerHTML = [...new Set(terms.map(term => term.category))].map(category => '<div class="visual-legend"><i class="visual-dot" style="background:' + (colors[category] ?? colors.product) + '"></i>' + esc(categoryNames[category] ?? category) + '</div>').join('');
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeMapDetail(); showCloudDetail(null); tooltip.hidden = true; } });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeMapDetail(); previewNeighbors(); showCloudDetail(null); tooltip.hidden = true; } });
   let cloudInitialized = false;
   document.addEventListener('radar-tab-change', event => {
     document.body.classList.toggle('explorer-active', ['map', 'keyword-cloud'].includes(event.detail));
     tooltip.hidden = true;
+    previewNeighbors();
     if (event.detail === 'keyword-cloud' && !cloudInitialized) { renderCloud(); cloudInitialized = true; }
   });
 }

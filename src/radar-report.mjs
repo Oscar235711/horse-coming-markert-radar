@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { REPORT_VISUAL_STYLES, reportVisualScript } from './report-visuals.mjs';
+import { enrichReferenceProducts } from './reference-products.mjs';
 
 const THRESHOLD_CHECK_KEYS = [
   'qualified_evidence',
@@ -129,7 +130,7 @@ function renderOpportunityCard(item, evidenceById, { attributeName = 'data-oppor
         <h4>事实</h4>${list(item.claims?.facts)}
         <h4>推断</h4>${list(item.claims?.inferences)}
         <h4>未知项</h4>${list(item.claims?.unknowns)}
-        <h4>参考产品与价格</h4>${renderReferenceProducts(item)}
+        ${renderReferenceProducts(item, evidenceById)}
         <details><summary>代表证据</summary>${linkedEvidenceList(evidenceItems)}</details>
       </div>
     </article>`;
@@ -175,13 +176,27 @@ function renderCompetitorCard(item, evidenceById, emptyLabel = '暂无') {
     </article>`;
 }
 
-function renderReferenceProducts(item) {
+function renderReferenceProducts(item, evidenceById) {
   const products = item.reference_products ?? [];
-  const price = statusField('价格带', item.commercial?.pricing_band);
-  const potential = statusField('市场参考热度', item.commercial?.market_potential);
-  if (!products.length && !price && !potential) return '<p class="muted">暂无已核实的官网 / Amazon 产品资料</p>';
-  const cards = products.map((product) => `<article class="reference-product"><h5>${escapeHtml(product.name ?? '未命名参考产品')}</h5><p>${escapeHtml(product.specification ?? '')}</p><p>${escapeHtml(product.packaging ?? '')}</p><p>${escapeHtml(product.heat ?? '')}</p><p>${product.official_url ? `<a href="${escapeHtml(product.official_url)}" target="_blank" rel="noreferrer">官网</a>` : ''} ${product.amazon_url ? `<a href="${escapeHtml(product.amazon_url)}" target="_blank" rel="noreferrer">Amazon</a>` : ''}</p></article>`).join('');
-  return `<div class="reference-products">${cards}${price || potential ? `<div class="commercial-grid">${price}${potential}</div>` : ''}</div>`;
+  const cards = products.map(product => {
+    const d = product.discussion;
+    const k = product.top_keyword;
+    const supporting = (k?.evidence_ids ?? product.evidence_ids ?? []).slice(0, 3).map(id => evidenceById.get(id)).filter(Boolean);
+    return `<article class="reference-product">
+      <h5>${escapeHtml(product.name)}</h5>
+      <dl class="reference-metrics"><div><dt>讨论度</dt><dd>${escapeHtml(d.score)} <small>加权提及</small></dd></div>
+      <div><dt>出现频次</dt><dd>${escapeHtml(d.mention_count)} <small>条 · ${escapeHtml(d.post_count)} 帖子 / ${escapeHtml(d.comment_count)} 评论</small></dd></div>
+      <div><dt>最高关联词</dt><dd>${k ? escapeHtml(k.term) : '缺失数据'}<small>${k ? `共现 ${escapeHtml(k.cooccurrence_count)} 条 · 关联度 ${escapeHtml(k.score)}%${k.cooccurrence_count === 1 ? ' · 单条观察' : ''}` : '当前关键词库没有共现证据'}</small></dd></div></dl>
+      <details class="reference-basis"><summary>计算依据与原文</summary>
+        <p class="muted">${escapeHtml(d.post_count)} 条帖子 + ${escapeHtml(d.weighted_comment_count)} 条质量加权评论 = ${escapeHtml(d.score)}。${d.comment_count ? `评论平均质量 ${escapeHtml(d.average_comment_quality)}/100。` : '没有合格评论，当前仅有帖子提及。'}出现频次按去重后的帖子/评论条数计算，同一条反复提及只计一次。</p>
+        ${linkedEvidenceList(supporting)}
+      </details></article>`;
+  }).join('');
+  return `<details class="reference-products-section"><summary>参考产品 · ${products.length} 个（展开查看）</summary>
+    <p class="muted reference-method">讨论度 = 提及帖子数 + Σ（提及评论质量分 ÷ 100），仅使用直接提及产品的合格、去重证据，不代表销量或市场规模。未点名的同帖评论不自动归给该产品；评论缺少数值质量分时按高/中/低档使用 1/0.6/0.25 权重，未知为 0。最高关联词来自当前报告关键词库，按质量加权共现关联度排序；有重复共现时优先于单条观察，排除产品名称自身。</p>
+    <div class="reference-products">${cards || '<p class="muted">暂无能识别品牌或型号的参考产品。</p>'}</div>
+    ${item.unresolved_reference_mentions ? `<p class="muted">另有 ${escapeHtml(item.unresolved_reference_mentions)} 条讨论未识别具体产品，未作为参考产品列出。</p>` : ''}
+  </details>`;
 }
 
 function renderEvidenceGroups(evidence) {
@@ -229,7 +244,7 @@ function renderPersonaPanel(personas) {
 
 
 function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }) {
-  analysis = sanitizeAnalysisForReport(analysis);
+  analysis = sanitizeAnalysisForReport(enrichReferenceProducts(analysis, keywordCloud));
   const evidenceById = buildEvidenceMap(analysis.evidence ?? []);
   const formalOpportunities = (analysis.opportunities ?? []).filter((item) => item.opportunity_type !== 'adjacent_bundle');
   const adjacentOpportunities = (analysis.opportunities ?? []).filter((item) => item.opportunity_type === 'adjacent_bundle');
@@ -262,6 +277,8 @@ function renderReportHtml({ analysis, audienceMap, keywordCloud, manifest = {} }
     h2{margin:28px 0 14px;font-size:28px;letter-spacing:-.03em}h3{margin:0 0 8px;font-size:23px}h4{margin:16px 0 6px}h5{margin:12px 0 6px;font-size:14px}.muted{color:var(--muted)}
     .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.stack{display:grid;gap:16px}.opportunity-card{display:grid;grid-template-columns:88px 1fr;gap:18px;padding:22px}.score-ring{width:72px;height:72px;border-radius:50%;border:7px solid var(--green);display:grid;place-items:center;font-size:24px;font-weight:800}.chips{display:flex;gap:6px;flex-wrap:wrap}.chips span{padding:3px 9px;background:#e7efe8;border-radius:999px;font-size:12px}
     .commercial-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:16px}.commercial-item{padding:10px;border:1px solid var(--line);border-radius:12px}.commercial-item span,.commercial-item strong{display:block}.commercial-item span{font-size:12px;color:var(--muted)}
+    .reference-products-section{margin:20px 0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#f8f6f1}.reference-products-section>summary{font-weight:600;cursor:pointer}.reference-method{font-size:12px}.reference-products{display:grid;gap:12px}.reference-product{padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}.reference-product h5{font-size:16px;margin:0 0 12px;overflow-wrap:anywhere}.reference-metrics{display:grid;grid-template-columns:1fr 1.2fr 1.4fr;gap:14px;margin:0}.reference-metrics dt{color:var(--muted);font-size:12px}.reference-metrics dd{margin:0;font-size:18px;font-weight:600;overflow-wrap:anywhere}.reference-metrics small{display:block;font-size:12px;font-weight:400;color:var(--muted)}.reference-basis{margin-top:12px;font-size:12px}.reference-basis summary{cursor:pointer;color:var(--green)}
+    @media(max-width:700px){.reference-metrics{grid-template-columns:1fr}.reference-products-section{padding:12px}}
     .status{display:inline-block;padding:2px 8px;border-radius:999px;background:#ece8df;font-style:normal;font-size:11px}.status.fact{background:#d7efe5;color:#0c5c47}.status.inference{background:#fff0cb;color:#7c5400}.status.unknown{background:#ececec;color:#5d5d5d}
     .empty{padding:24px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fbf8f2}
     details.failures-detail{margin-top:10px;border:1px solid var(--line);border-radius:14px;background:#fcfaf5;padding:0 14px}
@@ -511,6 +528,7 @@ export { renderReportHtml };
 
 export async function writeReportArtifacts({ runDir, analysis, audienceMap, keywordCloud, manifest = {} }) {
   await fs.mkdir(runDir, { recursive: true });
+  analysis = enrichReferenceProducts(analysis, keywordCloud);
   const opportunitiesArtifact = buildOpportunityArtifact(analysis, manifest);
   const paths = {
     analysis: path.join(runDir, 'analysis.json'),
