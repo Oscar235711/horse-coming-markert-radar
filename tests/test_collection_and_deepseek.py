@@ -99,8 +99,8 @@ def test_collector_checkpoints_successes_retries_failures_and_never_deep_reads_m
     assert second.deep_reads[0].post.post_id == "t3_one"
     reads = [call for call in runner.calls if call[2] == "read"]
     assert reads == [
-        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
-        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "opportunity-reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "opportunity-reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-rounds", "5", "--max-length", "5000"),
     ]
     assert json.loads((paths.checkpoints_dir / "t3_one.json").read_text(encoding="utf-8"))["status"] == "success"
 
@@ -347,9 +347,9 @@ def test_collector_skips_successful_checkpoints_on_third_run_and_retries_failure
     assert [entry.post.post_id for entry in third.deep_reads] == ["t3_one", "t3_two"]
     assert checkpoint_reads == []
     assert read_calls == [
-        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
-        ("opencli", "reddit", "read", "two", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
-        ("opencli", "reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-more", "true", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "opportunity-reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "opportunity-reddit", "read", "two", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-rounds", "5", "--max-length", "5000"),
+        ("opencli", "opportunity-reddit", "read", "one", "-f", "json", "--window", "foreground", "--site-session", "persistent", "--sort", "best", "--limit", "100", "--depth", "3", "--replies", "20", "--expand-rounds", "5", "--max-length", "5000"),
     ]
 
 

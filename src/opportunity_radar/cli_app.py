@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import date, timedelta
 from datetime import UTC, datetime
 from hashlib import sha256
 import importlib
@@ -20,6 +21,7 @@ import yaml
 
 from .config import load_community_catalog, load_config, load_diesel_domain_config, write_community_catalog
 from .collector import CollectionFailure, OpenCliCollector, ThreadDocument
+from .codex_analysis import CodexAnalysisClient, CodexTopicConsolidator
 from .deepseek import (
     DEFAULT_BASE_URL,
     FLASH_MODEL,
@@ -33,10 +35,11 @@ from .deepseek import (
     AnalysisField,
 )
 from .evidence import apply_diesel_evidence_gate
-from .models import Community, CommunityCatalog, RadarConfig, RunManifest
+from .models import CollectionScope, Community, CommunityCatalog, RadarConfig, RunManifest
 from .storage import TopicRegistry, create_run_paths, read_manifest, write_keyword_library, write_manifest
 from .keywords import build_topic_keyword_library
 from .library import update_project_library
+from .metrics import build_report_metrics
 from .topics import (
     EvidenceBackedClaim,
     ProTopicProposal,
@@ -70,6 +73,7 @@ class RadarCliApp:
         collector: OpenCliCollector | None = None,
         flash_client: FlashClient | None = None,
         pro_consolidator: Any | None = None,
+        codex_client: Any | None = None,
         exporter: Exporter | None = None,
         now: Clock | None = None,
     ) -> None:
@@ -112,9 +116,19 @@ class RadarCliApp:
             ),
             model=self._deepseek_pro_model(),
         )
+        self._codex_client = codex_client or CodexAnalysisClient(
+            workspace=self._repo_root,
+            schema_root=self._repo_root / "schemas",
+            executable=self._find_executable("RADAR_CODEX_EXE", "codex"),
+        )
         self._exporter = exporter or self._default_exporter
         self._now = now or (lambda: datetime.now(UTC))
         self._flash_rule_fallback_used = False
+
+    @property
+    def runs_root(self) -> Path:
+        """Expose the local run directory to the localhost task server."""
+        return self._runs_root
 
     def doctor(self) -> dict[str, Any]:
         """Report local readiness without persisting any secrets."""
@@ -141,27 +155,43 @@ class RadarCliApp:
             "agent_reach": self._find_executable("RADAR_AGENT_REACH_EXE", "agent-reach"),
             "opencli": self._find_executable("RADAR_OPENCLI_EXE", "opencli"),
             "node": self._find_executable("RADAR_NODE_EXE", "node"),
+            "codex": self._find_executable("RADAR_CODEX_EXE", "codex"),
         }
         checks["tools"] = {
             name: {"status": "ok" if path else "warning", "path": str(path) if path else ""}
             for name, path in tool_paths.items()
         }
+        plugin_source = self._repo_root / "opencli-plugin" / "opportunity-reddit"
+        plugin_install = Path.home() / ".opencli" / "plugins" / "opportunity-reddit"
+        checks["opencli_range_plugin"] = {
+            "status": "ok" if plugin_install.is_dir() else "warning",
+            "source": str(plugin_source),
+            "installed_path": str(plugin_install),
+        }
+        if not plugin_install.is_dir():
+            warnings.append("未安装项目的OpenCLI分页插件；请运行 scripts/install-opencli-plugin.ps1。")
 
         catalog = self._approved_catalog()
         checks["reddit"] = self._reddit_checks(catalog.communities)
         if checks["reddit"]["status"] != "ok":
             warnings.append("Reddit 采集环境未完全就绪：请检查 OpenCLI 登录态和社区访问。")
 
+        checks["codex"] = {
+            "status": "ok" if tool_paths["codex"] else "warning",
+            "path": str(tool_paths["codex"]) if tool_paths["codex"] else "",
+            "mode": "ephemeral/read-only",
+        }
+        if not tool_paths["codex"]:
+            warnings.append("未找到 Codex CLI；默认分析流程需要本机已登录的 codex 命令。")
+
         deepseek = {
-            "status": "ok",
+            "status": "configured" if bool(self._environment.get("DEEPSEEK_API_KEY")) else "optional",
             "base_url": self._deepseek_base_url(),
             "flash_model": self._deepseek_flash_model(),
             "pro_model": self._deepseek_pro_model(),
             "has_key": bool(self._environment.get("DEEPSEEK_API_KEY")),
+            "required": False,
         }
-        if not deepseek["has_key"]:
-            deepseek["status"] = "warning"
-            warnings.append("未设置 DEEPSEEK_API_KEY；doctor 继续执行 Reddit 检查，但 run/resume 需要该配置。")
         checks["deepseek"] = deepseek
 
         checks["excel"] = {
@@ -175,10 +205,21 @@ class RadarCliApp:
         status = "ok" if not warnings else "warning"
         return {"status": status, "warnings": warnings, "checks": checks}
 
-    def run(self, config_path: str | Path, *, run_id: str | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        config_path: str | Path,
+        *,
+        run_id: str | None = None,
+        scope: CollectionScope | None = None,
+        analysis_engine: str = "legacy",
+        selected_communities: Sequence[str] = (),
+    ) -> dict[str, Any]:
         """Start a new run and persist resumable state under one run directory."""
         resolved_config = self._resolve_path(config_path)
+        if analysis_engine not in {"codex", "rules", "deepseek", "legacy"}:
+            raise ValueError("analysis_engine must be codex, rules, deepseek, or legacy")
         config = load_config(resolved_config)
+        config = self._select_communities(config, selected_communities)
         active_catalog_path = self._resolve_catalog_path(resolved_config)
         run_id = run_id or self._generate_run_id()
         run_dir = self._runs_root / run_id
@@ -196,16 +237,27 @@ class RadarCliApp:
         )
         write_manifest(paths, manifest)
         state = self._base_state(run_id, resolved_config, active_catalog_path, config)
+        state["analysis_engine"] = analysis_engine
+        state["selected_communities"] = [community.name for community in config.communities]
+        state["collection_scope"] = self._scope_to_dict(scope)
         state["completed_stages"] = ["configured"]
         self._write_state(paths.state_path, state)
-        return self._continue_run(paths, config, state)
+        return self._continue_run(paths, config, state, scope=scope, analysis_engine=analysis_engine)
 
     def resume(self, run_id: str) -> dict[str, Any]:
         """Continue a previously incomplete run from its saved checkpoints."""
         paths = create_run_paths(self._runs_root, run_id)
         state = self._read_state(paths.state_path)
         config = load_config(paths.config_snapshot_path)
-        return self._continue_run(paths, config, state)
+        config = self._select_communities(config, tuple(state.get("selected_communities", ())))
+        scope = self._scope_from_dict(state.get("collection_scope"))
+        return self._continue_run(
+            paths,
+            config,
+            state,
+            scope=scope,
+            analysis_engine=str(state.get("analysis_engine", "codex")),
+        )
 
     def status(self, run_id: str) -> dict[str, Any]:
         """Return the secret-free saved state for one run."""
@@ -298,20 +350,125 @@ class RadarCliApp:
             "new_version": updated.version,
         }
 
-    def _continue_run(self, paths: Any, config: RadarConfig, state: dict[str, Any]) -> dict[str, Any]:
-        collection = self._collector.collect(
-            config.communities,
-            paths=paths,
-            as_of=self._now(),
-            deep_read=True,
-            shortlist_limit=config.shortlist_per_community,
+    def keywords_suggest(self, run_id: str) -> dict[str, Any]:
+        """Write an auditable review queue for newly observed topic keywords."""
+        paths = create_run_paths(self._runs_root, run_id)
+        state = self._read_state(paths.state_path)
+        analysis = json.loads((paths.artifacts_dir / "analysis.json").read_text(encoding="utf-8"))
+        library = analysis.get("keyword_library", {})
+        candidates = library.get("candidates", []) if isinstance(library, Mapping) else []
+        suggestions = []
+        for index, item in enumerate(candidates, start=1):
+            if not isinstance(item, Mapping):
+                continue
+            status = str(item.get("status", "candidate_review")).casefold()
+            if status in {"configured", "approved", "rejected"}:
+                continue
+            term = str(item.get("term_en", "")).strip()
+            if not term:
+                continue
+            suggestions.append({
+                "suggestion_id": f"keyword-{index}",
+                "term_en": term,
+                "term_zh": str(item.get("term_zh", "待翻译")),
+                "community": str(item.get("community", "")),
+                "topic_key": str(item.get("topic_key", "")),
+                "score": item.get("score", 0),
+                "post_count": item.get("post_count", 0),
+                "author_count": item.get("author_count", 0),
+                "source_post_ids": list(item.get("source_post_ids", []) or []),
+                "source_comment_ids": list(item.get("source_comment_ids", []) or []),
+                "status": "candidate_review",
+            })
+        suggestion_path = paths.suggestions_dir / "keyword_suggestions.json"
+        suggestion_path.write_text(
+            json.dumps({
+                "run_id": run_id,
+                "generated_at": self._now().isoformat(),
+                "suggestions": suggestions,
+            }, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
         )
+        state.setdefault("artifacts", {})["keyword_suggestions_json"] = str(suggestion_path)
+        self._write_state(paths.state_path, state)
+        return {"run_id": run_id, "suggestion_path": str(suggestion_path), "suggestion_count": len(suggestions)}
+
+    def keywords_approve(self, suggestion_path: str | Path) -> dict[str, Any]:
+        """Mark selected keyword suggestions approved in the project library.
+
+        The command accepts the file produced by ``keywords suggest``.  To
+        avoid accidental bulk changes, only entries explicitly listed in an
+        optional top-level ``approved`` array are promoted; when that array is
+        absent, the file's ``suggestions`` are treated as the user's explicit
+        approval input.
+        """
+        resolved_path = self._resolve_path(suggestion_path)
+        document = json.loads(resolved_path.read_text(encoding="utf-8"))
+        raw_items = document.get("approved", document.get("suggestions", []))
+        if not isinstance(raw_items, list):
+            raise ValueError("keyword approval file must contain an approved or suggestions array")
+        selected = {
+            (str(item.get("community", "")).casefold(), str(item.get("term_en", item.get("term", ""))).strip().casefold())
+            for item in raw_items if isinstance(item, Mapping) and str(item.get("term_en", item.get("term", ""))).strip()
+        }
+        library_path = self._library_root / "keywords.json"
+        library = json.loads(library_path.read_text(encoding="utf-8")) if library_path.exists() else {"version": "keyword-library.v1", "keywords": []}
+        changed = 0
+        for item in library.get("keywords", []) if isinstance(library.get("keywords"), list) else []:
+            if not isinstance(item, Mapping):
+                continue
+            key = (str(item.get("community", "")).casefold(), str(item.get("term_en", item.get("normalized_term", ""))).strip().casefold())
+            if key in selected:
+                item["status"] = "approved"
+                item["approved_at"] = self._now().isoformat()
+                changed += 1
+        library["updated_at"] = self._now().isoformat()
+        library_path.parent.mkdir(parents=True, exist_ok=True)
+        library_path.write_text(json.dumps(library, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        return {"status": "approved", "approved_count": changed, "library_path": str(library_path)}
+
+    def _continue_run(
+        self,
+        paths: Any,
+        config: RadarConfig,
+        state: dict[str, Any],
+        *,
+        scope: CollectionScope | None = None,
+        analysis_engine: str = "legacy",
+    ) -> dict[str, Any]:
+        collect_arguments: dict[str, Any] = {
+            "paths": paths,
+            "as_of": self._now(),
+            "deep_read": True,
+            "shortlist_limit": config.shortlist_per_community,
+        }
+        if scope is not None:
+            collect_arguments["scope"] = scope
+        collection = self._collector.collect(config.communities, **collect_arguments)
         state["counts"]["community_count"] = len(config.communities)
         state["counts"]["candidate_count"] = len(collection.candidates)
         state["counts"]["shortlist_count"] = len(collection.shortlisted)
         state["counts"]["deep_read_count"] = len(collection.deep_reads)
         state["completed_stages"] = self._merge_stages(state["completed_stages"], "configured", "collected")
         state["failures"] = [self._failure_to_dict(failure) for failure in collection.failures]
+        state["coverage"] = {
+            community: {
+                **asdict(item),
+                "requested_start": item.requested_start.isoformat(),
+                "requested_end": item.requested_end.isoformat(),
+                "actual_start": item.actual_start.isoformat() if item.actual_start else None,
+                "actual_end": item.actual_end.isoformat() if item.actual_end else None,
+            }
+            for community, item in collection.coverage.items()
+        }
+        state["stage"] = "collected"
+        state["progress"] = {
+            "stage": "collected",
+            "completed": len(collection.deep_reads),
+            "total": len(collection.deep_reads),
+            "message": "帖子列表和深读证据已采集，正在执行证据筛选。",
+        }
+        self._write_state(paths.state_path, state)
 
         domain = load_diesel_domain_config(paths.config_snapshot_path)
         eligible_threads, audit = self._gate_threads(collection.deep_reads, config, domain)
@@ -321,24 +478,44 @@ class RadarCliApp:
         state["counts"]["eligible_post_count"] = len(eligible_threads)
         state["counts"]["excluded_post_count"] = len(collection.deep_reads) - len(eligible_threads)
         state["counts"]["comment_evidence_count"] = len(audit["comments"])
+        state["stage"] = "post_analysis"
+        state["progress"] = {
+            "stage": "post_analysis",
+            "completed": len(analyses_by_post := self._load_saved_analyses(paths)),
+            "total": len(eligible_threads),
+            "message": "正在从帖子和评论中提取场景、任务、痛点与方案。",
+        }
+        self._write_state(paths.state_path, state)
 
-        analyses_by_post = self._load_saved_analyses(paths)
         flash_failures: list[CollectionFailure] = []
         for thread in eligible_threads:
             if thread.post.post_id in analyses_by_post:
                 continue
             try:
-                if self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                if analysis_engine == "codex":
+                    analysis = self._codex_client.extract_post(thread)
+                elif analysis_engine == "rules":
+                    analysis = _rule_extract_post(thread, domain)
+                    self._flash_rule_fallback_used = True
+                elif analysis_engine == "deepseek":
+                    if not self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                        raise DeepSeekError("DeepSeek 未配置。")
                     analysis = self._extract_flash(thread)
                 else:
-                    raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
+                    if self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                        analysis = self._extract_flash(thread)
+                    else:
+                        raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
                 analyses_by_post[thread.post.post_id] = analysis
                 self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
+                state["progress"]["completed"] = len(analyses_by_post)
+                self._write_state(paths.state_path, state)
             except Exception as error:
                 # The first version must remain runnable before the gateway key is
                 # available. Rule extraction is explicit in the final model_mode.
                 try:
-                    analysis = _rule_extract_post(thread, domain) if not self._environment.get("DEEPSEEK_API_KEY", "").strip() else None
+                    allow_rule_fallback = analysis_engine == "legacy" and not self._environment.get("DEEPSEEK_API_KEY", "").strip()
+                    analysis = _rule_extract_post(thread, domain) if allow_rule_fallback else None
                 except Exception:
                     analysis = None
                 if analysis is not None and (analysis.topics or analysis.claims):
@@ -359,7 +536,14 @@ class RadarCliApp:
         state["counts"]["analyzed_posts"] = len(analyses_by_post)
         state["counts"]["failure_count"] = len(collection.failures) + len(flash_failures)
         state["failures"].extend(self._failure_to_dict(failure) for failure in flash_failures)
-        if flash_failures:
+        # A failed post must not discard a run when other evidence was
+        # successfully analysed.  In particular, Codex runs are expected to
+        # continue to topic consolidation and report export while exposing the
+        # failed post in the run's failure log.  Preserve the legacy behaviour
+        # for the old DeepSeek-only path when every extraction failed.
+        if flash_failures and (
+            analysis_engine != "codex" or not analyses_by_post
+        ):
             state["status"] = "incomplete"
             state["stage"] = "flash_extract"
             self._write_state(paths.state_path, state)
@@ -376,7 +560,59 @@ class RadarCliApp:
             )
             return state
 
-        analysis = self._aggregate_run(config, eligible_threads, analyses_by_post, paths=paths)
+        topic_consolidator = (
+            CodexTopicConsolidator(client=self._codex_client)
+            if analysis_engine == "codex" else self._pro_consolidator
+        )
+        state["stage"] = "topic_consolidation"
+        state["progress"] = {
+            "stage": "topic_consolidation",
+            "completed": 0,
+            "total": len(config.communities),
+            "message": "正在社区内归并同类用户任务和问题，并复核证据。",
+        }
+        self._write_state(paths.state_path, state)
+        analysis = self._aggregate_run(
+            config,
+            eligible_threads,
+            analyses_by_post,
+            paths=paths,
+            pro_consolidator=topic_consolidator,
+            model_mode=analysis_engine if analysis_engine != "legacy" else None,
+        )
+        topic_failures = [
+            item for item in analysis.get("topic_failures", [])
+            if isinstance(item, Mapping)
+        ]
+        if topic_failures:
+            state["failures"].extend(dict(item) for item in topic_failures)
+            state["counts"]["failure_count"] = len(state["failures"])
+        analyzed_threads = tuple(
+            thread for thread in eligible_threads if thread.post.post_id in analyses_by_post
+        )
+        report_metrics = build_report_metrics(
+            communities=tuple(community.name for community in config.communities),
+            collection=collection,
+            analyzed_threads=analyzed_threads,
+            topics=tuple(
+                topic for topic in analysis.get("topics", []) if isinstance(topic, Mapping)
+            ),
+        )
+        analysis["report_metrics"] = report_metrics
+        analysis["research_scope"] = {
+            "start_date": scope.start_date.isoformat() if scope else None,
+            "end_date": scope.end_date.isoformat() if scope else None,
+            "depth": scope.depth if scope else "legacy",
+            "coverage": state.get("coverage", {}),
+        }
+        # Backward-compatible names are only a projection of the canonical
+        # metrics object; HTML and Excel read report_metrics directly.
+        analysis["crawl_counts"] = {
+            "normalized_posts": report_metrics["scanned_post_count"],
+            "saved_threads": report_metrics["deep_read_post_count"],
+            "analyzed_posts": report_metrics["analyzed_post_count"],
+            "saved_comments": report_metrics["collected_comment_count"],
+        }
         # Keep a small, cumulative project library so each run improves the
         # community/topic/keyword index without copying raw post bodies into
         # the repository.
@@ -414,7 +650,15 @@ class RadarCliApp:
             state["completed_stages"], "configured", "collected", "flash_extract", "topic_consolidation", "exported"
         )
         state["counts"]["topic_count"] = len(analysis.get("topics", []))
-        state["counts"]["failure_count"] = len(collection.failures)
+        state["progress"] = {
+            "stage": "exported",
+            "completed": 1,
+            "total": 1,
+            "message": "分析、HTML 与 Excel 已生成。",
+        }
+        # Keep extraction failures visible after a successful partial run;
+        # report generation must not erase them from the final counters.
+        state["counts"]["failure_count"] = len(state.get("failures", []))
         self._write_state(paths.state_path, state)
 
         manifest = read_manifest(paths)
@@ -510,21 +754,38 @@ class RadarCliApp:
         analyses_by_post: Mapping[str, PostAnalysis],
         *,
         paths: Any | None = None,
+        pro_consolidator: Any | None = None,
+        model_mode: str | None = None,
     ) -> dict[str, Any]:
         registry = TopicRegistry(self._runs_root / ".topic-registry.json")
         combined_topics: list[dict[str, Any]] = []
         excluded_records: list[dict[str, str]] = []
+        topic_failures: list[dict[str, str]] = []
         results: list[TopicAggregationResult] = []
+        active_consolidator = pro_consolidator or self._pro_consolidator
         for community in config.communities:
             community_threads = tuple(thread for thread in threads if thread.post.subreddit.casefold() == community.name.casefold())
             community_analyses = tuple(analyses_by_post[thread.post.post_id] for thread in community_threads)
             if not community_threads:
                 continue
-            result = TopicAggregator(
-                pro=self._pro_consolidator,
-                registry=registry,
-                as_of=self._now(),
-            ).aggregate_threads(community.name, community_threads, community_analyses)
+            try:
+                result = TopicAggregator(
+                    pro=active_consolidator,
+                    registry=registry,
+                    as_of=self._now(),
+                ).aggregate_threads(community.name, community_threads, community_analyses)
+            except Exception as error:
+                # A model timeout or malformed community response should not
+                # discard topics already consolidated for other communities.
+                # Keep the failure explicit so it can be retried from the run
+                # state instead of silently producing an apparently complete
+                # report.
+                topic_failures.append({
+                    "community": community.name,
+                    "stage": "topic_consolidation",
+                    "message": f"{type(error).__name__}: external operation failed",
+                })
+                continue
             results.append(result)
             combined_topics.extend(result.analysis.get("topics", []))
             excluded_records.extend(result.analysis.get("excluded_records", []))
@@ -556,7 +817,11 @@ class RadarCliApp:
             "keyword_library": keyword_library,
             "topics": combined_topics,
             "excluded_records": excluded_records,
-            "model_mode": "rule_based" if self._flash_rule_fallback_used or getattr(self._pro_consolidator, "mode", "") == "rule_fallback" else getattr(self._pro_consolidator, "mode", "injected_pro"),
+            "topic_failures": topic_failures,
+            "model_mode": model_mode or (
+                "rule_based" if self._flash_rule_fallback_used or getattr(active_consolidator, "mode", "") == "rule_fallback"
+                else getattr(active_consolidator, "mode", "injected_pro")
+            ),
             "product_output_label": "opportunity hypothesis, not launch conclusion",
         }
 
@@ -657,17 +922,49 @@ class RadarCliApp:
         report = {"status": "ok", "whoami": {"status": "ok"}, "seed_reads": []}
         try:
             whoami = json.loads(self._tool_runner(self._rewrite_opencli(("opencli", "reddit", "whoami", "-f", "json", *_opencli_session_flags()))))
-            report["whoami"] = {"status": "ok", "username": str(whoami.get("username", ""))}
+            # OpenCLI versions return either a mapping or a table-like list
+            # of ``field``/``value`` rows.  Both are valid authenticated
+            # sessions; do not turn the latter into a false warning.
+            username = ""
+            if isinstance(whoami, Mapping):
+                username = str(whoami.get("username", ""))
+            elif isinstance(whoami, list):
+                fields = {
+                    str(row.get("field", "")).casefold(): str(row.get("value", ""))
+                    for row in whoami
+                    if isinstance(row, Mapping)
+                }
+                username = fields.get("username", "")
+            report["whoami"] = {"status": "ok", "username": username}
         except Exception as error:
             report["status"] = "warning"
             report["whoami"] = {"status": "warning", "message": f"{type(error).__name__}: external operation failed"}
+        end_date = self._now().date()
+        start_date = end_date - timedelta(days=7)
         for community in communities[:4]:
             try:
-                self._tool_runner(
+                result = self._tool_runner(
                     self._rewrite_opencli(
-                        ("opencli", "reddit", "hot", community.name, "--limit", "1", "-f", "json", *_opencli_session_flags())
+                        (
+                            "opencli",
+                            "opportunity-reddit",
+                            "range",
+                            community.name,
+                            "--start-date",
+                            start_date.isoformat(),
+                            "--end-date",
+                            end_date.isoformat(),
+                            "--limit",
+                            "1",
+                            "-f",
+                            "json",
+                            *_opencli_session_flags(),
+                        )
                     )
                 )
+                payload = json.loads(result)
+                if not isinstance(payload, list):
+                    raise ValueError("range probe did not return a JSON list")
                 report["seed_reads"].append({"community": community.name, "status": "ok"})
             except Exception as error:
                 report["status"] = "warning"
@@ -731,6 +1028,40 @@ class RadarCliApp:
 
     def _generate_run_id(self) -> str:
         return self._now().strftime("%Y%m%dT%H%M%SZ")
+
+    def _select_communities(
+        self, config: RadarConfig, selected: Sequence[str]
+    ) -> RadarConfig:
+        if not selected:
+            return config
+        requested = {name.casefold() for name in selected}
+        available = {community.name.casefold(): community for community in config.communities}
+        unknown = sorted(requested - available.keys())
+        if unknown:
+            raise ValueError(f"unknown communities: {', '.join(unknown)}")
+        communities = tuple(
+            community for community in config.communities
+            if community.name.casefold() in requested
+        )
+        return replace(config, communities=communities)
+
+    def _scope_to_dict(self, scope: CollectionScope | None) -> dict[str, str] | None:
+        if scope is None:
+            return None
+        return {
+            "start_date": scope.start_date.isoformat(),
+            "end_date": scope.end_date.isoformat(),
+            "depth": scope.depth,
+        }
+
+    def _scope_from_dict(self, document: object) -> CollectionScope | None:
+        if not isinstance(document, Mapping):
+            return None
+        return CollectionScope(
+            start_date=date.fromisoformat(str(document["start_date"])),
+            end_date=date.fromisoformat(str(document["end_date"])),
+            depth=str(document.get("depth", "standard")),
+        )
 
     def _base_state(
         self, run_id: str, config_path: Path, active_catalog_path: Path, config: RadarConfig
@@ -815,10 +1146,11 @@ class RadarCliApp:
             for item in document.get("claims", [])
             if isinstance(item, Mapping)
         )
-        scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment")
+        scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment", "user_type")
         list_names = (
             "pain_points", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "products",
             "brands", "competitors", "purchase_intent", "keyword_candidates", "topic_candidates",
+            "pain_severity", "consequences", "supporting_views", "opposing_views",
         )
         scalar_fields = {name: self._saved_analysis_field(document.get(name)) for name in scalar_names}
         list_fields = {
@@ -834,6 +1166,9 @@ class RadarCliApp:
             gaps=list_fields["gaps"], opportunity_hypotheses=list_fields["opportunity_hypotheses"], products=list_fields["products"],
             brands=list_fields["brands"], competitors=list_fields["competitors"], purchase_intent=list_fields["purchase_intent"],
             keyword_candidates=list_fields["keyword_candidates"], topic_candidates=list_fields["topic_candidates"],
+            user_type=scalar_fields["user_type"], pain_severity=list_fields["pain_severity"],
+            consequences=list_fields["consequences"], supporting_views=list_fields["supporting_views"],
+            opposing_views=list_fields["opposing_views"],
         )
 
     @staticmethod

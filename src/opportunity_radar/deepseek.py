@@ -67,6 +67,11 @@ class PostAnalysis:
     sentiment: AnalysisField = field(default_factory=AnalysisField)
     keyword_candidates: tuple[AnalysisField, ...] = ()
     topic_candidates: tuple[AnalysisField, ...] = ()
+    user_type: AnalysisField = field(default_factory=AnalysisField)
+    pain_severity: tuple[AnalysisField, ...] = ()
+    consequences: tuple[AnalysisField, ...] = ()
+    supporting_views: tuple[AnalysisField, ...] = ()
+    opposing_views: tuple[AnalysisField, ...] = ()
 
 
 class DeepSeekError(RuntimeError):
@@ -209,10 +214,11 @@ def _analysis_from_document(document: Mapping[str, Any], evidence: Mapping[str, 
         urls = tuple(url for url in supplied_urls if isinstance(url, str)) if isinstance(supplied_urls, list) else ()
         valid = bool(ids) and urls == tuple(evidence[identifier] for identifier in ids)
         claims.append(EvidenceClaim(item["claim"].strip(), ids if valid else (), urls if valid else (), "supported" if valid else "unknown"))
-    scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment")
+    scalar_names = ("platform", "vehicle", "year", "scenario", "goal", "sentiment", "user_type")
     list_names = (
         "pain_points", "needs", "current_solutions", "gaps", "opportunity_hypotheses", "products",
         "brands", "competitors", "purchase_intent", "keyword_candidates", "topic_candidates",
+        "pain_severity", "consequences", "supporting_views", "opposing_views",
     )
     scalar_fields = {name: _analysis_field(document.get(name), evidence) for name in scalar_names}
     list_fields = {name: _analysis_fields(document.get(name), evidence) for name in list_names}
@@ -226,6 +232,9 @@ def _analysis_from_document(document: Mapping[str, Any], evidence: Mapping[str, 
         brands=list_fields["brands"], competitors=list_fields["competitors"],
         purchase_intent=list_fields["purchase_intent"], sentiment=scalar_fields["sentiment"],
         keyword_candidates=list_fields["keyword_candidates"], topic_candidates=list_fields["topic_candidates"],
+        user_type=scalar_fields["user_type"], pain_severity=list_fields["pain_severity"],
+        consequences=list_fields["consequences"], supporting_views=list_fields["supporting_views"],
+        opposing_views=list_fields["opposing_views"],
     )
 
 

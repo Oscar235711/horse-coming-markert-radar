@@ -9,6 +9,21 @@ if (!analysisPath || !outputPath) {
 
 const analysis = JSON.parse(await fs.readFile(analysisPath, "utf8"));
 const topics = Array.isArray(analysis.topics) ? analysis.topics : [];
+const reportMetrics = analysis.report_metrics && typeof analysis.report_metrics === "object"
+  ? analysis.report_metrics
+  : {
+      community_count: Array.isArray(analysis.communities) ? analysis.communities.length : 0,
+      topic_count: topics.length,
+      formal_topic_count: topics.filter((topic) => topic.status === "formal").length,
+      weak_topic_count: topics.filter((topic) => topic.status === "weak_signal").length,
+      scanned_post_count: analysis.crawl_counts?.normalized_posts ?? 0,
+      deep_read_post_count: analysis.crawl_counts?.saved_threads ?? 0,
+      analyzed_post_count: analysis.crawl_counts?.analyzed_posts ?? 0,
+      participant_count: 0,
+      collected_comment_count: analysis.crawl_counts?.saved_comments ?? 0,
+      evidence_count: topics.reduce((count, topic) => count + (topic.evidence?.length ?? 0), 0),
+    };
+const researchScope = analysis.research_scope && typeof analysis.research_scope === "object" ? analysis.research_scope : {};
 const communityLibrary = Array.isArray(analysis.community_library) ? analysis.community_library : (analysis.communities ?? []).map((name) => ({ display_name: name, subreddit: `r/${name}`, community_id: `r/${name}`, platform: "柴油皮卡", status: "approved", aliases: [], include_terms: [], exclude_terms: [] }));
 const keywordLibrary = analysis.keyword_library && Array.isArray(analysis.keyword_library.candidates)
   ? analysis.keyword_library.candidates
@@ -66,13 +81,16 @@ function columnName(number) {
 
 {
   const sheet = workbook.worksheets.getItem("运行概览");
-  title(sheet, "社区机会雷达｜运行概览", "F");
-  table(sheet, ["生成时间", "社区", "正式话题", "弱信号", "排除记录", "产品输出定位"], [[
-    analysis.generated_at ?? "", values(communityLibrary.map((item) => item.display_name ?? item.subreddit)), topics.filter((topic) => topic.status === "formal").length,
-    topics.filter((topic) => topic.status === "weak_signal").length,
-    Array.isArray(analysis.excluded_records) ? analysis.excluded_records.length : 0,
+  title(sheet, "社区机会雷达｜运行概览（统一数字口径）", "P");
+  table(sheet, ["生成时间", "开始日期", "结束日期", "采集档位", "社区数", "扫描去重帖", "深读帖", "进入分析帖", "话题数", "正式话题", "弱信号", "独立参与者", "采集评论", "引用证据", "覆盖状态", "产品输出定位"], [[
+    analysis.generated_at ?? "", researchScope.start_date ?? "", researchScope.end_date ?? "", researchScope.depth ?? "",
+    reportMetrics.community_count ?? 0, reportMetrics.scanned_post_count ?? 0, reportMetrics.deep_read_post_count ?? 0,
+    reportMetrics.analyzed_post_count ?? 0, reportMetrics.topic_count ?? 0, reportMetrics.formal_topic_count ?? 0,
+    reportMetrics.weak_topic_count ?? 0, reportMetrics.participant_count ?? 0, reportMetrics.collected_comment_count ?? 0,
+    reportMetrics.evidence_count ?? 0,
+    Object.values(researchScope.coverage ?? {}).some((item) => item?.status === "partial") ? "partial" : "complete/未记录",
     analysis.product_output_label ?? "opportunity hypothesis, not launch conclusion",
-  ]], [24, 18, 12, 12, 12, 38]);
+  ]], [23, 13, 13, 12, 9, 12, 10, 12, 9, 10, 10, 12, 10, 10, 14, 36]);
   sheet.getRange("A4").format.numberFormat = "yyyy-mm-dd";
 }
 
@@ -109,17 +127,18 @@ function columnName(number) {
 
 {
   const sheet = workbook.worksheets.getItem("话题分析卡");
-  title(sheet, "话题分析卡（所有结论均为机会假设）", "V");
-  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "痛点", "需求", "当前解决方案", "缺口", "机会假设", "机会分", "建议", "Top买家抱怨", "最佳切入角", "需求验证", "卖家视角", "为什么未解决", "制造画像", "车辆/平台/场景", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
-    topic.topic_id, topic.label_zh, topic.label_en, topic.summary, values(topic.pains), values(topic.needs),
-    values(topic.current_solutions), values(topic.gaps), values(topic.opportunity_hypotheses),
-    objectValue(topic, "opportunity_score", 0), objectValue(objectValue(topic, "decision", {}), "label"), objectValue(topic, "top_buyer_complaint"), objectValue(topic, "best_opening_angle"),
-    [objectValue(objectValue(topic, "demand_validation", {}), "posts", 0), objectValue(objectValue(topic, "demand_validation", {}), "authors", 0), objectValue(objectValue(topic, "demand_validation", {}), "commenters", 0)].join(" / "),
-    objectValue(objectValue(topic, "seller_insight", {}), "positioning_angle"), values(objectValue(objectValue(topic, "why_not_done", {}), "reasons", [])),
-    JSON.stringify(objectValue(topic, "manufacturing_profile", {}), null, 0),
-    [values(topic.vehicles), values(topic.platforms), values(topic.scenarios)].filter(Boolean).join(" / "),
+  title(sheet, "话题分析卡（VOC场景—任务—痛点—方案—产品判断）", "T");
+  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "使用场景", "用户任务/需求", "主要痛点", "当前产品/解决方案", "现有方案不足", "机会假设", "产品决策类型", "判断状态", "判断依据", "社区信号分", "需求验证（帖/作者/评论者/参与者/评论）", "车辆/平台", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
+    topic.topic_id, topic.label_zh, topic.label_en, topic.summary, values(topic.scenarios), values(topic.needs),
+    values(topic.pains), values(topic.current_solutions), values(topic.gaps), values(topic.opportunity_hypotheses),
+    objectValue(objectValue(topic, "product_decision", {}), "type", "暂不形成产品机会"),
+    objectValue(objectValue(topic, "product_decision", {}), "status", "unknown"),
+    objectValue(objectValue(topic, "product_decision", {}), "rationale", "当前证据未给出产品判断"),
+    objectValue(topic, "signal_score", 0),
+    [topic.post_count ?? 0, topic.author_count ?? 0, topic.commenter_count ?? 0, topic.participant_count ?? "未记录", topic.collected_comment_count ?? "未记录"].join(" / "),
+    [values(topic.vehicles), values(topic.platforms)].filter(Boolean).join(" / "),
     [values(topic.category_tags), values(topic.brand_tags), values(topic.competitor_tags)].filter(Boolean).join("；"), values(topic.validation_questions), values(topic.supporting_views), values(topic.opposing_views),
-  ]), [26, 20, 22, 35, 24, 24, 24, 24, 34, 10, 14, 28, 30, 20, 30, 28, 36, 30, 26, 30, 30, 30]);
+  ]), [26, 20, 22, 35, 28, 28, 28, 28, 28, 34, 20, 14, 36, 12, 28, 28, 30, 30, 30, 30]);
 }
 
 {

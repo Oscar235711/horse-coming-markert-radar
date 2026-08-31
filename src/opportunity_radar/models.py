@@ -1,7 +1,7 @@
 """Typed values shared by the community-radar workflow."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 
@@ -55,6 +55,51 @@ class CollectionSettings:
     max_comment_length: int = 5000
     expand_more: bool = True
     expand_rounds: int = 5
+
+
+_DEPTH_PRESETS = {
+    "quick": (300, 30),
+    "standard": (1000, 80),
+    "deep": (1000, 150),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionScope:
+    """One user-selected Reddit collection window and depth preset."""
+
+    start_date: date
+    end_date: date
+    depth: str = "standard"
+
+    def __post_init__(self) -> None:
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must not be before start_date")
+        if (self.end_date - self.start_date).days + 1 > 365:
+            raise ValueError("collection range cannot exceed 365 days")
+        if self.depth not in _DEPTH_PRESETS:
+            raise ValueError("depth must be quick, standard, or deep")
+
+    @property
+    def listing_limit_per_community(self) -> int:
+        return _DEPTH_PRESETS[self.depth][0]
+
+    @property
+    def deep_read_limit_per_community(self) -> int:
+        return _DEPTH_PRESETS[self.depth][1]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionCoverage:
+    """Observed date coverage for one requested community."""
+
+    community: str
+    requested_start: date
+    requested_end: date
+    actual_start: date | None
+    actual_end: date | None
+    status: str
+    scanned_posts: int
 
 
 @dataclass(frozen=True, slots=True)

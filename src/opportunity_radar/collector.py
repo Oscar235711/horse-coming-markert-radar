@@ -2,16 +2,16 @@
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
 import time
 from typing import Any
 
-from .models import CollectionSettings, Community, ShortlistedPost, WindowedPost
+from .models import CollectionCoverage, CollectionScope, CollectionSettings, Community, ShortlistedPost, WindowedPost
 from .normalization import normalize_and_deduplicate
-from .scoring import score_shortlist
+from .scoring import score_shortlist, score_stratified_shortlist
 from .storage import RunPaths, append_failure, persist_thread, write_normalized_records
 from .windowing import window_posts
 
@@ -26,6 +26,9 @@ class ThreadComment:
     body: str
     url: str
     author: str = ""
+    parent_id: str = ""
+    depth: int = 1
+    score: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,7 @@ class CollectionResult:
     shortlisted: tuple[ShortlistedPost, ...]
     deep_reads: tuple[ThreadDocument, ...]
     failures: tuple[CollectionFailure, ...]
+    coverage: Mapping[str, CollectionCoverage] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,7 @@ class OpenCliCollector:
         as_of: datetime,
         deep_read: bool = False,
         shortlist_limit: int = 30,
+        scope: CollectionScope | None = None,
     ) -> CollectionResult:
         """Preserve all list surfaces, then optionally deep-read up to 30 posts/community."""
         if shortlist_limit < 1:
@@ -105,15 +110,24 @@ class OpenCliCollector:
         records_by_community: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         failures: list[CollectionFailure] = []
         for community in communities:
-            for surface, arguments in _listing_commands(community.name):
+            commands = (
+                (("range", _range_command(community.name, scope)),)
+                if scope is not None else _listing_commands(community.name)
+            )
+            for surface, arguments in commands:
                 try:
                     raw_text = self._runner(arguments)
                     _write_raw_listing(paths.raw_dir, community.name, surface, raw_text)
                     records = _parse_records(raw_text)
                     for record in records:
                         item = dict(record)
-                        item["source_surface"] = surface
-                        records_by_community[community.name].append(item)
+                        row_surfaces = item.pop("source_surfaces", ())
+                        if isinstance(row_surfaces, list) and row_surfaces:
+                            for row_surface in row_surfaces:
+                                records_by_community[community.name].append({**item, "source_surface": str(row_surface)})
+                        else:
+                            item["source_surface"] = str(item.get("source_surface") or surface)
+                            records_by_community[community.name].append(item)
                 except Exception as error:
                     failure = CollectionFailure(
                         community=community.name,
@@ -132,17 +146,52 @@ class OpenCliCollector:
 
         candidates: list[WindowedPost] = []
         shortlisted_targets: list[tuple[str, ShortlistedPost]] = []
+        coverage: dict[str, CollectionCoverage] = {}
         for community in communities:
             normalized = normalize_and_deduplicate(records_by_community.get(community.name, ()))
-            community_candidates = window_posts(normalized, as_of=as_of)
+            community_candidates = window_posts(
+                normalized,
+                as_of=as_of,
+                start_date=scope.start_date if scope else None,
+                end_date=scope.end_date if scope else None,
+            )
             candidates.extend(community_candidates)
+            if scope is not None:
+                dates = sorted(item.post.created_at.date() for item in community_candidates)
+                actual_start = dates[0] if dates else None
+                actual_end = dates[-1] if dates else None
+                hints = {
+                    str(record.get("coverage_status", "")).strip().casefold()
+                    for record in records_by_community.get(community.name, ())
+                    if str(record.get("coverage_status", "")).strip()
+                }
+                if "partial" in hints:
+                    coverage_status = "partial"
+                elif "complete" in hints:
+                    coverage_status = "complete"
+                else:
+                    coverage_status = "complete" if actual_start is not None and actual_start <= scope.start_date else "partial"
+                coverage[community.name] = CollectionCoverage(
+                    community=community.name,
+                    requested_start=scope.start_date,
+                    requested_end=scope.end_date,
+                    actual_start=actual_start,
+                    actual_end=actual_end,
+                    status=coverage_status,
+                    scanned_posts=len(community_candidates),
+                )
+            effective_limit = scope.deep_read_limit_per_community if scope else min(shortlist_limit, 30)
+            shortlist = (
+                score_stratified_shortlist(community_candidates, limit=effective_limit)
+                if scope else score_shortlist(community_candidates, limit=effective_limit)
+            )
             shortlisted_targets.extend(
                 (community.name, entry)
-                for entry in score_shortlist(community_candidates, limit=min(shortlist_limit, 30))
+                for entry in shortlist
             )
         shortlisted = [entry for _, entry in shortlisted_targets]
         if not deep_read:
-            return CollectionResult(tuple(candidates), tuple(shortlisted), (), tuple(failures))
+            return CollectionResult(tuple(candidates), tuple(shortlisted), (), tuple(failures), coverage)
 
         deep_reads: list[ThreadDocument] = []
         for position, (community_name, entry) in enumerate(shortlisted_targets):
@@ -202,7 +251,7 @@ class OpenCliCollector:
                 for thread in deep_reads for comment in thread.comments
             ],
         )
-        return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures))
+        return CollectionResult(tuple(candidates), tuple(shortlisted), tuple(deep_reads), tuple(failures), coverage)
 
     def collect_round_two(
         self,
@@ -272,6 +321,15 @@ def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]
     )
 
 
+def _range_command(community: str, scope: CollectionScope) -> tuple[str, ...]:
+    return (
+        "opencli", "opportunity-reddit", "range", community,
+        "--start-date", scope.start_date.isoformat(), "--end-date", scope.end_date.isoformat(),
+        "--limit", str(scope.listing_limit_per_community), "-f", "json",
+        "--window", "foreground", "--site-session", "persistent",
+    )
+
+
 def _keyword_search_command(term: str, limit: int) -> tuple[str, ...]:
     return (
         "opencli", "reddit", "search", term, "--limit", str(limit), "-f", "json",
@@ -281,10 +339,10 @@ def _keyword_search_command(term: str, limit: int) -> tuple[str, ...]:
 
 def _read_command(post_id: str, settings: CollectionSettings) -> tuple[str, ...]:
     return (
-        "opencli", "reddit", "read", post_id.removeprefix("t3_"), "-f", "json",
+        "opencli", "opportunity-reddit", "read", post_id.removeprefix("t3_"), "-f", "json",
         "--window", "foreground", "--site-session", "persistent", "--sort", "best",
         "--limit", str(settings.comments_per_post), "--depth", str(settings.comment_depth),
-        "--replies", str(settings.replies_per_comment), "--expand-more", str(settings.expand_more).lower(),
+        "--replies", str(settings.replies_per_comment),
         "--expand-rounds", str(settings.expand_rounds), "--max-length", str(settings.max_comment_length),
     )
 
@@ -350,11 +408,17 @@ def _thread_from_raw(document: Any, post: Any) -> ThreadDocument:
             continue
         identifier = record.get("id")
         comment_id = identifier.strip() if isinstance(identifier, str) and identifier.strip() else f"comment_{position + 1}"
-        url = record.get("permalink")
+        url = record.get("url", record.get("permalink"))
         comment_url = url if isinstance(url, str) and url.strip() else f"{post.url}?comment={comment_id}"
         author = record.get("author")
         comment_author = author.strip() if isinstance(author, str) else ""
-        comments.append(ThreadComment(comment_id, body.strip(), comment_url, comment_author))
+        parent_id = str(record.get("parent_id", "") or "")
+        try:
+            depth = max(1, int(record.get("depth", 1) or 1))
+            score = int(record.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            depth, score = 1, 0
+        comments.append(ThreadComment(comment_id, body.strip(), comment_url, comment_author, parent_id, depth, score))
     return ThreadDocument(post=post, comments=tuple(comments))
 
 

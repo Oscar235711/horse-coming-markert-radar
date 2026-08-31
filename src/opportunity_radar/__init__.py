@@ -41,6 +41,8 @@ from .evidence import (
     classify_diesel_evidence,
 )
 from .models import (
+    CollectionCoverage,
+    CollectionScope,
     Community,
     CommunityCatalog,
     CollectionSettings,
@@ -52,10 +54,11 @@ from .models import (
     TopicRecord,
     WindowedPost,
 )
+from .metrics import build_report_metrics
 from .normalization import normalize_and_deduplicate
 from .keywords import KeywordCandidate, build_topic_keyword_library, discover_diesel_keywords, select_round_two_terms
 from .library import load_project_library, update_project_library
-from .scoring import score_shortlist
+from .scoring import score_shortlist, score_stratified_shortlist
 from .storage import (
     TopicRegistry, RunPaths, append_failure, create_run_paths, persist_thread,
     read_manifest, write_keyword_library, write_manifest, write_normalized_records,
@@ -80,6 +83,8 @@ __all__ = [
     "AnalysisField",
     "CollectionSettings",
     "CollectionFailure",
+    "CollectionCoverage",
+    "CollectionScope",
     "CollectionResult",
     "RoundTwoCollectionResult",
     "DEFAULT_BASE_URL",
@@ -140,6 +145,7 @@ __all__ = [
     "select_round_two_terms",
     "read_manifest",
     "score_shortlist",
+    "score_stratified_shortlist",
     "window_posts",
     "write_manifest",
     "write_community_catalog",

@@ -1,6 +1,6 @@
 param(
   [Parameter(Position = 0, Mandatory = $true)]
-  [ValidateSet("init", "paths", "doctor", "status", "verify-baseline", "fetch-details", "deep-dive", "report", "run", "resume", "export", "communities-suggest", "communities-approve")]
+  [ValidateSet("init", "paths", "doctor", "serve", "status", "verify-baseline", "fetch-details", "deep-dive", "report", "run", "resume", "export", "communities-suggest", "communities-approve", "keywords-suggest", "keywords-approve")]
   [string]$Command,
   [string]$EvidenceCsv,
   [string]$OutputDir,
@@ -12,7 +12,17 @@ param(
   [string]$RunId,
   [string]$Formats,
   [string]$Suggestion,
-  [string]$SuggestionId
+  [string]$SuggestionId,
+  [string]$StartDate,
+  [string]$EndDate,
+  [ValidateSet("quick", "standard", "deep")]
+  [string]$Depth,
+  [ValidateSet("codex", "rules", "deepseek")]
+  [string]$AnalysisEngine,
+  [string]$Communities,
+  [string]$HostAddress,
+  [int]$Port,
+  [switch]$NoOpen
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,8 +115,21 @@ switch ($Command) {
   "doctor" {
     Invoke-RadarPythonCli -Arguments @("doctor")
   }
+  "serve" {
+    $serveConfig = if ($RunConfigPath) { $RunConfigPath } else { Join-Path $repoRoot "configs\diesel_90d.yaml" }
+    $arguments = @("serve", "--config", $serveConfig)
+    if ($HostAddress) { $arguments += @("--host", $HostAddress) }
+    if ($Port) { $arguments += @("--port", [string]$Port) }
+    if ($NoOpen) { $arguments += "--no-open" }
+    Invoke-RadarPythonCli -Arguments $arguments
+  }
   "status" {
-    Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
+    if ($RunId) {
+      Invoke-RadarPythonCli -Arguments @("status", "--run-id", $RunId)
+    }
+    else {
+      Get-Content -Raw -Encoding UTF8 (Join-Path (Split-Path -Parent $PSScriptRoot) "docs\CURRENT_BASELINE.md")
+    }
   }
   "verify-baseline" {
     & (Join-Path $PSScriptRoot "verify-baseline.ps1") -DataRoot $DataRoot -OutputRoot $OutputRoot
@@ -137,6 +160,11 @@ switch ($Command) {
     if (-not $RunConfigPath) { throw "run requires -RunConfigPath" }
     $arguments = @("run", "--config", $RunConfigPath)
     if ($RunId) { $arguments += @("--run-id", $RunId) }
+    if ($StartDate) { $arguments += @("--start-date", $StartDate) }
+    if ($EndDate) { $arguments += @("--end-date", $EndDate) }
+    if ($Depth) { $arguments += @("--depth", $Depth) }
+    if ($AnalysisEngine) { $arguments += @("--analysis-engine", $AnalysisEngine) }
+    if ($Communities) { $arguments += @("--communities", $Communities) }
     Invoke-RadarPythonCli -Arguments $arguments
   }
   "resume" {
@@ -156,5 +184,13 @@ switch ($Command) {
   "communities-approve" {
     if (-not $Suggestion -or -not $SuggestionId) { throw "communities-approve requires -Suggestion and -SuggestionId" }
     Invoke-RadarPythonCli -Arguments @("communities", "approve", "--suggestion", $Suggestion, "--suggestion-id", $SuggestionId)
+  }
+  "keywords-suggest" {
+    if (-not $RunId) { throw "keywords-suggest requires -RunId" }
+    Invoke-RadarPythonCli -Arguments @("keywords", "suggest", "--run-id", $RunId)
+  }
+  "keywords-approve" {
+    if (-not $Suggestion) { throw "keywords-approve requires -Suggestion (approval JSON file)" }
+    Invoke-RadarPythonCli -Arguments @("keywords", "approve", "--file", $Suggestion)
   }
 }

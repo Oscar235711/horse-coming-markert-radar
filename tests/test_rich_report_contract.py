@@ -52,7 +52,7 @@ def _post(index: int):
     )
 
 
-def test_topic_has_what_to_sell_business_sections(tmp_path: Path):
+def test_topic_has_evidence_calibrated_decision_fields_without_fake_business_data(tmp_path: Path):
     posts = tuple(_post(i) for i in range(3))
     signals = tuple(opportunity_radar.PostSignal(
         post=p,
@@ -62,13 +62,13 @@ def test_topic_has_what_to_sell_business_sections(tmp_path: Path):
     topic = opportunity_radar.TopicAggregator(
         pro=FixturePro(), registry=opportunity_radar.TopicRegistry(tmp_path / "registry.json"), as_of=AS_OF,
     ).aggregate("Cummins", signals).formal_topics[0]
-    assert 0 <= topic["opportunity_score"] <= 10
+    assert 0 <= topic["signal_score"] <= 10
     assert topic["decision"]["status"] in {"priority_validate", "validate", "observe", "skip"}
     assert topic["top_buyer_complaint"]
-    assert topic["best_opening_angle"]
     assert topic["demand_validation"]["posts"] == 3
-    assert "manufacturing_profile" in topic
-    assert "seller_verdict" in topic
+    assert topic["product_decision"]["type"] == "暂不形成产品机会"
+    assert "manufacturing_profile" not in topic
+    assert "business_profile" not in topic
 
 
 def test_html_contains_rich_report_sections_and_single_payload(tmp_path: Path):
@@ -89,11 +89,28 @@ def test_html_contains_rich_report_sections_and_single_payload(tmp_path: Path):
             "seller_verdict": "机会假设，建议先验证",
             "coverage": {"posts": 3, "authors": 3, "comments": 4, "evidence": 1},
         }], "keyword_library": {"candidates": []}, "crawl_counts": {"saved_comments": 4},
+        "report_metrics": {
+            "community_count": 1, "topic_count": 1, "formal_topic_count": 1,
+            "weak_topic_count": 0, "scanned_post_count": 30, "deep_read_post_count": 8,
+            "analyzed_post_count": 7, "topic_post_count": 3, "post_author_count": 3,
+            "commenter_count": 4, "participant_count": 7, "collected_comment_count": 4,
+            "evidence_count": 1, "communities": {"Cummins": {"topic_count": 1}},
+        },
+        "research_scope": {"start_date": "2026-01-01", "end_date": "2026-08-26", "depth": "standard", "coverage": {}},
     }
     path = opportunity_radar.render_html(analysis, tmp_path / "report.html")
     html = path.read_text(encoding="utf-8")
-    for section in ("Demand Validation", "Seller Insight", "Pain Points", "Seller Opportunities", "Why hasn’t this been done?", "Manufacturing Profile", "Seller Verdict"):
+    for section in ("需求验证", "用户与使用场景", "用户任务", "主要痛点", "当前产品与解决办法", "现有方案不足", "产品决策", "SuncentAuto相关性", "下一步验证", "帖子 / 评论证据", "数据覆盖与研究限制"):
         assert section in html
-    assert "report-open" in html
-    assert "report-back" in html
+    assert "function showTopicPreview" in html
+    assert "function openTopicReport" in html
+    assert "function returnToPreview" in html
+    assert "查看完整话题报告" in html
+    assert "hashchange" in html
+    select_topic_body = html.split("function selectTopic", 1)[1].split("function ", 1)[0]
+    assert "add('report-open')" not in select_topic_body
+    assert "const m=DATA.report_metrics||{}" in html
+    assert "TOPICS.reduce" not in html
+    for unsupported in ("Pricing band", "Margin potential", "Manufacturing Profile"):
+        assert unsupported not in html
     assert html.count('id="analysis-data"') == 1

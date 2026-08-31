@@ -300,14 +300,14 @@ class FakeTooling:
     def __call__(self, arguments: tuple[str, ...]) -> str:
         self.calls.append(arguments)
         if arguments[:3] == ("opencli", "reddit", "whoami"):
-            return json.dumps({"username": "fixture-user"})
-        if arguments[:3] == ("opencli", "reddit", "hot"):
+            return json.dumps([{"field": "Username", "value": "u/fixture-user"}])
+        if arguments[:3] == ("opencli", "opportunity-reddit", "range"):
             return json.dumps([{"id": "probe", "title": "Probe", "permalink": "/r/test/comments/probe/example/", "subreddit": arguments[3], "selftext": "probe", "author": "fixture", "created_utc": AS_OF.timestamp(), "score": 1, "num_comments": 1}])
         raise AssertionError(f"unexpected doctor command: {arguments}")
 
 
-def test_doctor_warns_for_missing_deepseek_key_but_still_checks_reddit_and_excel_support(tmp_path: Path) -> None:
-    """Doctor must degrade gracefully when only the Reddit side is configured."""
+def test_doctor_treats_deepseek_as_optional_and_checks_codex_reddit_excel(tmp_path: Path) -> None:
+    """The default Codex workflow must not be blocked by a missing DeepSeek key."""
     opencli = FakeTooling()
     report = opportunity_radar.RadarCliApp(
         runs_root=tmp_path / "runs",
@@ -317,8 +317,9 @@ def test_doctor_warns_for_missing_deepseek_key_but_still_checks_reddit_and_excel
         now=lambda: AS_OF,
     ).doctor()
 
-    assert report["status"] == "warning"
-    assert any("DEEPSEEK_API_KEY" in warning for warning in report["warnings"])
+    assert not any("DEEPSEEK_API_KEY" in warning for warning in report["warnings"])
+    assert report["checks"]["deepseek"]["required"] is False
+    assert report["checks"]["codex"]["status"] in {"ok", "warning"}
     assert report["checks"]["reddit"]["whoami"]["status"] == "ok"
     assert report["checks"]["excel"]["status"] in {"ok", "warning"}
     assert opencli.calls[0] == (
@@ -332,13 +333,14 @@ def test_doctor_warns_for_missing_deepseek_key_but_still_checks_reddit_and_excel
         "--site-session",
         "persistent",
     )
-    assert opencli.calls[1] == (
+    assert opencli.calls[1][:5] == (
         "opencli",
-        "reddit",
-        "hot",
+        "opportunity-reddit",
+        "range",
         "Cummins",
-        "--limit",
-        "1",
+        "--start-date",
+    )
+    assert opencli.calls[1][-6:] == (
         "-f",
         "json",
         "--window",

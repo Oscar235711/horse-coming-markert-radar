@@ -104,6 +104,10 @@ class ProTopicProposal:
     competitor_tags: tuple[str, ...] = ()
     confidence: float = 0.0
     validation_questions: tuple[str, ...] = ()
+    user_types: tuple[str, ...] = ()
+    consequences: tuple[EvidenceBackedClaim, ...] = ()
+    risks: tuple[EvidenceBackedClaim, ...] = ()
+    product_decision: str = "no_product"
 
 
 class ProTopicConsolidator(Protocol):
@@ -247,7 +251,11 @@ class TopicAggregator:
         baseline_posts = [post for post in posts if self._is_baseline(post.created_at)]
         current_rate = len(current_posts) / CURRENT_DAYS
         baseline_rate = len(baseline_posts) / BASELINE_DAYS
-        commenter_count = len(_distinct_commenters(post_ids, signal_by_id))
+        commenter_names = _distinct_commenters(post_ids, signal_by_id)
+        commenter_count = len(commenter_names)
+        post_author_names = {
+            post.author.casefold() for post in posts if post.author and post.author.strip()
+        }
         formal = _is_formal(posts, commenter_count)
         summary = _validated_claim(proposal.summary, post_ids, signal_by_id)
         pains = _validated_claims(proposal.pains, post_ids, signal_by_id)
@@ -257,6 +265,8 @@ class TopicAggregator:
         opportunity_hypotheses = _validated_claims(
             proposal.opportunity_hypotheses, post_ids, signal_by_id
         )
+        consequences = _validated_claims(proposal.consequences, post_ids, signal_by_id)
+        risks = _validated_claims(proposal.risks, post_ids, signal_by_id)
         record = self._registry.get_or_create(
             community=community,
             canonical_key=proposal.canonical_key,
@@ -275,6 +285,10 @@ class TopicAggregator:
             "post_count": len(posts),
             "author_count": len({post.author for post in posts if post.author}),
             "commenter_count": commenter_count,
+            "participant_count": len(post_author_names | commenter_names),
+            "collected_comment_count": sum(
+                len(signal_by_id[post_id].comments) for post_id in post_ids
+            ),
             "upvote_count": sum(max(0, post.score) for post in posts),
             "current_post_count": len(current_posts),
             "baseline_post_count": len(baseline_posts),
@@ -284,11 +298,15 @@ class TopicAggregator:
             "vehicles": list(proposal.vehicles),
             "platforms": list(proposal.platforms),
             "scenarios": list(proposal.scenarios),
+            "user_types": list(proposal.user_types),
             "pains": [claim["text"] for claim in pains],
             "needs": [claim["text"] for claim in needs],
             "current_solutions": [claim["text"] for claim in current_solutions],
             "gaps": [claim["text"] for claim in gaps],
             "opportunity_hypotheses": [claim["text"] for claim in opportunity_hypotheses],
+            "consequences": [claim["text"] for claim in consequences],
+            "risks": [claim["text"] for claim in risks],
+            "product_decision_key": proposal.product_decision,
             "category_tags": list(proposal.category_tags),
             "brand_tags": list(proposal.brand_tags),
             "competitor_tags": list(proposal.competitor_tags),
@@ -304,11 +322,14 @@ class TopicAggregator:
                 "current_solutions": current_solutions,
                 "gaps": gaps,
                 "opportunity_hypotheses": opportunity_hypotheses,
+                "consequences": consequences,
+                "risks": risks,
             },
             "field_evidence": {
                 "vehicles": _labelled_evidence(proposal.vehicles, evidence),
                 "platforms": _labelled_evidence(proposal.platforms, evidence),
                 "scenarios": _labelled_evidence(proposal.scenarios, evidence),
+                "user_types": _labelled_evidence(proposal.user_types, evidence),
                 "category_tags": _labelled_evidence(proposal.category_tags, evidence),
                 "brand_tags": _labelled_evidence(proposal.brand_tags, evidence),
                 "competitor_tags": _labelled_evidence(proposal.competitor_tags, evidence),
@@ -382,7 +403,9 @@ def export_topic_analysis(
     if "html" in requested_formats:
         from .report import render_html
         report_path = render_html(canonical, directory / "report.html")
-        _write_json(directory / "community_topic_map.json", _community_topic_map(canonical))
+        # ``render_html`` writes the graph projection too.  Keep a single
+        # writer here so the normalized case-insensitive community map is not
+        # overwritten by the legacy projection below it.
     return TopicExportArtifacts(analysis_json, community_topics_json, workbook_path, report_path)
 
 
@@ -596,12 +619,15 @@ def _first_value(values: Any, fallback: str = "未知") -> str:
 
 
 def _add_business_fields(topics: list[dict[str, Any]]) -> None:
-    """Add evidence-calibrated, WhatToSell-inspired decision fields.
-
-    These fields deliberately separate observed community counts from business
-    inference. They make the HTML and XLSX useful to product teams without
-    pretending a Reddit sample is a market forecast.
-    """
+    """Add signal prioritization without inventing commercial or engineering facts."""
+    decision_tags = {
+        "improve_existing": "改进现有产品",
+        "new_fitment_sku": "新增车型/年份SKU",
+        "accessory_bundle": "配件或组合包",
+        "new_product": "新产品开发",
+        "content_service": "内容、工具或服务机会",
+        "no_product": "暂不形成产品机会",
+    }
     for topic in topics:
         heat = float(topic.get("heat_score", 0) or 0)
         confidence = float(topic.get("confidence", 0) or 0)
@@ -618,14 +644,21 @@ def _add_business_fields(topics: list[dict[str, Any]]) -> None:
             decision = {"status": "skip", "label": "暂不排序", "reason": "当前证据不足"}
 
         complaint = _first_value(topic.get("pains"), _first_value(topic.get("summary"), "未知"))
-        opening = _first_value(topic.get("opportunity_hypotheses"), _first_value(topic.get("gaps"), "待验证"))
-        platforms = list(topic.get("platforms", []) or [])
-        vehicles = list(topic.get("vehicles", []) or [])
-        scenarios = list(topic.get("scenarios", []) or [])
-        topic["opportunity_score"] = score
+        decision_key = str(topic.get("product_decision_key", "no_product")).strip().casefold()
+        if decision_key not in decision_tags or (decision_key != "no_product" and not topic.get("opportunity_hypotheses")):
+            decision_key = "no_product"
+        topic["signal_score"] = score
         topic["decision"] = decision
         topic["top_buyer_complaint"] = complaint
-        topic["best_opening_angle"] = opening
+        topic["product_decision"] = {
+            "type": decision_tags[decision_key],
+            "status": "inference" if decision_key != "no_product" else "unknown",
+            "rationale": (
+                _first_value(topic.get("opportunity_hypotheses"), "当前证据未给出可验证的产品判断")
+                if decision_key != "no_product"
+                else "当前证据未明确支持改款、SKU、组合包或新品判断。"
+            ),
+        }
         topic["demand_validation"] = {
             "posts": int(topic.get("post_count", 0) or 0),
             "authors": int(topic.get("author_count", 0) or 0),
@@ -635,37 +668,10 @@ def _add_business_fields(topics: list[dict[str, Any]]) -> None:
             "trend": topic.get("trend", "unknown"),
             "note": "社区样本信号，不代表 Reddit 全量市场占有率。",
         }
-        topic["seller_insight"] = {
-            "who_should_sell": "具备柴油皮卡适配、安装和售后能力的团队",
-            "who_should_avoid": "无法核对车型适配或承接售后验证的通用铺货团队",
-            "positioning_angle": opening,
-            "competition_note": _first_value(topic.get("competitor_tags"), "未从当前样本确认"),
-            "basis": "推断：由话题的场景、方案缺口和竞品提及生成，需业务复核。",
+        topic["suncent_relevance"] = {
+            "status": "unknown",
+            "value": "待业务补充：需与公司现有品类、适配能力、供应链和售后数据交叉验证。",
         }
-        topic["business_profile"] = {
-            "pricing": "未知，需结合目标SKU和竞品价格验证",
-            "margin": "未知，需结合采购、加工和售后成本验证",
-            "shipping": "未知，需按尺寸、重量和套件复杂度验证",
-            "returns": "未知，适配件需重点验证退货风险",
-            "seasonality": "未知，需按最近90天与历史基线持续观察",
-            "basis": "未知/待验证，不将社区讨论当作成本事实。",
-        }
-        topic["why_not_done"] = {
-            "reasons": list(topic.get("gaps", []) or []) or ["当前样本未确认未被解决的具体原因"],
-            "cost_supply_chain_impact": "待验证：需要评估车型适配、SKU数量、开模/加工与库存成本。",
-            "business_model_conflict": "未知：需访谈用户和渠道确认是否存在安装、售后或合规边界。",
-        }
-        topic["manufacturing_profile"] = {
-            "platform_fitment": list(dict.fromkeys([*platforms, *vehicles])) or ["未知"],
-            "material_process": "待工程验证",
-            "tooling": "待工程验证",
-            "sku_complexity": "高" if len(set(platforms + vehicles)) >= 4 else ("中" if platforms or vehicles else "未知"),
-            "installation": "待验证：报告只保留社区提到的安装问题，不替代工程说明。",
-        }
-        topic["seller_verdict"] = (
-            f"{decision['label']}：这是基于社区样本的机会假设，不是开品结论。"
-            if decision["status"] != "skip" else "暂不排序：先补充可回溯证据后再判断。"
-        )
         topic["coverage"] = {
             "posts": int(topic.get("post_count", 0) or 0),
             "authors": int(topic.get("author_count", 0) or 0),
