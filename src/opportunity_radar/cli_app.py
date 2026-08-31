@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from datetime import date, timedelta
 from datetime import UTC, datetime
@@ -116,11 +117,20 @@ class RadarCliApp:
             ),
             model=self._deepseek_pro_model(),
         )
+        self._has_custom_codex_client = codex_client is not None
         self._codex_client = codex_client or CodexAnalysisClient(
             workspace=self._repo_root,
             schema_root=self._repo_root / "schemas",
             executable=self._find_executable("RADAR_CODEX_EXE", "codex"),
         )
+        try:
+            configured_concurrency = int(self._environment.get("RADAR_CODEX_CONCURRENCY", "2"))
+        except (TypeError, ValueError):
+            configured_concurrency = 2
+        # Keep injected test doubles deterministic; production Codex calls can
+        # run two independent CLI processes at once to avoid one-call-at-a-time
+        # startup overhead. Set RADAR_CODEX_CONCURRENCY=1 to disable this.
+        self._codex_concurrency = max(1, configured_concurrency) if not self._has_custom_codex_client else 1
         self._exporter = exporter or self._default_exporter
         self._now = now or (lambda: datetime.now(UTC))
         self._flash_rule_fallback_used = False
@@ -503,50 +513,70 @@ class RadarCliApp:
         self._write_state(paths.state_path, state)
 
         flash_failures: list[CollectionFailure] = []
-        for thread in eligible_threads:
-            if thread.post.post_id in analyses_by_post:
-                continue
-            try:
-                if analysis_engine == "codex":
-                    analysis = self._codex_client.extract_post(thread)
-                elif analysis_engine == "rules":
-                    analysis = _rule_extract_post(thread, domain)
-                    self._flash_rule_fallback_used = True
-                elif analysis_engine == "deepseek":
-                    if not self._environment.get("DEEPSEEK_API_KEY", "").strip():
-                        raise DeepSeekError("DeepSeek 未配置。")
-                    analysis = self._extract_flash(thread)
-                else:
-                    if self._environment.get("DEEPSEEK_API_KEY", "").strip():
+        pending_threads = [thread for thread in eligible_threads if thread.post.post_id not in analyses_by_post]
+
+        def record_success(thread: ThreadDocument, analysis: PostAnalysis) -> None:
+            analyses_by_post[thread.post.post_id] = analysis
+            self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
+            state["progress"]["completed"] = len(analyses_by_post)
+            self._write_state(paths.state_path, state)
+
+        def record_failure(thread: ThreadDocument, error: Exception) -> None:
+            failure = CollectionFailure(
+                community=thread.post.subreddit,
+                post_id=thread.post.post_id,
+                stage="flash_extract",
+                message=f"{type(error).__name__}: external operation failed",
+            )
+            flash_failures.append(failure)
+            self._write_failed_analysis_checkpoint(paths, thread.post.post_id, failure.message)
+
+        if analysis_engine == "codex" and self._codex_concurrency > 1 and pending_threads:
+            # Each Codex request is an independent read-only process. Running a
+            # small number concurrently removes repeated CLI startup latency,
+            # while keeping Chrome collection itself strictly serialized.
+            with ThreadPoolExecutor(max_workers=self._codex_concurrency) as executor:
+                futures = {
+                    executor.submit(self._codex_client.extract_post, thread): thread
+                    for thread in pending_threads
+                }
+                for future in as_completed(futures):
+                    thread = futures[future]
+                    try:
+                        record_success(thread, future.result())
+                    except Exception as error:
+                        record_failure(thread, error)
+        else:
+            for thread in pending_threads:
+                try:
+                    if analysis_engine == "codex":
+                        analysis = self._codex_client.extract_post(thread)
+                    elif analysis_engine == "rules":
+                        analysis = _rule_extract_post(thread, domain)
+                        self._flash_rule_fallback_used = True
+                    elif analysis_engine == "deepseek":
+                        if not self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                            raise DeepSeekError("DeepSeek 未配置。")
                         analysis = self._extract_flash(thread)
                     else:
-                        raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
-                analyses_by_post[thread.post.post_id] = analysis
-                self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
-                state["progress"]["completed"] = len(analyses_by_post)
-                self._write_state(paths.state_path, state)
-            except Exception as error:
-                # The first version must remain runnable before the gateway key is
-                # available. Rule extraction is explicit in the final model_mode.
-                try:
-                    allow_rule_fallback = analysis_engine == "legacy" and not self._environment.get("DEEPSEEK_API_KEY", "").strip()
-                    analysis = _rule_extract_post(thread, domain) if allow_rule_fallback else None
-                except Exception:
-                    analysis = None
-                if analysis is not None and (analysis.topics or analysis.claims):
-                    self._flash_rule_fallback_used = True
-                    analyses_by_post[thread.post.post_id] = analysis
-                    self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
-                    continue
-                flash_failures.append(
-                    CollectionFailure(
-                        community=thread.post.subreddit,
-                        post_id=thread.post.post_id,
-                        stage="flash_extract",
-                        message=f"{type(error).__name__}: external operation failed",
-                    )
-                )
-                self._write_failed_analysis_checkpoint(paths, thread.post.post_id, flash_failures[-1].message)
+                        if self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                            analysis = self._extract_flash(thread)
+                        else:
+                            raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
+                    record_success(thread, analysis)
+                except Exception as error:
+                    # The first version must remain runnable before the gateway key is
+                    # available. Rule extraction is explicit in the final model_mode.
+                    try:
+                        allow_rule_fallback = analysis_engine == "legacy" and not self._environment.get("DEEPSEEK_API_KEY", "").strip()
+                        analysis = _rule_extract_post(thread, domain) if allow_rule_fallback else None
+                    except Exception:
+                        analysis = None
+                    if analysis is not None and (analysis.topics or analysis.claims):
+                        self._flash_rule_fallback_used = True
+                        record_success(thread, analysis)
+                        continue
+                    record_failure(thread, error)
 
         state["counts"]["analyzed_posts"] = len(analyses_by_post)
         state["counts"]["failure_count"] = len(collection.failures) + len(flash_failures)
