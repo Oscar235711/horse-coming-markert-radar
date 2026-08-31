@@ -16,6 +16,7 @@ from .storage import RunPaths, append_failure, persist_thread, write_normalized_
 from .windowing import window_posts
 
 CommandRunner = Callable[[tuple[str, ...]], str]
+ProgressReporter = Callable[[Mapping[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,14 +103,22 @@ class OpenCliCollector:
         deep_read: bool = False,
         shortlist_limit: int = 30,
         scope: CollectionScope | None = None,
+        progress: ProgressReporter | None = None,
     ) -> CollectionResult:
         """Preserve all list surfaces, then optionally deep-read up to 30 posts/community."""
         if shortlist_limit < 1:
             raise ValueError("shortlist_limit must be at least one")
         communities = tuple(communities)
+        if progress is not None:
+            progress({
+                "stage": "collecting",
+                "completed": 0,
+                "total": len(communities),
+                "message": "正在采集社区帖子列表。",
+            })
         records_by_community: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         failures: list[CollectionFailure] = []
-        for community in communities:
+        for community_index, community in enumerate(communities):
             commands = (
                 (("range", _range_command(community.name, scope)),)
                 if scope is not None else _listing_commands(community.name)
@@ -143,6 +152,14 @@ class OpenCliCollector:
                         "error_type": type(error).__name__,
                         "retryable": True,
                     })
+            if progress is not None:
+                progress({
+                    "stage": "collecting",
+                    "completed": community_index + 1,
+                    "total": len(communities),
+                    "community": community.name,
+                    "message": f"已完成 r/{community.name} 帖子列表采集。",
+                })
 
         candidates: list[WindowedPost] = []
         shortlisted_targets: list[tuple[str, ShortlistedPost]] = []
@@ -191,9 +208,23 @@ class OpenCliCollector:
             )
         shortlisted = [entry for _, entry in shortlisted_targets]
         if not deep_read:
+            if progress is not None:
+                progress({
+                    "stage": "collected",
+                    "completed": len(communities),
+                    "total": len(communities),
+                    "message": "帖子列表采集完成。",
+                })
             return CollectionResult(tuple(candidates), tuple(shortlisted), (), tuple(failures), coverage)
 
         deep_reads: list[ThreadDocument] = []
+        if progress is not None:
+            progress({
+                "stage": "deep_read",
+                "completed": 0,
+                "total": len(shortlisted_targets),
+                "message": "正在获取高信号帖子的正文和评论。",
+            })
         for position, (community_name, entry) in enumerate(shortlisted_targets):
             checkpoint = paths.checkpoints_dir / f"{entry.post.post_id}.json"
             prior = self._successful_checkpoints.get(checkpoint)
@@ -205,6 +236,14 @@ class OpenCliCollector:
                 if isinstance(prior.get("thread"), (Mapping, list)):
                     persist_thread(paths, entry.post.post_id, prior["thread"])
                 deep_reads.append(_thread_from_checkpoint(prior, entry.post))
+                if progress is not None:
+                    progress({
+                        "stage": "deep_read",
+                        "completed": position + 1,
+                        "total": len(shortlisted_targets),
+                        "community": community_name,
+                        "message": f"已完成 {position + 1}/{len(shortlisted_targets)} 篇深读。",
+                    })
                 continue
             if position:
                 self._sleeper(self._settings.request_interval_seconds)
@@ -242,6 +281,14 @@ class OpenCliCollector:
                     "stage": failure.stage,
                     "error_type": type(error).__name__,
                     "retryable": True,
+                })
+            if progress is not None:
+                progress({
+                    "stage": "deep_read",
+                    "completed": position + 1,
+                    "total": len(shortlisted_targets),
+                    "community": community_name,
+                    "message": f"已完成 {position + 1}/{len(shortlisted_targets)} 篇深读。",
                 })
         write_normalized_records(
             paths,

@@ -15,6 +15,7 @@ from uuid import uuid4
 import webbrowser
 
 from .models import CollectionScope
+from .dashboard import dashboard_html
 
 
 FIXED_COMMUNITIES = ("Cummins", "Duramax", "powerstroke", "FordDiesels")
@@ -205,7 +206,7 @@ def build_server(manager: RunManager, *, host: str = "127.0.0.1", port: int = 87
             path = urlparse(self.path).path
             try:
                 if path == "/":
-                    return self._html(_dashboard_html())
+                    return self._html(dashboard_html(FIXED_COMMUNITIES))
                 if path == "/api/runs":
                     return self._json({"runs": manager.list_runs()})
                 parts = [part for part in path.split("/") if part]

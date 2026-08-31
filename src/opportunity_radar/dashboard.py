@@ -1,0 +1,71 @@
+"""Browser dashboard for creating and monitoring local Radar runs."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+
+def dashboard_html(communities: Iterable[str]) -> str:
+    """Return the self-contained local task page.
+
+    The page intentionally has no external assets or CDN dependencies so it
+    continues to work when the report is being generated on a restricted
+    company network.
+    """
+    community_markup = "".join(
+        f'<label class="community-option"><input type="checkbox" name="community" value="{name}" checked><span>r/{name}</span><small>柴油皮卡社区</small></label>'
+        for name in communities
+    )
+    return """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Opportunity Radar · 采集任务</title>
+  <style>
+    :root{--ink:#29241f;--muted:#766d63;--line:#e4ddd4;--paper:#fffdfa;--canvas:#f4f0ea;--accent:#c95c2c;--accent-dark:#943b20;--green:#39745a;--shadow:0 20px 55px rgba(61,47,32,.10)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 12% -10%,#fff7ed 0,#f4f0ea 42%,#eee8df 100%);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+    .shell{max-width:1120px;margin:0 auto;padding:38px 24px 64px}.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:26px}.eyebrow{color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}.hero h1{font:700 clamp(31px,5vw,46px)/1.05 Georgia,serif;margin:8px 0 10px;letter-spacing:-.025em}.hero p{color:var(--muted);margin:0;max-width:620px}.hero-mark{width:74px;height:74px;border:1px solid #cfbda9;border-radius:50%;display:grid;place-items:center;color:var(--accent-dark);font:700 26px Georgia,serif;background:#fffaf3;box-shadow:0 8px 25px #956f3f1c}.panel{background:rgba(255,253,250,.94);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:25px}.panel-title{display:flex;align-items:baseline;justify-content:space-between;gap:15px;margin-bottom:19px}.panel-title h2{font-size:18px;margin:0}.panel-title p{color:var(--muted);font-size:12px;margin:0}.form-grid{display:grid;grid-template-columns:1.25fr .9fr;gap:22px}.field{min-width:0}.field-title{display:block;font-weight:750;margin-bottom:9px}.date-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.date-row input,select{width:100%;padding:11px 12px;border:1px solid #d8d0c6;border-radius:10px;background:#fff;color:var(--ink);font:inherit}.presets{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}.preset{padding:7px 11px;border:1px solid #ded5ca;border-radius:999px;background:#f5f0e9;color:#665d53;cursor:pointer}.preset:hover,.preset.active{border-color:#d58b68;background:#fff1e7;color:var(--accent-dark)}.helper{color:var(--muted);font-size:12px;margin:8px 0 0}.communities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.community-option{display:grid;grid-template-columns:auto 1fr;column-gap:8px;row-gap:1px;align-items:center;border:1px solid #e2dbd2;border-radius:11px;padding:10px 11px;cursor:pointer;background:#fff}.community-option:hover{border-color:#d9a486}.community-option input{accent-color:var(--accent);width:16px;height:16px;grid-row:span 2}.community-option span{font-weight:700}.community-option small{color:var(--muted);font-size:11px}.engine{border:1px solid #e2dbd2;border-radius:11px;padding:12px;background:#fcfaf7}.engine strong{display:block}.engine span{color:var(--muted);font-size:12px}.actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:23px;padding-top:19px;border-top:1px solid #eee7df}.primary{border:0;border-radius:10px;padding:12px 18px;background:var(--accent);color:#fff;font-weight:750;cursor:pointer;box-shadow:0 6px 15px #b9512a2e}.primary:hover{background:var(--accent-dark)}.primary:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}.notice{color:var(--muted);font-size:13px}.notice.error{color:#a23a32}.runs{margin-top:30px}.runs-head{display:flex;justify-content:space-between;align-items:baseline;gap:15px;margin-bottom:11px}.runs-head h2{font-size:19px;margin:0}.runs-head span{color:var(--muted);font-size:12px}.run-list{display:grid;gap:12px}.run-card{background:rgba(255,253,250,.95);border:1px solid var(--line);border-radius:15px;padding:17px 18px}.run-top{display:flex;justify-content:space-between;align-items:flex-start;gap:15px}.run-id{font-weight:800;letter-spacing:.01em}.run-meta{color:var(--muted);font-size:12px;margin-top:3px}.status{white-space:nowrap;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:750;background:#eee8df;color:#75695d}.status.running,.status.queued{background:#fff0df;color:#a34d23}.status.completed{background:#e4f1e8;color:var(--green)}.status.failed{background:#f8e4e0;color:#a23a32}.progress-wrap{margin:13px 0 8px}.progress-line{height:9px;background:#ebe4db;border-radius:99px;overflow:hidden}.progress-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,#d9783e,#c44f2d);transition:width .35s ease}.progress-fill.complete{background:linear-gradient(90deg,#5b9b78,#39745a)}.progress-label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:5px}.run-counts{display:flex;flex-wrap:wrap;gap:7px 16px;color:#5c544b;font-size:12px;margin-top:7px}.run-counts b{color:var(--ink)}.run-bottom{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:13px;padding-top:11px;border-top:1px solid #eee8df}.links{display:flex;gap:12px;flex-wrap:wrap}.links a{color:var(--accent-dark);font-weight:750;text-decoration:none}.links a:hover{text-decoration:underline}.retry{border:1px solid #ddc7b7;background:#fff7ef;color:var(--accent-dark);border-radius:8px;padding:6px 10px;cursor:pointer}.failure{color:#a23a32;font-size:12px;max-width:620px}.empty{border:1px dashed #d7cec3;border-radius:13px;padding:24px;text-align:center;color:var(--muted);background:#fffaf5}@media(max-width:760px){.shell{padding:25px 14px 45px}.hero{align-items:flex-start}.hero-mark{display:none}.form-grid{grid-template-columns:1fr}.communities{grid-template-columns:1fr}.date-row{grid-template-columns:1fr 1fr}.panel{padding:18px}.run-top{display:block}.status{display:inline-block;margin-top:9px}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div><div class="eyebrow">Local research workbench</div><h1>Opportunity Radar</h1><p>选择 Reddit 社区、时间范围和采集深度。任务完成后，HTML、Excel 和 JSON 会在这里直接提供下载。</p></div>
+      <div class="hero-mark" aria-hidden="true">OR</div>
+    </header>
+    <section class="panel">
+      <div class="panel-title"><h2>创建采集任务</h2><p>同一时间只运行一个任务，避免 Chrome 会话冲突</p></div>
+      <div class="form-grid">
+      <div class="field"><label class="field-title">时间范围</label><div class="presets"><button class="preset" data-days="30" type="button">最近30天</button><button class="preset active" data-days="90" type="button">最近90天</button><button class="preset" data-days="180" type="button">最近180天</button><button class="preset" data-days="365" type="button">最近365天</button></div><div class="date-row"><input id="start" type="date" aria-label="开始日期"><input id="end" type="date" aria-label="结束日期"></div><p class="helper">可直接修改日期，范围最长365个自然日，结束日期不能晚于今天。</p></div>
+        <div class="field"><label class="field-title" for="depth">采集深度</label><select id="depth"><option value="quick">快速 · 30 篇/社区</option><option value="standard" selected>标准 · 80 篇/社区</option><option value="deep">深度 · 150 篇/社区</option></select><p class="helper">先采集帖子列表，再获取高信号帖子的正文、评论和回复。</p></div>
+        <div class="field"><span class="field-title">固定社区</span><div class="communities">__COMMUNITIES__</div></div>
+        <div class="field"><span class="field-title">分析方式</span><div class="engine"><strong>本机 Codex · 只读结构化分析</strong><span>不会把 API Key、Cookie 或认证信息写入产物。</span></div></div>
+      </div>
+      <div class="actions"><button id="start-run" class="primary" type="button">开始采集</button><span id="message" class="notice" role="status"></span></div>
+    </section>
+    <section class="runs"><div class="runs-head"><h2>任务进度</h2><span>页面每 2 秒自动刷新</span></div><div id="runs" class="run-list"><div class="empty">正在读取任务记录…</div></div></section>
+  </main>
+  <script>
+    const $=selector=>document.querySelector(selector);
+    const today=()=>{const d=new Date();return new Date(d.getFullYear(),d.getMonth(),d.getDate())};
+    const iso=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`};
+    const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const num=value=>Number(value||0).toLocaleString('zh-CN');
+    function preset(days){const end=today(),start=new Date(end);start.setDate(start.getDate()-days+1);$('#start').value=iso(start);$('#end').value=iso(end);document.querySelectorAll('[data-days]').forEach(b=>b.classList.toggle('active',Number(b.dataset.days)===days))}
+    document.querySelectorAll('[data-days]').forEach(button=>button.addEventListener('click',()=>preset(Number(button.dataset.days))));
+    preset(90);
+    const stageNames={queued:'排队中',resume_queued:'等待续跑',configured:'准备中',collecting:'采集帖子列表',deep_read:'获取正文和评论',collected:'采集完成',post_analysis:'帖子分析',topic_consolidation:'社区话题归并',exported:'已完成',failed:'失败'};
+    const stageBounds={queued:[0,4],resume_queued:[4,6],configured:[6,10],collecting:[10,35],deep_read:[35,58],collected:[58,62],post_analysis:[62,78],topic_consolidation:[78,94],exported:[100,100],failed:[100,100]};
+    const legacyProgressMessage=r=>r.progress?.message||'';
+    const legacyFailures=r=>r.failures||[];
+    function percent(run){if(run.status==='completed'||run.stage==='exported')return 100;const stage=run.stage||run.progress?.stage||'configured',bounds=stageBounds[stage]||[6,10],p=run.progress||{};if(Number(p.total)>0)return Math.max(bounds[0],Math.min(bounds[1],Math.round(bounds[0]+(Number(p.completed||0)/Number(p.total))*(bounds[1]-bounds[0]))));return bounds[0]}
+    function label(run){return stageNames[run.stage||run.progress?.stage]||run.status||'未知'}
+    function renderRun(run){const pct=percent(run),active=run.status==='running'||run.status==='queued',counts=run.counts||{},scope=run.collection_scope||{},start=run.start_date||scope.start_date||'',end=run.end_date||scope.end_date||'',depth=run.depth||scope.depth||'',communities=(run.selected_communities||[]).map(x=>'r/'+esc(x)).join('、');const progress=run.progress||{};const failure=legacyFailures(run).slice(0,2).map(item=>esc(item.message||item.stage)).join('；');const links=run.status==='completed'?`<div class="links"><a href="/runs/${encodeURIComponent(run.run_id)}/report" target="_blank">打开 HTML 报告</a><a href="/runs/${encodeURIComponent(run.run_id)}/workbook" download>下载 Excel</a><a href="/api/runs/${encodeURIComponent(run.run_id)}/analysis" download>下载 JSON</a></div>`:run.status==='failed'?`<button class="retry" data-resume="${esc(run.run_id)}" type="button">续跑任务</button>`:'';return `<article class="run-card"><div class="run-top"><div><div class="run-id">${esc(run.run_id)}</div><div class="run-meta">${esc(communities)} · ${esc(start)} → ${esc(end)} · ${esc(depth)}</div></div><span class="status ${active?'running':esc(run.status)}">${esc(label(run))}</span></div><div class="progress-wrap"><div class="progress-line"><div class="progress-fill ${run.status==='completed'?'complete':''}" style="width:${pct}%"></div></div><div class="progress-label"><span>${esc(progress.message||legacyProgressMessage(run)||label(run))}</span><b>${pct}%</b></div></div><div class="run-counts"><span>扫描 <b>${num(counts.candidate_count)}</b></span><span>深读 <b>${num(counts.deep_read_count)}</b></span><span>分析 <b>${num(counts.analyzed_posts)}</b></span><span>话题 <b>${num(counts.topic_count)}</b></span><span>失败 <b>${num(counts.failure_count)}</b></span></div><div class="run-bottom"><div class="failure">${failure}</div>${links}</div></article>`}
+    async function refresh(){try{const response=await fetch('/api/runs',{cache:'no-store'});const data=await response.json();const runs=data.runs||[];$('#runs').innerHTML=runs.length?runs.map(renderRun).join(''):'<div class="empty">尚无任务。选择时间范围后点击“开始采集”。</div>';const active=runs.some(run=>run.status==='running'||run.status==='queued');$('#start-run').disabled=active;document.querySelectorAll('[data-resume]').forEach(button=>button.addEventListener('click',()=>resume(button.dataset.resume)))}catch(error){$('#message').className='notice error';$('#message').textContent='本地服务暂时无响应，请确认窗口中的 radar serve 仍在运行。'}}
+    async function resume(runId){$('#message').className='notice';$('#message').textContent='正在续跑…';const response=await fetch(`/api/runs/${encodeURIComponent(runId)}/resume`,{method:'POST'});const result=await response.json();$('#message').textContent=response.ok?'已重新加入任务队列':(result.message||'续跑失败');refresh()}
+    $('#start-run').addEventListener('click',async()=>{const start=$('#start').value,end=$('#end').value,message=$('#message');if(!start||!end){message.className='notice error';message.textContent='请先选择开始和结束日期。';return}const span=(new Date(`${end}T00:00:00`)-new Date(`${start}T00:00:00`))/86400000+1;if(span<1||span>365){message.className='notice error';message.textContent='时间范围必须为 1 至 365 个自然日。';return}const communities=[...document.querySelectorAll('[name=community]:checked')].map(input=>input.value);if(!communities.length){message.className='notice error';message.textContent='至少选择一个社区。';return}const payload={start_date:start,end_date:end,depth:$('#depth').value,analysis_engine:'codex',communities};$('#start-run').disabled=true;message.className='notice';message.textContent='正在创建任务…';try{const response=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await response.json();message.className=response.ok?'notice':'notice error';message.textContent=response.ok?'任务已启动，下面会显示实时进度':(result.message||'创建任务失败')}catch(error){message.className='notice error';message.textContent='无法连接本地服务。'}refresh()});
+    refresh();setInterval(refresh,2000);
+  </script>
+</body>
+</html>""".replace("__COMMUNITIES__", community_markup)

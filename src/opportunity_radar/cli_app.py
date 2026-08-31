@@ -241,6 +241,12 @@ class RadarCliApp:
         state["selected_communities"] = [community.name for community in config.communities]
         state["collection_scope"] = self._scope_to_dict(scope)
         state["completed_stages"] = ["configured"]
+        state["progress"] = {
+            "stage": "configured",
+            "completed": 0,
+            "total": 1,
+            "message": "任务已创建，准备启动采集。",
+        }
         self._write_state(paths.state_path, state)
         return self._continue_run(paths, config, state, scope=scope, analysis_engine=analysis_engine)
 
@@ -444,6 +450,15 @@ class RadarCliApp:
         }
         if scope is not None:
             collect_arguments["scope"] = scope
+        def report_collection_progress(update: Mapping[str, Any]) -> None:
+            # Persist each meaningful collection milestone so the local task
+            # page can show progress while OpenCLI is still fetching data.
+            state["stage"] = str(update.get("stage", "collecting"))
+            state["progress"] = dict(update)
+            self._write_state(paths.state_path, state)
+
+        if "progress" in inspect.signature(self._collector.collect).parameters:
+            collect_arguments["progress"] = report_collection_progress
         collection = self._collector.collect(config.communities, **collect_arguments)
         state["counts"]["community_count"] = len(config.communities)
         state["counts"]["candidate_count"] = len(collection.candidates)
