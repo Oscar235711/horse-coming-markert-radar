@@ -264,6 +264,12 @@ class RadarCliApp:
         """Continue a previously incomplete run from its saved checkpoints."""
         paths = create_run_paths(self._runs_root, run_id)
         state = self._read_state(paths.state_path)
+        # A resumed run is active immediately. Persist this before any
+        # collection or model call so the dashboard never shows a stale
+        # ``completed`` badge while work is still in progress.
+        state["status"] = "running"
+        state["stage"] = "resuming"
+        self._write_state(paths.state_path, state)
         config = load_config(paths.config_snapshot_path)
         config = self._select_communities(config, tuple(state.get("selected_communities", ())))
         scope = self._scope_from_dict(state.get("collection_scope"))
