@@ -149,13 +149,34 @@ def test_run_hot30_without_model_falls_back_once_without_inventing_trends(tmp_pa
 
     result = Last30DaysAdapter(project_root=project_root()).run_hot30("diesel towing", output_dir)
 
-    assert result["status"] == "completed"
+    assert result["status"] == "degraded"
+    assert result["stage"] == "hot30_degraded"
+    assert "DeepSeek未配置，已降级为单次扫描；趋势不可用" in result["progress"]["message"]
+    assert "DeepSeek未配置，已降级为单次扫描；趋势不可用" in result["failures"][0]["message"]
+    assert Path(result["artifacts"]["brief_md"]).is_file()
     assert len(calls) == 2
     assert "--nominate-only" in calls[0]
     assert "--nominate-only" not in calls[1]
     assert "--finalize" not in calls[1]
     trends = json.loads((output_dir / "trends.json").read_text(encoding="utf-8"))
     assert trends == {"status": "unknown", "trends": [], "reason": "host_judgment_unavailable"}
+
+
+def test_project_trends_excludes_nominations_not_surviving_the_judgment_leg() -> None:
+    nominations = {
+        "nominations": [
+            {"id": "n1", "cluster_id": "cluster-kept", "nomination": {"name": "保留", "items": [{"url": "https://example.test/kept"}]}},
+            {"id": "n2", "cluster_id": "cluster-dropped", "nomination": {"name": "淘汰", "items": [{"url": "https://example.test/dropped"}]}},
+        ],
+    }
+    pending = {
+        "report": {"source_status": {"reddit": {"state": "ok"}}},
+        "angle_inputs": {"n1": {"name": "保留"}},
+    }
+
+    projected = Last30DaysAdapter._project_trends(nominations, pending)
+
+    assert [card["id"] for card in projected["trends"]] == ["n1"]
 
 
 def test_run_hot30_terminates_the_active_subprocess_on_cancellation(tmp_path: Path, monkeypatch) -> None:

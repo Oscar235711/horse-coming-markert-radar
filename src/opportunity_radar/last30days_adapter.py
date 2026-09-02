@@ -131,6 +131,10 @@ class Hot30CommandFailed(RuntimeError):
     """A command exited unsuccessfully; its output is intentionally not persisted."""
 
 
+class Hot30ModelUnavailable(Hot30CommandFailed):
+    """The optional host model cannot safely complete the judgment leg."""
+
+
 class Hot30Adapter:
     """Assemble a project-scoped nominate -> judge -> finalize protocol.
 
@@ -366,6 +370,9 @@ class Hot30Adapter:
             if not isinstance(row, Mapping):
                 continue
             identifier = str(row.get("id") or "")
+            if identifier not in input_names:
+                # ``angle_inputs`` only names rows that survived the judge leg.
+                continue
             cluster_id = str(row.get("cluster_id") or "")
             nomination = row.get("nomination")
             items = nomination.get("items") if isinstance(nomination, Mapping) else None
@@ -414,18 +421,21 @@ class Hot30Adapter:
         if self._judge is not None:
             return self._judge(nominations)
         if not environment.get("DEEPSEEK_API_KEY"):
-            raise Hot30CommandFailed("DeepSeek is not configured")
+            raise Hot30ModelUnavailable("DeepSeek is not configured")
         from .deepseek import DeepSeekClient
 
         client = DeepSeekClient(transport=self._http_transport, environment=environment)
-        response = client.chat_json((
-            {"role": "system", "content": (
-                "Judge the supplied discovery nominations. Return JSON only with a judgments list; "
-                "each row has id, name, junk, worthiness. You may include an optional angles list "
-                "with id, podcast, x_article. Never invent evidence."
-            )},
-            {"role": "user", "content": json.dumps(nominations, ensure_ascii=False)},
-        ))
+        try:
+            response = client.chat_json((
+                {"role": "system", "content": (
+                    "Judge the supplied discovery nominations. Return JSON only with a judgments list; "
+                    "each row has id, name, junk, worthiness. You may include an optional angles list "
+                    "with id, podcast, x_article. Never invent evidence."
+                )},
+                {"role": "user", "content": json.dumps(nominations, ensure_ascii=False)},
+            ))
+        except Exception as error:
+            raise Hot30ModelUnavailable("DeepSeek judgment was unavailable") from error
         return response
 
 
@@ -505,7 +515,7 @@ class Last30DaysAdapter(Hot30Adapter):
                 "mode": "hot30", "status": "failed", "stage": "hot30_timed_out", "focus": focus,
                 "paths": run.as_dict(), "failures": [{"stage": "hot30", "message": "last30days 执行超时，已终止外部采集。"}],
             }
-        except Exception:
+        except Exception as error:
             # One (and only one) one-shot sweep is the documented recovery for
             # missing host judgment or a failed handoff leg. Its compact output
             # is a real engine brief, but it lacks trusted handoff evidence, so
@@ -529,8 +539,15 @@ class Last30DaysAdapter(Hot30Adapter):
                 }
             trends = {"status": "unknown", "trends": [], "reason": "host_judgment_unavailable"}
             source_status = {"status": "unknown", "reason": "host_judgment_unavailable"}
+            message = (
+                "DeepSeek未配置，已降级为单次扫描；趋势不可用。"
+                if isinstance(error, Hot30ModelUnavailable)
+                else "模型判断不可用，已降级为单次扫描；趋势不可用。"
+            )
             return {
-                "mode": "hot30", "status": "completed", "stage": "exported", "focus": focus,
+                "mode": "hot30", "status": "degraded", "stage": "hot30_degraded", "focus": focus,
                 "paths": run.as_dict(), "artifacts": artifacts_for(brief, trends, source_status),
+                "progress": {"stage": "hot30_degraded", "message": message},
+                "failures": [{"stage": "host_judgment", "message": message}],
                 "protocol": {"mode": "one_shot_fallback", "angles": "not_generated_without_host_judgment"},
             }
