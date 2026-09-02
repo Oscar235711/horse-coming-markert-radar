@@ -323,7 +323,12 @@ class RunManager:
             return
         try:
             output_dir = self._runs_root / run_id / "artifacts"
-            result = Last30DaysAdapter().run_hot30(topic, output_dir, emit="compact")
+            result = Last30DaysAdapter().run_hot30(
+                topic,
+                output_dir,
+                emit="compact",
+                cancel_event=self._cancel_events.get(run_id),
+            )
             if not isinstance(result, Mapping):
                 raise ValueError("Last30DaysAdapter 必须返回 JSON 对象")
             normalized = dict(result)
@@ -334,6 +339,7 @@ class RunManager:
                 self._mark_interrupted(run_id)
             else:
                 self._replace_state(run_id, normalized)
+                self._persist_state(run_id, self._states[run_id])
         except Exception as error:
             if self._is_cancelled(run_id):
                 self._mark_interrupted(run_id)

@@ -70,8 +70,8 @@ def test_hot30_accepts_missing_focus_and_uses_local_adapter(tmp_path, monkeypatc
     module = ModuleType("opportunity_radar.last30days_adapter")
 
     class Adapter:
-        def run_hot30(self, topic, output_dir, env=None, emit="compact"):
-            calls.append((topic, Path(output_dir), env, emit))
+        def run_hot30(self, topic, output_dir, env=None, emit="compact", cancel_event=None):
+            calls.append((topic, Path(output_dir), env, emit, cancel_event))
             artifact_dir = Path(output_dir)
             artifact_dir.mkdir(parents=True, exist_ok=True)
             for name in ("brief.html", "brief.md", "trends.json", "source_status.json"):
@@ -102,7 +102,10 @@ def test_hot30_accepts_missing_focus_and_uses_local_adapter(tmp_path, monkeypatc
     assert state["focus"] == "北美柴油皮卡改装"
     assert calls[0][0] == "北美柴油皮卡改装"
     assert calls[0][3] == "compact"
+    assert isinstance(calls[0][4], Event)
     assert manager.artifact_path(created["run_id"], "brief_html").name == "brief.html"
+    persisted = json.loads((tmp_path / created["run_id"] / "state.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
 
 
 def test_range_requires_dates_but_accepts_an_optional_focus(tmp_path) -> None:
