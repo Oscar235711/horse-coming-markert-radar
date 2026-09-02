@@ -47,20 +47,27 @@ class RunManager:
         self._cancel_events: dict[str, Event] = {}
 
     def create_run(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        scope, communities, engine, keywords, research_question = self._validate_payload(payload)
+        mode, scope, communities, engine, keywords, focus = self._validate_payload(payload)
         with self._lock:
-            if any(state.get("status") in {"queued", "running"} for state in self._states.values()):
+            if any(
+                state.get("status") in {"queued", "running"}
+                and state.get("stage") != "hot30_adapter_unavailable"
+                for state in self._states.values()
+            ):
                 raise RuntimeError("已有Reddit采集任务正在运行，请等待完成后再启动。")
             run_id = self._now().strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:6]
             state = {
                 "run_id": run_id,
+                "mode": mode,
                 "status": "queued",
                 "stage": "queued",
-                "start_date": scope.start_date.isoformat(),
-                "end_date": scope.end_date.isoformat(),
-                "depth": scope.depth,
+                "start_date": scope.start_date.isoformat() if scope else None,
+                "end_date": scope.end_date.isoformat() if scope else None,
+                "depth": scope.depth if scope else "hot30",
                 "analysis_engine": engine,
-                "research_question": research_question,
+                "focus": focus,
+                # Keep the legacy state field for API clients and older runs.
+                "research_question": focus,
                 "selected_communities": list(communities),
                 "selected_keywords": list(keywords),
                 "counts": {},
@@ -71,7 +78,7 @@ class RunManager:
             self._cancel_events[run_id] = Event()
             thread = Thread(
                 target=self._execute,
-                args=(run_id, scope, communities, engine, keywords, research_question),
+                args=(run_id, mode, scope, communities, engine, keywords, focus),
                 name=f"radar-{run_id}",
                 daemon=True,
             )
@@ -125,7 +132,11 @@ class RunManager:
             memory["status"] = "interrupted"
             memory["stage"] = "cancelled"
             memory.setdefault("progress", {})["message"] = "任务已取消，已保留检查点，可按需续跑。"
-        if memory.get("status") in {"running", "queued"} and (worker is None or not worker.is_alive()):
+        if (
+            memory.get("status") in {"running", "queued"}
+            and memory.get("stage") != "hot30_adapter_unavailable"
+            and (worker is None or not worker.is_alive())
+        ):
             memory["status"] = "interrupted"
             memory["stage"] = "interrupted"
             memory.setdefault("failures", []).append({"stage": "server", "message": "本地服务重启，任务已暂停；可从检查点续跑。"})
@@ -224,12 +235,22 @@ class RunManager:
             "report_html": "report_html",
             "analysis_json": "analysis_json",
             "workbook": "community_topics_xlsx",
+            "brief_html": "brief_html",
+            "brief_md": "brief_md",
+            "trends": "trends",
+            "source_status": "source_status",
         }
+        if name not in artifact_keys:
+            raise ValueError("unknown artifact")
         configured = state.get("artifacts", {}).get(artifact_keys[name]) if isinstance(state.get("artifacts"), Mapping) else None
         fallback_names = {
             "report_html": "report.html",
             "analysis_json": "analysis.json",
             "workbook": "community_topics.xlsx",
+            "brief_html": "brief.html",
+            "brief_md": "brief.md",
+            "trends": "trends.json",
+            "source_status": "source_status.json",
         }
         target = Path(str(configured)) if configured else self._runs_root / run_id / "artifacts" / fallback_names[name]
         target = target.resolve()
@@ -237,7 +258,20 @@ class RunManager:
             raise FileNotFoundError(str(target))
         return target
 
-    def _execute(self, run_id: str, scope: CollectionScope, communities: tuple[str, ...], engine: str, keywords: tuple[str, ...] = (), research_question: str = "") -> None:
+    def _execute(
+        self,
+        run_id: str,
+        mode: str,
+        scope: CollectionScope | None,
+        communities: tuple[str, ...],
+        engine: str,
+        keywords: tuple[str, ...] = (),
+        focus: str = "",
+    ) -> None:
+        if mode == "hot30":
+            self._execute_hot30(run_id, focus)
+            return
+        assert scope is not None
         self._set_state(run_id, status="running", stage="configured")
         try:
             result = self._app.run(
@@ -247,7 +281,7 @@ class RunManager:
                 analysis_engine=engine,
                 selected_communities=communities,
                 selected_keywords=keywords,
-                research_question=research_question,
+                research_question=focus,
             )
             if self._is_cancelled(run_id):
                 self._mark_interrupted(run_id)
@@ -262,6 +296,53 @@ class RunManager:
                     status="failed",
                     stage="failed",
                     failures=[{"stage": "run", "message": f"{type(error).__name__}: {error}"}],
+                )
+
+    def _execute_hot30(self, run_id: str, topic: str) -> None:
+        """Run the optional local multi-platform adapter without coupling Reddit runs to it."""
+        self._set_state(
+            run_id,
+            status="running",
+            stage="hot30_configured",
+            progress={"stage": "hot30_configured", "message": "正在准备近30天多平台热点研究。"},
+        )
+        try:
+            from .last30days_adapter import Last30DaysAdapter
+        except ImportError:
+            # Keep a visible configuration hint but do not count this dormant
+            # optional integration as the active Chrome-backed Reddit worker.
+            self._set_state(
+                run_id,
+                status="queued",
+                stage="hot30_adapter_unavailable",
+                progress={
+                    "stage": "hot30_adapter_unavailable",
+                    "message": "近30天多平台适配器尚未就绪；请完成本地 last30days 配置后重试。",
+                },
+            )
+            return
+        try:
+            output_dir = self._runs_root / run_id / "artifacts"
+            result = Last30DaysAdapter().run_hot30(topic, output_dir, emit="compact")
+            if not isinstance(result, Mapping):
+                raise ValueError("Last30DaysAdapter 必须返回 JSON 对象")
+            normalized = dict(result)
+            artifacts = normalized.get("artifacts")
+            if isinstance(artifacts, Mapping):
+                normalized["artifacts"] = dict(artifacts)
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._replace_state(run_id, normalized)
+        except Exception as error:
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._set_state(
+                    run_id,
+                    status="failed",
+                    stage="failed",
+                    failures=[{"stage": "hot30", "message": f"{type(error).__name__}: {error}"}],
                 )
 
     def _resume(self, run_id: str) -> None:
@@ -307,21 +388,35 @@ class RunManager:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(dict(state), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
-    def _validate_payload(self, payload: Mapping[str, Any]) -> tuple[CollectionScope, tuple[str, ...], str, tuple[str, ...], str]:
-        try:
-            scope = CollectionScope(
-                date.fromisoformat(str(payload["start_date"])),
-                date.fromisoformat(str(payload["end_date"])),
-                str(payload.get("depth", "complete")),
-            )
-        except (KeyError, ValueError) as error:
-            raise ValueError(f"无效采集日期或深度：{error}") from error
-        today = self._now().date()
-        if scope.end_date > today:
-            raise ValueError("结束日期不能晚于今天。")
-        research_question = " ".join(str(payload.get("research_question", "")).split()).strip()
-        if not research_question:
-            research_question = "柴油皮卡改装市场机会扫描"
+    def _validate_payload(self, payload: Mapping[str, Any]) -> tuple[str, CollectionScope | None, tuple[str, ...], str, tuple[str, ...], str]:
+        mode = str(payload.get("mode", "range")).casefold().strip()
+        if mode not in {"range", "hot30"}:
+            raise ValueError("mode 必须是 range 或 hot30。")
+        raw_focus = payload.get("focus", payload.get("research_question", ""))
+        if raw_focus is not None and not isinstance(raw_focus, str):
+            raise ValueError("focus 必须是文本。")
+        focus = " ".join(str(raw_focus or "").split()).strip()
+        if len(focus) > 500:
+            raise ValueError("focus 最多 500 个字符。")
+        if mode == "hot30":
+            scope = None
+            if not focus:
+                focus = "北美柴油皮卡改装"
+        else:
+            try:
+                scope = CollectionScope(
+                    date.fromisoformat(str(payload["start_date"])),
+                    date.fromisoformat(str(payload["end_date"])),
+                    str(payload.get("depth", "complete")),
+                )
+            except (KeyError, ValueError) as error:
+                raise ValueError(f"无效采集日期或深度：{error}") from error
+            if scope.end_date > self._now().date():
+                raise ValueError("结束日期不能晚于今天。")
+            # Older API clients omit the question. Preserve their established
+            # default while treating focus as optional in the range UI.
+            if not focus:
+                focus = "柴油皮卡改装市场机会扫描"
         raw_communities = payload.get("communities", list(FIXED_COMMUNITIES))
         if not isinstance(raw_communities, (list, tuple)) or not raw_communities:
             raise ValueError("至少选择一个社区。")
@@ -338,7 +433,7 @@ class RunManager:
         if not isinstance(raw_keywords, (list, tuple)):
             raise ValueError("关键词必须是数组。")
         keywords = tuple(dict.fromkeys(" ".join(str(item).split()) for item in raw_keywords if str(item).strip()))
-        return scope, communities, engine, keywords, research_question
+        return mode, scope, communities, engine, keywords, focus
 
     @staticmethod
     def _validate_run_id(run_id: str) -> None:
@@ -566,6 +661,14 @@ def build_server(
                     return self._file(manager.artifact_path(parts[1], "report_html"), "text/html; charset=utf-8")
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "workbook":
                     return self._file(manager.artifact_path(parts[1], "workbook"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                if len(parts) == 3 and parts[0] == "runs" and parts[2] == "brief":
+                    return self._file(manager.artifact_path(parts[1], "brief_html"), "text/html; charset=utf-8")
+                if len(parts) == 3 and parts[0] == "runs" and parts[2] == "brief.md":
+                    return self._file(manager.artifact_path(parts[1], "brief_md"), "text/markdown; charset=utf-8")
+                if len(parts) == 3 and parts[0] == "runs" and parts[2] == "trends":
+                    return self._file(manager.artifact_path(parts[1], "trends"), "application/json; charset=utf-8")
+                if len(parts) == 3 and parts[0] == "runs" and parts[2] == "source-status":
+                    return self._file(manager.artifact_path(parts[1], "source_status"), "application/json; charset=utf-8")
                 return self._error(HTTPStatus.NOT_FOUND, "页面不存在")
             except FileNotFoundError:
                 return self._error(HTTPStatus.NOT_FOUND, "任务或产物不存在")

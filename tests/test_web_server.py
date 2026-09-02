@@ -3,8 +3,10 @@
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import sys
 from threading import Event, Thread
 import time
+from types import ModuleType
 from urllib.request import Request, urlopen
 
 from opportunity_radar.server import RunManager, ScheduleManager, build_server
@@ -49,6 +51,78 @@ def _payload() -> dict:
         "communities": ["Cummins", "Duramax", "powerstroke", "FordDiesels"],
         "keywords": ["cummins"],
     }
+
+
+def test_dashboard_offers_multiplatform_hot30_and_reddit_range_modes() -> None:
+    """The landing page must make the two research contracts explicit."""
+    page = dashboard_html(("Cummins", "Duramax"), ("cummins",))
+
+    assert 'data-mode="hot30"' in page
+    assert 'data-mode="range"' in page
+    assert "多平台热点" in page
+    assert "Reddit 时间范围研究" in page
+    assert "四个核心社区只是后台种子" in page
+
+
+def test_hot30_accepts_missing_focus_and_uses_local_adapter(tmp_path, monkeypatch) -> None:
+    """Dropping the hot30 default topic or adapter call would break the new entry point."""
+    calls = []
+    module = ModuleType("opportunity_radar.last30days_adapter")
+
+    class Adapter:
+        def run_hot30(self, topic, output_dir, env=None, emit="compact"):
+            calls.append((topic, Path(output_dir), env, emit))
+            artifact_dir = Path(output_dir)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("brief.html", "brief.md", "trends.json", "source_status.json"):
+                (artifact_dir / name).write_text(name, encoding="utf-8")
+            return {
+                "status": "completed",
+                "stage": "exported",
+                "artifacts": {
+                    "brief_html": str(artifact_dir / "brief.html"),
+                    "brief_md": str(artifact_dir / "brief.md"),
+                    "trends": str(artifact_dir / "trends.json"),
+                    "source_status": str(artifact_dir / "source_status.json"),
+                },
+            }
+
+    module.Last30DaysAdapter = Adapter
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", module)
+    manager = RunManager(
+        app=object(), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    created = manager.create_run({"mode": "hot30"})
+    manager.wait(created["run_id"], timeout=2)
+    state = manager.snapshot(created["run_id"])
+
+    assert state["mode"] == "hot30"
+    assert state["focus"] == "北美柴油皮卡改装"
+    assert calls[0][0] == "北美柴油皮卡改装"
+    assert calls[0][3] == "compact"
+    assert manager.artifact_path(created["run_id"], "brief_html").name == "brief.html"
+
+
+def test_range_requires_dates_but_accepts_an_optional_focus(tmp_path) -> None:
+    """A missing range boundary is invalid, while an omitted question remains compatible."""
+    manager = RunManager(
+        app=BlockingApp(tmp_path / "report.html"), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    try:
+        manager.create_run({"mode": "range", "focus": "拖挂高温"})
+    except ValueError as error:
+        assert "无效采集日期" in str(error)
+    else:
+        raise AssertionError("range mode must require start and end dates")
+
+    validated = manager._validate_payload({
+        "mode": "range", "start_date": "2026-08-01", "end_date": "2026-08-31",
+    })
+    assert validated[5] == "柴油皮卡改装市场机会扫描"
 
 
 def test_run_manager_blocks_a_second_chrome_collection(tmp_path) -> None:
