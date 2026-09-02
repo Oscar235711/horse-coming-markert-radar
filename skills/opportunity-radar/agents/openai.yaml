@@ -1,4 +1,4 @@
 interface:
   display_name: "Opportunity Radar"
-  short_description: "Reddit²ñÓÍÆ¤¿¨VOC»ú»áÀ×´ï²É¼¯·ÖÎöÓë±¨¸æÈ«Á÷³Ì"
-  default_prompt: "ÇëÊ¹ÓÃOpportunity Radar°´Ö¸¶¨Ê±¼ä·¶Î§²É¼¯²¢·ÖÎöReddit²ñÓÍÆ¤¿¨ÉçÇø£¬Êä³öÖĞÎÄVOC±¨¸æ¡£"
+  short_description: "RedditæŸ´æ²¹çš®å¡VOCæœºä¼šé›·è¾¾é‡‡é›†åˆ†æä¸æŠ¥å‘Šå…¨æµç¨‹"
+  default_prompt: "è¯·ä½¿ç”¨Opportunity RadaræŒ‰æŒ‡å®šæ—¶é—´èŒƒå›´é‡‡é›†å¹¶åˆ†æRedditæŸ´æ²¹çš®å¡ç¤¾åŒºï¼Œè¾“å‡ºä¸­æ–‡VOCæŠ¥å‘Šã€‚"

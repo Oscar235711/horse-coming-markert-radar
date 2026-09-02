@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 from datetime import date
 import json
+from pathlib import Path
 import sys
 from typing import Any
 
 from .cli_app import RadarCliApp
+from .last30days_adapter import DEFAULT_HOT30_DOMAIN, Hot30Adapter, Last30DaysAdapter, project_root
 from .models import CollectionScope
 from .server import serve_local
+
+
+DEFAULT_HOT30_RUNS_ROOT = Path(".local") / "runs" / "hot30"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +23,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("doctor")
+
+    hot30_parser = subparsers.add_parser("hot30", help="运行 vendored last30days 多平台热点引擎")
+    hot30_subparsers = hot30_parser.add_subparsers(dest="hot30_command", required=True)
+    hot30_plan = hot30_subparsers.add_parser("plan", help="生成三阶段 nominate/judge/finalize 命令")
+    hot30_plan.add_argument("--run-id", required=True)
+    hot30_plan.add_argument("--domain", default=DEFAULT_HOT30_DOMAIN)
+    hot30_plan.add_argument("--runs-root")
+    hot30_run = hot30_subparsers.add_parser("run", help="调用 Last30DaysAdapter 执行多平台热点")
+    hot30_run.add_argument("--run-id", required=True)
+    hot30_run.add_argument("--domain", default=DEFAULT_HOT30_DOMAIN)
+    hot30_run.add_argument("--runs-root")
+    hot30_run.add_argument("--dry-run", action="store_true", help="只输出三阶段命令，不启动采集")
+    hot30_run.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--config", default="configs/diesel_90d.yaml")
@@ -92,6 +110,8 @@ def main(argv: list[str] | None = None, *, app: RadarCliApp | None = None) -> in
 def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]:
     if arguments.command == "doctor":
         return app.doctor()
+    if arguments.command == "hot30":
+        return _dispatch_hot30(arguments)
     if arguments.command == "serve":
         return serve_local(
             app,
@@ -142,3 +162,65 @@ def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]
     if arguments.command == "keywords" and arguments.keywords_command == "approve":
         return app.keywords_approve(arguments.file)
     raise ValueError(f"unsupported command: {arguments.command}")
+
+
+def _hot30_adapter(runs_root: str | None) -> Hot30Adapter:
+    kwargs: dict[str, Any] = {"project_root": project_root()}
+    kwargs["runs_root"] = Path(runs_root) if runs_root else project_root() / DEFAULT_HOT30_RUNS_ROOT
+    return Hot30Adapter(**kwargs)
+
+
+def _portable_path(value: str, *, root: Path, runs_root: Path) -> str:
+    """Render local paths as copyable placeholders, never user-specific absolutes."""
+    normalized = str(value).replace("\\", "/")
+    project_prefix = str(root).replace("\\", "/").rstrip("/")
+    runs_prefix = str(runs_root).replace("\\", "/").rstrip("/")
+    if normalized == project_prefix or normalized.startswith(project_prefix + "/"):
+        return "<PROJECT_ROOT>" + normalized[len(project_prefix):]
+    if normalized == runs_prefix or normalized.startswith(runs_prefix + "/"):
+        return "<RUNS_ROOT>" + normalized[len(runs_prefix):]
+    return normalized
+
+
+def _portable_plan(adapter: Hot30Adapter, run: Any, commands: Any) -> tuple[dict[str, str], dict[str, list[str]]]:
+    root = project_root()
+    runs_root = adapter.runs_root
+    paths = {key: _portable_path(value, root=root, runs_root=runs_root) for key, value in run.as_dict().items()}
+    rendered: dict[str, list[str]] = {}
+    for name, command in commands.as_dict().items():
+        rendered[name] = [
+            "python" if index == 0 else "vendor/last30days/scripts/last30days.py" if index == 1
+            else _portable_path(token, root=root, runs_root=runs_root)
+            for index, token in enumerate(command)
+        ]
+    return paths, rendered
+
+
+def _hot30_plan(arguments: argparse.Namespace) -> dict[str, Any]:
+    adapter = _hot30_adapter(arguments.runs_root)
+    run = adapter.prepare_run(arguments.run_id)
+    paths, commands = _portable_plan(adapter, run, adapter.protocol_commands(run, domain=arguments.domain, emit="compact"))
+    return {
+        "status": "planned",
+        "mode": "hot30",
+        "run_id": arguments.run_id,
+        "domain": " ".join(str(arguments.domain or "").split()),
+        "paths": paths,
+        "commands": commands,
+    }
+
+
+def _dispatch_hot30(arguments: argparse.Namespace) -> dict[str, Any]:
+    if arguments.hot30_command == "plan":
+        return _hot30_plan(arguments)
+    if arguments.hot30_command != "run":
+        raise ValueError(f"unsupported hot30 command: {arguments.hot30_command}")
+    if arguments.dry_run:
+        return _hot30_plan(arguments)
+    runs_root = arguments.runs_root or str(project_root() / DEFAULT_HOT30_RUNS_ROOT)
+    adapter = Last30DaysAdapter(project_root=project_root(), runs_root=Path(runs_root))
+    # Let the adapter's single-segment validator own this boundary.  Do not
+    # concatenate an untrusted run id before validation (``..`` must not escape
+    # the configured runs root).
+    output_dir = adapter.prepare_run(arguments.run_id).artifacts_dir
+    return adapter.run_hot30(arguments.domain, output_dir, emit="compact")

@@ -3,9 +3,13 @@
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import sys
 from threading import Event, Thread
 import time
+from types import ModuleType, SimpleNamespace
 from urllib.request import Request, urlopen
+
+import pytest
 
 from opportunity_radar.server import RunManager, ScheduleManager, build_server
 from opportunity_radar.cli import build_parser, main
@@ -49,6 +53,152 @@ def _payload() -> dict:
         "communities": ["Cummins", "Duramax", "powerstroke", "FordDiesels"],
         "keywords": ["cummins"],
     }
+
+
+def test_dashboard_offers_multiplatform_hot30_and_reddit_range_modes() -> None:
+    """The landing page must make the two research contracts explicit."""
+    page = dashboard_html(("Cummins", "Duramax"), ("cummins",))
+
+    assert 'data-mode="hot30"' in page
+    assert 'data-mode="range"' in page
+    assert "多平台热点" in page
+    assert "Reddit 时间范围研究" in page
+    assert "四个核心社区只是后台种子" in page
+    assert "已降级（趋势不可用）" in page
+
+
+def test_hot30_accepts_missing_focus_and_uses_local_adapter(tmp_path, monkeypatch) -> None:
+    """Dropping the hot30 default topic or adapter call would break the new entry point."""
+    calls = []
+    module = ModuleType("opportunity_radar.last30days_adapter")
+
+    class Adapter:
+        def run_hot30(self, topic, output_dir, env=None, emit="compact", cancel_event=None):
+            calls.append((topic, Path(output_dir), env, emit, cancel_event))
+            artifact_dir = Path(output_dir)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("brief.html", "brief.md", "trends.json", "source_status.json"):
+                (artifact_dir / name).write_text(name, encoding="utf-8")
+            return {
+                "status": "completed",
+                "stage": "exported",
+                "artifacts": {
+                    "brief_html": str(artifact_dir / "brief.html"),
+                    "brief_md": str(artifact_dir / "brief.md"),
+                    "trends": str(artifact_dir / "trends.json"),
+                    "source_status": str(artifact_dir / "source_status.json"),
+                },
+            }
+
+    module.Last30DaysAdapter = Adapter
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", module)
+    manager = RunManager(
+        app=object(), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    created = manager.create_run({"mode": "hot30"})
+    manager.wait(created["run_id"], timeout=2)
+    state = manager.snapshot(created["run_id"])
+
+    assert state["mode"] == "hot30"
+    assert state["focus"] == "北美柴油皮卡改装"
+    assert calls[0][0] == "北美柴油皮卡改装"
+    assert calls[0][3] == "compact"
+    assert isinstance(calls[0][4], Event)
+    assert manager.artifact_path(created["run_id"], "brief_html").name == "brief.html"
+    persisted = json.loads((tmp_path / created["run_id"] / "state.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "completed"
+
+
+def test_hot30_resume_restarts_the_adapter_without_using_reddit_resume(tmp_path, monkeypatch) -> None:
+    """A failed hot30 retry must reuse its topic and artifact directory, not the Reddit app."""
+    calls = []
+    module = ModuleType("opportunity_radar.last30days_adapter")
+
+    class Adapter:
+        def run_hot30(self, topic, output_dir, env=None, emit="compact", cancel_event=None):
+            calls.append((topic, Path(output_dir), emit))
+            if len(calls) == 1:
+                return {"status": "failed", "stage": "hot30_failed", "failures": [{"stage": "hot30"}]}
+            artifact_dir = Path(output_dir)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            brief = artifact_dir / "brief.html"
+            brief.write_text("brief", encoding="utf-8")
+            return {
+                "status": "completed", "stage": "exported",
+                "artifacts": {"brief_html": str(brief)},
+            }
+
+    class RedditApp:
+        def resume(self, _run_id):
+            raise AssertionError("hot30 must not call the Reddit resume chain")
+
+    module.Last30DaysAdapter = Adapter
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", module)
+    manager = RunManager(
+        app=RedditApp(), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    created = manager.create_run({"mode": "hot30", "focus": "diesel towing"})
+    manager.wait(created["run_id"], timeout=2)
+    resumed = manager.resume_run(created["run_id"])
+    manager.wait(resumed["run_id"], timeout=2)
+
+    assert manager.snapshot(created["run_id"])["status"] == "completed"
+    assert [call[0] for call in calls] == ["diesel towing", "diesel towing"]
+    assert calls[0][1] == calls[1][1] == tmp_path / created["run_id"] / "artifacts"
+
+
+def test_hot30_adapter_unavailable_run_can_be_deleted(tmp_path, monkeypatch) -> None:
+    """A dormant optional adapter must not leave an undeletable queued run behind."""
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", None)
+    manager = RunManager(
+        app=object(), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    created = manager.create_run({"mode": "hot30"})
+    manager.wait(created["run_id"], timeout=2)
+    assert manager.snapshot(created["run_id"])["stage"] == "hot30_adapter_unavailable"
+
+    manager.delete_run(created["run_id"])
+    assert created["run_id"] not in {row["run_id"] for row in manager.list_runs()}
+
+
+def test_snapshot_hides_missing_hot30_artifact_paths(tmp_path) -> None:
+    """The API must not hand the page links that resolve to missing local files."""
+    manager = RunManager(
+        app=object(), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+    manager._states["hot30-fixture"] = {
+        "run_id": "hot30-fixture", "mode": "hot30", "status": "completed",
+        "artifacts": {"brief_html": str(tmp_path / "missing-brief.html")},
+    }
+
+    assert manager.snapshot("hot30-fixture")["artifacts"] == {}
+
+
+def test_range_requires_dates_but_accepts_an_optional_focus(tmp_path) -> None:
+    """A missing range boundary is invalid, while an omitted question remains compatible."""
+    manager = RunManager(
+        app=BlockingApp(tmp_path / "report.html"), config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    try:
+        manager.create_run({"mode": "range", "focus": "拖挂高温"})
+    except ValueError as error:
+        assert "无效采集日期" in str(error)
+    else:
+        raise AssertionError("range mode must require start and end dates")
+
+    validated = manager._validate_payload({
+        "mode": "range", "start_date": "2026-08-01", "end_date": "2026-08-31",
+    })
+    assert validated[5] == "柴油皮卡改装市场机会扫描"
 
 
 def test_run_manager_blocks_a_second_chrome_collection(tmp_path) -> None:
@@ -188,6 +338,74 @@ def test_serve_cli_dispatches_local_host_and_port(monkeypatch, capsys) -> None:
         "port": 9900, "open_browser": False,
     }
     assert json.loads(capsys.readouterr().out)["status"] == "stopped"
+
+
+def test_hot30_plan_prints_three_project_local_commands_without_secrets(capsys) -> None:
+    """The portable plan must expose the host-judged protocol, never credentials."""
+    assert main(["hot30", "plan", "--run-id", "plan-fixture", "--domain", "diesel towing"], app=object()) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "planned"
+    assert set(payload["commands"]) == {"nominate", "judge", "finalize"}
+    assert "--nominate-only" in payload["commands"]["nominate"]
+    assert "--judgments" in payload["commands"]["judge"]
+    assert "--finalize" in payload["commands"]["finalize"]
+    assert all("DEEPSEEK_API_KEY" not in " ".join(command) for command in payload["commands"].values())
+    rendered = json.dumps(payload, ensure_ascii=False)
+    assert "C:\\Users" not in rendered and "D:\\" not in rendered
+    assert payload["commands"]["nominate"][0:2] == ["python", "vendor/last30days/scripts/last30days.py"]
+    assert payload["paths"]["root"].startswith("<PROJECT_ROOT>/.local/runs/hot30/")
+
+
+def test_hot30_run_dry_run_does_not_start_adapter(monkeypatch, capsys, tmp_path) -> None:
+    """Dry-run is a portable inspection mode and must not invoke subprocess work."""
+    class ExplodingAdapter:
+        def __init__(self, **_kwargs):
+            raise AssertionError("dry-run must not construct or execute the adapter")
+
+    monkeypatch.setattr("opportunity_radar.cli.Last30DaysAdapter", ExplodingAdapter)
+    assert main([
+        "hot30", "run", "--run-id", "dry-fixture", "--domain", "diesel towing",
+        "--runs-root", str(tmp_path), "--dry-run",
+    ], app=object()) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "planned"
+    assert payload["run_id"] == "dry-fixture"
+
+
+def test_hot30_run_dispatches_to_last30days_adapter(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+
+    class FakeAdapter:
+        def __init__(self, **kwargs):
+            received["init"] = kwargs
+
+        def prepare_run(self, run_id):
+            return SimpleNamespace(artifacts_dir=(tmp_path / run_id / "artifacts").resolve())
+
+        def run_hot30(self, topic, output_dir, **kwargs):
+            received["run"] = (topic, output_dir, kwargs)
+            return {"status": "completed", "stage": "exported"}
+
+    monkeypatch.setattr("opportunity_radar.cli.Last30DaysAdapter", FakeAdapter)
+    assert main([
+        "hot30", "run", "--run-id", "run-fixture", "--domain", "diesel towing",
+        "--runs-root", str(tmp_path), "--no-open",
+    ], app=object()) == 0
+    assert received["run"][0] == "diesel towing"
+    assert received["run"][1] == (tmp_path / "run-fixture" / "artifacts").resolve()
+    assert received["run"][2]["emit"] == "compact"
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+@pytest.mark.parametrize("run_id", ["../outside", "C:\\outside", "/tmp/outside"])
+def test_hot30_run_rejects_run_ids_that_escape_runs_root(capsys, tmp_path, run_id) -> None:
+    """CLI path construction must share the adapter's single-segment guard."""
+    assert main([
+        "hot30", "run", "--run-id", run_id, "--runs-root", str(tmp_path),
+        "--dry-run",
+    ], app=object()) == 1
+    assert "single, non-empty path segment" in capsys.readouterr().err
 
 
 def test_unlimited_complete_mode_is_the_default_user_entrypoint() -> None:
