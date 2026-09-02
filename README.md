@@ -74,6 +74,56 @@ RADAR_CODEX_EXE=C:\你本机的路径\codex.exe
 
 每位同事使用自己的 Reddit 小号和 Chrome 会话，不复制 Cookie，不把 Cookie 写入项目。
 
+## 团队成员第一次使用（必读）
+
+仓库代码由队长统一合并，运行环境和登录态由每位成员在自己的电脑上单独配置。不要把 `.env`、Chrome Cookie、Codex 登录信息或 `.local/` 运行数据提交到 GitHub。
+
+### 成员安装步骤
+
+```powershell
+git clone -b feature/community-radar https://github.com/Oscar235711/horse-coming-markert-radar.git
+cd horse-coming-markert-radar
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+.\scripts\install-tools.ps1
+.\scripts\setup-local-runtime.ps1
+.\scripts\install-opencli-plugin.ps1
+```
+
+然后在本机 `.env` 填写自己的工具路径；DeepSeek 使用公司 Higress 网关时填写 `DEEPSEEK_BASE_URL` 和 `DEEPSEEK_API_KEY`，不要把真实值写进 YAML 或提交到仓库。打开 Chrome，登录 Reddit 小号，再检查：
+
+```powershell
+.\scripts\radar.ps1 doctor
+opencli validate opportunity-reddit
+```
+
+### 每次研究的操作步骤
+
+1. 进入项目目录，运行 `.\scripts\radar.ps1 serve`。
+2. 在网页输入研究问题，例如“Duramax 拖挂时的高温和排气改装痛点”。
+3. 选择日期范围和采集深度，点击“开始采集”。社区是后台种子库，不需要成员手工选择。
+4. 在“任务进度”查看采集、深读、分析和导出状态；同一台电脑同一时间只运行一个任务。
+5. 完成后点击“打开 HTML 报告”或“下载 Excel”。文件位于 `.local/runs/<run_id>/artifacts/`。
+6. 任务卡显示失败时，先使用“续跑任务”；确认不再需要时可点击“删除任务”。删除只清理该任务的本地目录，不影响代码和累计库。
+
+### 团队结果回传方式
+
+- 代码或配置修改：新建分支并提交 Pull Request，说明改动和测试结果。
+- 研究结果：把 `run_id`、HTML/Excel 文件路径和一句话结论发到团队群；默认不提交 Reddit 原始数据。
+- 词库和社区库：运行时会写入本机 `library/`。需要纳入团队基线时，由队长审核差异后再提交 `library/communities.json`、`library/topics.json` 或 `library/keywords.json`。
+- 队长合并后，成员执行 `git pull --rebase origin feature/community-radar`，再继续使用自己的 `.env` 和 Chrome 会话。
+
+### 三人分工建议
+
+| 角色 | 负责内容 | 交付物 |
+|---|---|---|
+| 队长/业务负责人 | 研究问题、日期范围、结论确认和合并 | 研究任务说明、采纳/不采纳结论 |
+| 数据采集负责人 | Reddit 登录态、OpenCLI、采集失败和覆盖日期 | `run_id`、失败记录、覆盖说明 |
+| 分析与工程负责人 | DeepSeek/Codex 配置、报告检查、代码修复 | HTML、Excel、PR 和测试结果 |
+
+成员不需要手工复制帖子到 Excel；网页任务完成后，统一从同一个 `analysis.json` 生成 HTML 和 Excel，数字口径保持一致。
+
 ## 3. 环境检查
 
 ```powershell
