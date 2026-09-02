@@ -50,8 +50,7 @@ class RunManager:
         mode, scope, communities, engine, keywords, focus = self._validate_payload(payload)
         with self._lock:
             if any(
-                state.get("status") in {"queued", "running"}
-                and state.get("stage") != "hot30_adapter_unavailable"
+                self._is_active_state(state)
                 for state in self._states.values()
             ):
                 raise RuntimeError("已有Reddit采集任务正在运行，请等待完成后再启动。")
@@ -89,14 +88,15 @@ class RunManager:
     def resume_run(self, run_id: str) -> dict[str, Any]:
         self._validate_run_id(run_id)
         with self._lock:
-            if any(state.get("status") in {"queued", "running"} for state in self._states.values()):
+            if any(self._is_active_state(state) for state in self._states.values()):
                 raise RuntimeError("已有Reddit采集任务正在运行，请等待完成后再继续。")
             state = self.snapshot(run_id)
             self._cancel_events.setdefault(run_id, Event()).clear()
             state["status"] = "queued"
             state["stage"] = "resume_queued"
             self._states[run_id] = state
-            thread = Thread(target=self._resume, args=(run_id,), daemon=True)
+            target = self._resume_hot30 if state.get("mode") == "hot30" else self._resume
+            thread = Thread(target=target, args=(run_id,), daemon=True)
             self._threads[run_id] = thread
             thread.start()
             return dict(state)
@@ -144,7 +144,20 @@ class RunManager:
         # Derive a best-effort live milestone from checkpoint files so the
         # browser can still show useful progress while that pass is running.
         memory = self._with_live_progress(memory, self._runs_root / run_id)
-        return memory
+        return self._with_available_artifacts(memory)
+
+    @staticmethod
+    def _with_available_artifacts(state: dict[str, Any]) -> dict[str, Any]:
+        """Expose only local artifact files the browser can actually open."""
+        artifacts = state.get("artifacts")
+        if not isinstance(artifacts, Mapping):
+            return state
+        state["artifacts"] = {
+            str(name): str(path)
+            for name, path in artifacts.items()
+            if isinstance(path, (str, Path)) and str(path) and Path(path).is_file()
+        }
+        return state
 
     @staticmethod
     def _with_live_progress(state: dict[str, Any], run_dir: Path) -> dict[str, Any]:
@@ -216,7 +229,7 @@ class RunManager:
         self._validate_run_id(run_id)
         with self._lock:
             state = self.snapshot(run_id)
-            if state.get("status") in {"queued", "running"}:
+            if self._is_active_state(state):
                 raise RuntimeError("运行中的任务不能删除，请先等待或停止任务。")
             target = (self._runs_root / run_id).resolve()
             if target.parent != self._runs_root:
@@ -365,6 +378,11 @@ class RunManager:
             else:
                 self._set_state(run_id, status="failed", stage="failed", failures=[{"stage": "resume", "message": str(error)}])
 
+    def _resume_hot30(self, run_id: str) -> None:
+        """Retry the same multi-platform topic in its existing run directory."""
+        state = self.snapshot(run_id)
+        self._execute_hot30(run_id, str(state.get("focus") or state.get("research_question") or "北美柴油皮卡改装"))
+
     def _replace_state(self, run_id: str, result: Mapping[str, Any]) -> None:
         with self._lock:
             prior = self._states.get(run_id, {})
@@ -377,6 +395,13 @@ class RunManager:
     def _is_cancelled(self, run_id: str) -> bool:
         event = self._cancel_events.get(run_id)
         return event is not None and event.is_set()
+
+    @staticmethod
+    def _is_active_state(state: Mapping[str, Any]) -> bool:
+        return (
+            state.get("status") in {"queued", "running"}
+            and state.get("stage") != "hot30_adapter_unavailable"
+        )
 
     def _mark_interrupted(self, run_id: str) -> None:
         with self._lock:
