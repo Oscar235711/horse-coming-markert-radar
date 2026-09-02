@@ -6,8 +6,10 @@ from pathlib import Path
 import sys
 from threading import Event, Thread
 import time
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from urllib.request import Request, urlopen
+
+import pytest
 
 from opportunity_radar.server import RunManager, ScheduleManager, build_server
 from opportunity_radar.cli import build_parser, main
@@ -378,6 +380,9 @@ def test_hot30_run_dispatches_to_last30days_adapter(monkeypatch, capsys, tmp_pat
         def __init__(self, **kwargs):
             received["init"] = kwargs
 
+        def prepare_run(self, run_id):
+            return SimpleNamespace(artifacts_dir=(tmp_path / run_id / "artifacts").resolve())
+
         def run_hot30(self, topic, output_dir, **kwargs):
             received["run"] = (topic, output_dir, kwargs)
             return {"status": "completed", "stage": "exported"}
@@ -391,6 +396,16 @@ def test_hot30_run_dispatches_to_last30days_adapter(monkeypatch, capsys, tmp_pat
     assert received["run"][1] == (tmp_path / "run-fixture" / "artifacts").resolve()
     assert received["run"][2]["emit"] == "compact"
     assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+@pytest.mark.parametrize("run_id", ["../outside", "C:\\outside", "/tmp/outside"])
+def test_hot30_run_rejects_run_ids_that_escape_runs_root(capsys, tmp_path, run_id) -> None:
+    """CLI path construction must share the adapter's single-segment guard."""
+    assert main([
+        "hot30", "run", "--run-id", run_id, "--runs-root", str(tmp_path),
+        "--dry-run",
+    ], app=object()) == 1
+    assert "single, non-empty path segment" in capsys.readouterr().err
 
 
 def test_unlimited_complete_mode_is_the_default_user_entrypoint() -> None:

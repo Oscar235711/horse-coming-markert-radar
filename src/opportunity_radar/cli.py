@@ -218,6 +218,9 @@ def _dispatch_hot30(arguments: argparse.Namespace) -> dict[str, Any]:
     if arguments.dry_run:
         return _hot30_plan(arguments)
     runs_root = arguments.runs_root or str(project_root() / DEFAULT_HOT30_RUNS_ROOT)
-    output_dir = (Path(runs_root) / arguments.run_id / "artifacts").resolve()
     adapter = Last30DaysAdapter(project_root=project_root(), runs_root=Path(runs_root))
+    # Let the adapter's single-segment validator own this boundary.  Do not
+    # concatenate an untrusted run id before validation (``..`` must not escape
+    # the configured runs root).
+    output_dir = adapter.prepare_run(arguments.run_id).artifacts_dir
     return adapter.run_hot30(arguments.domain, output_dir, emit="compact")

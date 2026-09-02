@@ -25,10 +25,10 @@ def _deliver_findings(topic_name: str, counts: dict) -> None:
     channel = store.get_setting("delivery_channel", "")
     if not channel or counts.get("new", 0) == 0:
         return
-    
+
     mode = store.get_setting("delivery_mode", "announce")
     message = _format_delivery_message(topic_name, counts, mode)
-    
+
     # Require https before routing. The old "hooks.slack.com" in channel
     # substring test ran before any scheme check, so a channel like
     # http://evil.example/hooks.slack.com was treated as Slack and POSTed in
@@ -55,7 +55,7 @@ def _format_delivery_message(topic: str, counts: dict, mode: str) -> str:
     """Format notification message based on delivery mode."""
     new = counts.get("new", 0)
     updated = counts.get("updated", 0)
-    
+
     if mode == "announce":
         return f"📰 *last30days update: {topic}*\n{new} new, {updated} updated"
     elif mode == "silent":
@@ -220,10 +220,10 @@ def _run_topic(topic: dict) -> dict:
             findings_new=counts["new"],
             findings_updated=counts["updated"],
         )
-        
+
         # Deliver webhook notification if configured
         _deliver_findings(topic["name"], counts)
-        
+
         return {
             "topic": topic["name"],
             "status": "completed",

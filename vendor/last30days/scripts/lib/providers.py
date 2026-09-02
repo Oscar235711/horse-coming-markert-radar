@@ -268,7 +268,7 @@ def resolve_runtime(config: dict[str, Any], depth: str) -> tuple[schema.Provider
             reasoning_provider="gemini",
             planner_model=planner_model,
             rerank_model=rerank_model,
-    
+
             x_search_backend=_resolve_x_backend(config),
         )
         return runtime, GeminiClient(google_key)
@@ -280,7 +280,7 @@ def resolve_runtime(config: dict[str, Any], depth: str) -> tuple[schema.Provider
             reasoning_provider="openai",
             planner_model=planner_model,
             rerank_model=rerank_model,
-    
+
             x_search_backend=_resolve_x_backend(config),
         )
         return runtime, OpenAIClient(
@@ -294,7 +294,7 @@ def resolve_runtime(config: dict[str, Any], depth: str) -> tuple[schema.Provider
             reasoning_provider="xai",
             planner_model=planner_model,
             rerank_model=rerank_model,
-    
+
             x_search_backend=_resolve_x_backend(config),
         )
         return runtime, XAIClient(xai_key)
