@@ -13,6 +13,7 @@ node_modules/
 .local/
 .tools/
 .superpowers/sdd/
+.worktrees/
 *.log
 *.inspect.ndjson
 *_preview.png
