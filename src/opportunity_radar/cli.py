@@ -15,6 +15,9 @@ from .models import CollectionScope
 from .server import serve_local
 
 
+DEFAULT_HOT30_RUNS_ROOT = Path(".local") / "runs" / "hot30"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="radar")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -163,21 +166,47 @@ def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]
 
 def _hot30_adapter(runs_root: str | None) -> Hot30Adapter:
     kwargs: dict[str, Any] = {"project_root": project_root()}
-    if runs_root:
-        kwargs["runs_root"] = Path(runs_root)
+    kwargs["runs_root"] = Path(runs_root) if runs_root else project_root() / DEFAULT_HOT30_RUNS_ROOT
     return Hot30Adapter(**kwargs)
+
+
+def _portable_path(value: str, *, root: Path, runs_root: Path) -> str:
+    """Render local paths as copyable placeholders, never user-specific absolutes."""
+    normalized = str(value).replace("\\", "/")
+    project_prefix = str(root).replace("\\", "/").rstrip("/")
+    runs_prefix = str(runs_root).replace("\\", "/").rstrip("/")
+    if normalized == project_prefix or normalized.startswith(project_prefix + "/"):
+        return "<PROJECT_ROOT>" + normalized[len(project_prefix):]
+    if normalized == runs_prefix or normalized.startswith(runs_prefix + "/"):
+        return "<RUNS_ROOT>" + normalized[len(runs_prefix):]
+    return normalized
+
+
+def _portable_plan(adapter: Hot30Adapter, run: Any, commands: Any) -> tuple[dict[str, str], dict[str, list[str]]]:
+    root = project_root()
+    runs_root = adapter.runs_root
+    paths = {key: _portable_path(value, root=root, runs_root=runs_root) for key, value in run.as_dict().items()}
+    rendered: dict[str, list[str]] = {}
+    for name, command in commands.as_dict().items():
+        rendered[name] = [
+            "python" if index == 0 else "vendor/last30days/scripts/last30days.py" if index == 1
+            else _portable_path(token, root=root, runs_root=runs_root)
+            for index, token in enumerate(command)
+        ]
+    return paths, rendered
 
 
 def _hot30_plan(arguments: argparse.Namespace) -> dict[str, Any]:
     adapter = _hot30_adapter(arguments.runs_root)
     run = adapter.prepare_run(arguments.run_id)
+    paths, commands = _portable_plan(adapter, run, adapter.protocol_commands(run, domain=arguments.domain, emit="compact"))
     return {
         "status": "planned",
         "mode": "hot30",
         "run_id": arguments.run_id,
         "domain": " ".join(str(arguments.domain or "").split()),
-        "paths": run.as_dict(),
-        "commands": adapter.protocol_commands(run, domain=arguments.domain, emit="compact").as_dict(),
+        "paths": paths,
+        "commands": commands,
     }
 
 
@@ -188,7 +217,7 @@ def _dispatch_hot30(arguments: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"unsupported hot30 command: {arguments.hot30_command}")
     if arguments.dry_run:
         return _hot30_plan(arguments)
-    runs_root = arguments.runs_root or str(project_root() / "outputs" / "hot30")
+    runs_root = arguments.runs_root or str(project_root() / DEFAULT_HOT30_RUNS_ROOT)
     output_dir = (Path(runs_root) / arguments.run_id / "artifacts").resolve()
     adapter = Last30DaysAdapter(project_root=project_root(), runs_root=Path(runs_root))
     return adapter.run_hot30(arguments.domain, output_dir, emit="compact")

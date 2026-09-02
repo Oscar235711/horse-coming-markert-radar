@@ -193,11 +193,25 @@ opencli opportunity-reddit range Cummins `
 
 多平台热点的实际来源由 `vendor/last30days` 的配置和本机认证决定。可通过 `LAST30DAYS_DEFAULT_SEARCH` 固定来源集合（逗号分隔），或在网页/CLI 中使用引擎支持的来源配置；未配置的来源不会被伪装成成功，报告会标为 `off`、`warn`、`rate_limited`、`failed` 或 `no-results` 等状态。运行前可在 vendor 目录执行无网络检查：
 
+基础发现来源为 Reddit、Hacker News、Digg 和 X；引擎还支持按配置启用 Perplexity、LinkedIn、Trustpilot、Amazon、Threads、Pinterest、Telegram 等扩展来源。只有实际启用且通过认证/可用性检查的来源才会参与运行。
+
 ```powershell
 .\.venv\Scripts\python vendor/last30days/scripts/last30days.py doctor
 ```
 
 项目自身的 `radar doctor` 检查 Python、Node、OpenCLI、Codex、Reddit 会话、Excel 和 DeepSeek 配置。doctor 只输出 key 是否存在和路径等非秘密信息，不输出 API Key、Cookie 或认证内容。
+
+查看项目检查结果：
+
+```powershell
+radar doctor
+```
+
+查看 vendor 引擎的来源级状态和修复建议（同样不打印密钥）：
+
+```powershell
+.\.venv\Scripts\python vendor/last30days/scripts/last30days.py doctor --json
+```
 
 DeepSeek/Higress 由本机环境变量提供，不要写入命令参数、YAML 或报告：
 
@@ -221,7 +235,7 @@ radar hot30 plan --run-id 20260902-demo `
   --domain "North American diesel pickup aftermarket"
 ```
 
-输出包含 `nominate`、`judge`、`finalize` 三条命令，分别完成多平台发现、DeepSeek/Higress 主机判断和完整简报收尾。命令只引用 `vendor/last30days` 与 `.local/outputs` 路径，不把密钥放进参数。只想检查路径而不启动采集时使用：
+输出包含 `nominate`、`judge`、`finalize` 三条命令，分别完成多平台发现、DeepSeek/Higress 主机判断和完整简报收尾。计划中的命令使用 `python`、`vendor/last30days/scripts/last30days.py` 和 `<PROJECT_ROOT>` 占位符，复制给团队成员前将占位符替换为其项目目录；不把密钥放进参数。默认 run 根目录为 `.local/runs/hot30`。只想检查路径而不启动采集时使用：
 
 ```powershell
 radar hot30 run --run-id 20260902-demo `
@@ -235,7 +249,7 @@ radar hot30 run --run-id 20260902-demo `
   --domain "North American diesel pickup aftermarket"
 ```
 
-可用 `--runs-root <目录>` 把运行目录放到指定位置。结果位于 `<runs-root>/<run_id>/artifacts/brief.md`、`brief.html`、`trends.json` 和 `source_status.json`；不要把 `.env`、Cookie、API Key 或原始数据放入参数或提交。
+可用 `--runs-root <目录>` 把运行目录放到指定位置；未指定时结果位于 `.local/runs/hot30/<run_id>/artifacts/brief.md`、`brief.html`、`trends.json` 和 `source_status.json`。不要把 `.env`、Cookie、API Key 或原始数据放入参数或提交。
 
 用自然语言问题、时间和深度运行：
 

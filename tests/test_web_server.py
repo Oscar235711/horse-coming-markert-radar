@@ -349,6 +349,10 @@ def test_hot30_plan_prints_three_project_local_commands_without_secrets(capsys) 
     assert "--judgments" in payload["commands"]["judge"]
     assert "--finalize" in payload["commands"]["finalize"]
     assert all("DEEPSEEK_API_KEY" not in " ".join(command) for command in payload["commands"].values())
+    rendered = json.dumps(payload, ensure_ascii=False)
+    assert "C:\\Users" not in rendered and "D:\\" not in rendered
+    assert payload["commands"]["nominate"][0:2] == ["python", "vendor/last30days/scripts/last30days.py"]
+    assert payload["paths"]["root"].startswith("<PROJECT_ROOT>/.local/runs/hot30/")
 
 
 def test_hot30_run_dry_run_does_not_start_adapter(monkeypatch, capsys, tmp_path) -> None:
