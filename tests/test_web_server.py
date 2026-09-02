@@ -148,6 +148,8 @@ def test_local_http_page_creates_run_and_returns_status(tmp_path) -> None:
         assert "最近365天" in home
         assert "r.progress?.message" in home
         assert "r.failures" in home
+        assert "取消请求失败" in home
+        assert "删除请求失败" in home
 
         request = Request(
             base + "/api/runs",
