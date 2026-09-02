@@ -338,6 +338,57 @@ def test_serve_cli_dispatches_local_host_and_port(monkeypatch, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["status"] == "stopped"
 
 
+def test_hot30_plan_prints_three_project_local_commands_without_secrets(capsys) -> None:
+    """The portable plan must expose the host-judged protocol, never credentials."""
+    assert main(["hot30", "plan", "--run-id", "plan-fixture", "--domain", "diesel towing"], app=object()) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "planned"
+    assert set(payload["commands"]) == {"nominate", "judge", "finalize"}
+    assert "--nominate-only" in payload["commands"]["nominate"]
+    assert "--judgments" in payload["commands"]["judge"]
+    assert "--finalize" in payload["commands"]["finalize"]
+    assert all("DEEPSEEK_API_KEY" not in " ".join(command) for command in payload["commands"].values())
+
+
+def test_hot30_run_dry_run_does_not_start_adapter(monkeypatch, capsys, tmp_path) -> None:
+    """Dry-run is a portable inspection mode and must not invoke subprocess work."""
+    class ExplodingAdapter:
+        def __init__(self, **_kwargs):
+            raise AssertionError("dry-run must not construct or execute the adapter")
+
+    monkeypatch.setattr("opportunity_radar.cli.Last30DaysAdapter", ExplodingAdapter)
+    assert main([
+        "hot30", "run", "--run-id", "dry-fixture", "--domain", "diesel towing",
+        "--runs-root", str(tmp_path), "--dry-run",
+    ], app=object()) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "planned"
+    assert payload["run_id"] == "dry-fixture"
+
+
+def test_hot30_run_dispatches_to_last30days_adapter(monkeypatch, capsys, tmp_path) -> None:
+    received = {}
+
+    class FakeAdapter:
+        def __init__(self, **kwargs):
+            received["init"] = kwargs
+
+        def run_hot30(self, topic, output_dir, **kwargs):
+            received["run"] = (topic, output_dir, kwargs)
+            return {"status": "completed", "stage": "exported"}
+
+    monkeypatch.setattr("opportunity_radar.cli.Last30DaysAdapter", FakeAdapter)
+    assert main([
+        "hot30", "run", "--run-id", "run-fixture", "--domain", "diesel towing",
+        "--runs-root", str(tmp_path), "--no-open",
+    ], app=object()) == 0
+    assert received["run"][0] == "diesel towing"
+    assert received["run"][1] == (tmp_path / "run-fixture" / "artifacts").resolve()
+    assert received["run"][2]["emit"] == "compact"
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
 def test_unlimited_complete_mode_is_the_default_user_entrypoint() -> None:
     """A new run must not silently fall back to the capped standard preset."""
     arguments = build_parser().parse_args(["run", "--config", "configs/diesel_90d.yaml"])

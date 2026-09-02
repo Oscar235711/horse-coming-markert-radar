@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 from datetime import date
 import json
+from pathlib import Path
 import sys
 from typing import Any
 
 from .cli_app import RadarCliApp
+from .last30days_adapter import DEFAULT_HOT30_DOMAIN, Hot30Adapter, Last30DaysAdapter, project_root
 from .models import CollectionScope
 from .server import serve_local
 
@@ -18,6 +20,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("doctor")
+
+    hot30_parser = subparsers.add_parser("hot30", help="运行 vendored last30days 多平台热点引擎")
+    hot30_subparsers = hot30_parser.add_subparsers(dest="hot30_command", required=True)
+    hot30_plan = hot30_subparsers.add_parser("plan", help="生成三阶段 nominate/judge/finalize 命令")
+    hot30_plan.add_argument("--run-id", required=True)
+    hot30_plan.add_argument("--domain", default=DEFAULT_HOT30_DOMAIN)
+    hot30_plan.add_argument("--runs-root")
+    hot30_run = hot30_subparsers.add_parser("run", help="调用 Last30DaysAdapter 执行多平台热点")
+    hot30_run.add_argument("--run-id", required=True)
+    hot30_run.add_argument("--domain", default=DEFAULT_HOT30_DOMAIN)
+    hot30_run.add_argument("--runs-root")
+    hot30_run.add_argument("--dry-run", action="store_true", help="只输出三阶段命令，不启动采集")
+    hot30_run.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--config", default="configs/diesel_90d.yaml")
@@ -92,6 +107,8 @@ def main(argv: list[str] | None = None, *, app: RadarCliApp | None = None) -> in
 def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]:
     if arguments.command == "doctor":
         return app.doctor()
+    if arguments.command == "hot30":
+        return _dispatch_hot30(arguments)
     if arguments.command == "serve":
         return serve_local(
             app,
@@ -142,3 +159,36 @@ def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]
     if arguments.command == "keywords" and arguments.keywords_command == "approve":
         return app.keywords_approve(arguments.file)
     raise ValueError(f"unsupported command: {arguments.command}")
+
+
+def _hot30_adapter(runs_root: str | None) -> Hot30Adapter:
+    kwargs: dict[str, Any] = {"project_root": project_root()}
+    if runs_root:
+        kwargs["runs_root"] = Path(runs_root)
+    return Hot30Adapter(**kwargs)
+
+
+def _hot30_plan(arguments: argparse.Namespace) -> dict[str, Any]:
+    adapter = _hot30_adapter(arguments.runs_root)
+    run = adapter.prepare_run(arguments.run_id)
+    return {
+        "status": "planned",
+        "mode": "hot30",
+        "run_id": arguments.run_id,
+        "domain": " ".join(str(arguments.domain or "").split()),
+        "paths": run.as_dict(),
+        "commands": adapter.protocol_commands(run, domain=arguments.domain, emit="compact").as_dict(),
+    }
+
+
+def _dispatch_hot30(arguments: argparse.Namespace) -> dict[str, Any]:
+    if arguments.hot30_command == "plan":
+        return _hot30_plan(arguments)
+    if arguments.hot30_command != "run":
+        raise ValueError(f"unsupported hot30 command: {arguments.hot30_command}")
+    if arguments.dry_run:
+        return _hot30_plan(arguments)
+    runs_root = arguments.runs_root or str(project_root() / "outputs" / "hot30")
+    output_dir = (Path(runs_root) / arguments.run_id / "artifacts").resolve()
+    adapter = Last30DaysAdapter(project_root=project_root(), runs_root=Path(runs_root))
+    return adapter.run_hot30(arguments.domain, output_dir, emit="compact")
