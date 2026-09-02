@@ -17,9 +17,11 @@ class ScriptedCollector:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.received_communities: tuple[str, ...] = ()
 
     def collect(self, communities, *, paths, as_of, deep_read=False, shortlist_limit=30):
         self.calls += 1
+        self.received_communities = tuple(community.name for community in communities)
         posts = tuple(
             opportunity_radar.NormalizedPost(
                 post_id=f"t3_fixture_{index}",
@@ -67,6 +69,46 @@ class ScriptedCollector:
             deep_reads=deep_reads,
             failures=(),
         )
+
+
+def test_run_never_adds_discovered_library_communities_to_the_current_crawl(tmp_path: Path) -> None:
+    """A noisy discovered subreddit must not silently expand a four-seed collection into an unbounded crawl."""
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    (library_root / "communities.json").write_text(
+        json.dumps({
+            "version": "community-library.v1",
+            "communities": [{
+                "key": "indiancricket",
+                "subreddit": "r/IndianCricket",
+                "display_name": "IndianCricket",
+                "status": "active",
+                "source_post_ids": ["t3_a", "t3_b", "t3_c"],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    collector = ScriptedCollector()
+    app = opportunity_radar.RadarCliApp(
+        runs_root=tmp_path / "runs",
+        library_root=library_root,
+        config_versions_root=tmp_path / "versions",
+        environment={"DEEPSEEK_API_KEY": "test-key"},
+        collector=collector,
+        flash_client=FlakyFlashClient(),
+        pro_consolidator=DeterministicPro(),
+        exporter=_write_fake_workbook,
+        now=lambda: AS_OF,
+    )
+
+    state = app.run(
+        "configs/diesel_90d.yaml",
+        run_id="fixed-seeds",
+        selected_communities=("Cummins",),
+    )
+
+    assert collector.received_communities == ("Cummins",)
+    assert state["community_expansion"]["used_communities"] == ["Cummins"]
 
 
 class FlakyFlashClient:
@@ -166,6 +208,9 @@ def test_run_resume_status_export_and_governance_round_trip_without_network(tmp_
     assert first["status"] == "incomplete"
     assert first["stage"] == "flash_extract"
     assert first["counts"]["analyzed_posts"] == 2
+    # A failed item is still processed for this attempt; the browser must not
+    # leave the progress bar permanently behind the total.
+    assert first["progress"]["completed"] == first["progress"]["total"]
     assert (tmp_path / "runs" / "fixture-run" / "checkpoints" / "analysis__t3_fixture_0.json").exists()
     assert not (tmp_path / "runs" / "fixture-run" / "artifacts" / "analysis.json").exists()
 
@@ -185,6 +230,7 @@ def test_run_resume_status_export_and_governance_round_trip_without_network(tmp_
     assert (project_library / "communities.json").exists()
     assert (project_library / "topics.json").exists()
     assert (project_library / "keywords.json").exists()
+
 
     status = app.status("fixture-run")
     rendered_status = json.dumps(status, ensure_ascii=False)
@@ -211,6 +257,59 @@ def test_run_resume_status_export_and_governance_round_trip_without_network(tmp_
     approved_document = opportunity_radar.load_community_catalog(approved["new_version_path"])
     cummins = next(community for community in approved_document.communities if community.name == "Cummins")
     assert "winter crack" in cummins.slang
+
+
+def test_deepseek_partial_failures_still_consolidate_successful_posts(tmp_path: Path) -> None:
+    """A failed DeepSeek item must be reported without discarding usable analyses."""
+    app = opportunity_radar.RadarCliApp(
+        runs_root=tmp_path / "runs",
+        config_versions_root=tmp_path / "versions",
+        environment={"DEEPSEEK_API_KEY": "test-key"},
+        collector=ScriptedCollector(),
+        flash_client=FlakyFlashClient(),
+        pro_consolidator=DeterministicPro(),
+        exporter=_write_fake_workbook,
+        now=lambda: AS_OF,
+    )
+
+    result = app.run("configs/diesel_90d.yaml", run_id="deepseek-partial", analysis_engine="deepseek")
+
+    assert result["status"] == "completed"
+    assert result["counts"]["analyzed_posts"] == 2
+    assert result["counts"]["failure_count"] == 1
+    assert result["counts"]["topic_count"] == 1
+
+
+def test_deepseek_topic_failure_keeps_run_resumable_without_rule_report(tmp_path: Path) -> None:
+    """If Pro fails for every community, the run must pause instead of exporting an empty or rule-based report."""
+
+    class FailingPro:
+        mode = "deepseek_pro"
+
+        def consolidate(self, _community, _signals):
+            raise opportunity_radar.DeepSeekError("temporary pro failure")
+
+    app = opportunity_radar.RadarCliApp(
+        runs_root=tmp_path / "runs",
+        config_versions_root=tmp_path / "versions",
+        environment={"DEEPSEEK_API_KEY": "test-key"},
+        collector=ScriptedCollector(),
+        flash_client=FlakyFlashClient(),
+        pro_consolidator=FailingPro(),
+        exporter=_write_fake_workbook,
+        now=lambda: AS_OF,
+    )
+
+    result = app.run(
+        "configs/diesel_90d.yaml",
+        run_id="deepseek-pro-failure",
+        analysis_engine="deepseek",
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["stage"] == "topic_consolidation"
+    assert result["progress"]["message"] == "DeepSeek 话题归并未完成，已保留分析检查点，可直接续跑。"
+    assert "report_html" not in result["artifacts"]
 
 
 def test_run_rejects_reusing_an_existing_run_id_without_resume(tmp_path: Path) -> None:

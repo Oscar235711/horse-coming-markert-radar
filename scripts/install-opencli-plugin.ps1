@@ -18,7 +18,10 @@ if (-not (Test-Path -LiteralPath $pluginPath -PathType Container)) {
 
 $installedPluginPath = Join-Path $env:USERPROFILE ".opencli\plugins\opportunity-reddit"
 if (Test-Path -LiteralPath $installedPluginPath -PathType Container) {
-    Write-Host "Opportunity Radar Reddit plugin is already installed; validating it." -ForegroundColor Yellow
+    Write-Host "Opportunity Radar Reddit plugin is already installed; syncing current project commands." -ForegroundColor Yellow
+    Get-ChildItem -LiteralPath $pluginPath -File | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $installedPluginPath $_.Name) -Force
+    }
 } else {
     if ($openCliCommand -match '\.cmd$') {
         & cmd.exe /d /c "`"$openCliCommand`" plugin install `"$pluginPath`" 2>NUL"

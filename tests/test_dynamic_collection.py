@@ -64,6 +64,38 @@ def test_range_collection_emits_exact_dates_and_coverage(tmp_path) -> None:
     assert coverage.actual_end == date(2026, 4, 15)
 
 
+def test_complete_collection_omits_listing_cap_and_deep_reads_every_candidate(tmp_path) -> None:
+    """Complete mode may stop on date/exhaustion, never on a project quota."""
+    as_of = datetime(2026, 8, 31, 12, tzinfo=UTC)
+    listing = [
+        _listing("one", created_at=datetime(2026, 8, 1, 12, tzinfo=UTC)),
+        _listing("two", created_at=datetime(2026, 7, 1, 12, tzinfo=UTC)),
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        calls.append(arguments)
+        if "range" in arguments:
+            return json.dumps(listing)
+        return "[]"
+
+    paths = opportunity_radar.create_run_paths(tmp_path, "complete-run")
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (opportunity_radar.Community("Cummins"),),
+        paths=paths,
+        as_of=as_of,
+        scope=opportunity_radar.CollectionScope(date(2026, 1, 1), date(2026, 8, 31), "complete"),
+        deep_read=True,
+    )
+
+    range_call = calls[0]
+    assert "--limit" not in range_call
+    assert {item.post.post_id for item in result.shortlisted} == {"t3_one", "t3_two"}
+    read_calls = [call for call in calls if "read" in call]
+    assert len(read_calls) == 2
+    assert all("--complete" in call for call in read_calls)
+
+
 def test_range_collection_marks_partial_when_oldest_post_misses_requested_start(tmp_path) -> None:
     """A capped listing must never be presented as complete annual coverage."""
     as_of = datetime(2026, 8, 31, 12, tzinfo=UTC)

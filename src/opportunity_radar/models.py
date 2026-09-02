@@ -61,6 +61,9 @@ _DEPTH_PRESETS = {
     "quick": (300, 30),
     "standard": (1000, 80),
     "deep": (1000, 150),
+    # Complete mode is bounded by the selected date window and Reddit's own
+    # pagination/exhaustion signals, never by a business-side row quota.
+    "complete": (None, None),
 }
 
 
@@ -70,7 +73,7 @@ class CollectionScope:
 
     start_date: date
     end_date: date
-    depth: str = "standard"
+    depth: str = "complete"
 
     def __post_init__(self) -> None:
         if self.end_date < self.start_date:
@@ -78,14 +81,14 @@ class CollectionScope:
         if (self.end_date - self.start_date).days + 1 > 365:
             raise ValueError("collection range cannot exceed 365 days")
         if self.depth not in _DEPTH_PRESETS:
-            raise ValueError("depth must be quick, standard, or deep")
+            raise ValueError("depth must be quick, standard, deep, or complete")
 
     @property
-    def listing_limit_per_community(self) -> int:
+    def listing_limit_per_community(self) -> int | None:
         return _DEPTH_PRESETS[self.depth][0]
 
     @property
-    def deep_read_limit_per_community(self) -> int:
+    def deep_read_limit_per_community(self) -> int | None:
         return _DEPTH_PRESETS[self.depth][1]
 
 

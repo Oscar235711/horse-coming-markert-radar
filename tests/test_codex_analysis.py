@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 
 import opportunity_radar
-from opportunity_radar.codex_analysis import CodexAnalysisClient, CodexTopicConsolidator
+import pytest
+from opportunity_radar.codex_analysis import CodexAnalysisClient, CodexTopicConsolidator, ChunkedCodexTopicConsolidator
+from opportunity_radar.cli_app import DeepSeekTopicConsolidator
 
 
 def _thread() -> opportunity_radar.ThreadDocument:
@@ -74,6 +76,7 @@ def test_codex_post_analysis_runs_read_only_and_drops_unknown_evidence(tmp_path)
     assert "read-only" in arguments
     assert "--output-schema" in arguments
     assert "untrusted" in prompt.casefold()
+    assert "简体中文" in prompt
     assert analysis.topics[0].evidence_ids == ("post",)
     assert analysis.claims[0].status == "supported"
     assert analysis.claims[1].status == "unknown"
@@ -118,6 +121,116 @@ def test_codex_topic_consolidator_keeps_rich_cited_fields_and_never_rule_falls_b
     assert proposals[0].pains[0].evidence[0].evidence_id == "post"
     assert empty == ()
     assert consolidator.mode == "codex"
+
+
+def test_chunked_consolidator_runs_model_merge_for_semantic_duplicates() -> None:
+    """Exact-key merging alone creates many one-post topics with no business value."""
+    threads = [_thread(), _thread(), _thread(), _thread()]
+    analyses = [opportunity_radar.PostAnalysis((), ()) for _ in threads]
+    signals = tuple(opportunity_radar.PostSignal.from_thread(t, a) for t, a in zip(threads, analyses))
+
+    def topic(key: str, label: str) -> dict:
+        return {
+            "canonical_key": key, "label_en": label, "label_zh": "拖挂排温问题",
+            "post_ids": ["t3_tow"],
+            "summary": {"text": "拖挂爬坡时排温偏高。", "evidence": [{"post_id": "t3_tow", "evidence_id": "post"}]},
+            "evidence": [{"post_id": "t3_tow", "evidence_id": "post", "claim": "High EGT while towing.", "stance": "supporting", "translation_zh": "拖挂时排温偏高。"}],
+            "vehicles": [], "platforms": ["Cummins"], "scenarios": ["拖挂爬坡"], "user_types": ["拖挂用户"],
+            "pains": [], "consequences": [], "needs": [], "current_solutions": [], "gaps": [],
+            "opportunity_hypotheses": [], "risks": [], "product_decision": "no_product",
+            "category_tags": [], "brand_tags": [], "competitor_tags": [], "confidence": 0.7,
+            "validation_questions": [],
+        }
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+            self.merge_calls = 0
+
+        def consolidate_topics(self, _community, _signals):
+            self.calls += 1
+            return {"topics": [topic(f"egt-{self.calls}", f"EGT variant {self.calls}")]}
+
+        def merge_topic_proposals(self, _community, proposals):
+            self.merge_calls += 1
+            assert len(proposals) == 2
+            return {"topics": [topic("towing-egt", "Towing EGT")]}
+
+    client = Client()
+    proposals = ChunkedCodexTopicConsolidator(client=client, chunk_size=1).consolidate("Cummins", signals)
+
+    assert client.merge_calls == 1
+    assert [item.canonical_key for item in proposals] == ["towing-egt"]
+
+
+def test_deepseek_topic_consolidator_accepts_gateway_mapping_evidence_and_rich_voc() -> None:
+    """Higress may return evidence as an id->url map; keep the rich Chinese VOC fields."""
+    thread = _thread()
+    analysis = opportunity_radar.PostAnalysis(
+        topics=(opportunity_radar.TopicCandidate("Towing EGT control", ("post",)),),
+        claims=(),
+        scenario=opportunity_radar.AnalysisField("拖挂爬坡时控制排温", ("post",), "fact"),
+        goal=opportunity_radar.AnalysisField("保持动力稳定并避免过热", ("post",), "fact"),
+    )
+    signal = opportunity_radar.PostSignal.from_thread(thread, analysis)
+
+    class Client:
+        def chat_json(self, *_args, **_kwargs):
+            return {
+                "topics": [{
+                    "canonical_key": "towing-egt-control",
+                    "label_en": "Towing EGT control",
+                    "label_zh": "拖挂排温控制",
+                    "post_ids": ["t3_tow"],
+                    "summary": "拖挂爬坡时车主需要控制排温，避免被迫降速。",
+                    "seller_insight": "用户愿意为可验证的排温控制方案付费，但现有方案需要自行组合。",
+                    "scene_cards": [{"text": "拖挂第五轮上坡时，持续高负载导致排温升高。", "evidence": ["post"]}],
+                    "user_tasks": [{"text": "在不牺牲拖挂动力的情况下把排温控制在可接受范围。", "evidence": ["post"]}],
+                    "pains": [{"text": "爬坡时排温过高，用户只能降速。", "status": "fact", "severity": "high", "consequence": "拖挂效率下降", "evidence": ["post"]}],
+                    "needs": [{"text": "适合重载场景的可验证排温控制方案。", "evidence": ["post"]}],
+                    "current_solutions": [{"text": "加装排温表并调整驾驶方式。", "evidence": ["post"]}],
+                    "gaps": [{"text": "用户需要自行试错，缺少一套清晰的适配路径。", "evidence": ["post"]}],
+                    "opportunity_hypotheses": [{"text": "开发带适配说明的排温监测与控制组合包。", "evidence": ["post"]}],
+                    "product_decision": "accessory_bundle",
+                    "evidence": {"post": "https://www.reddit.com/r/Cummins/comments/tow/example"},
+                    "confidence": 0.86,
+                }]
+            }
+
+    proposals = DeepSeekTopicConsolidator(
+        client=Client(), model="deepseek-v4-pro"
+    ).consolidate("Cummins", (signal,))
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal.summary.text.startswith("拖挂爬坡")
+    assert proposal.seller_insight.text.startswith("用户愿意")
+    assert proposal.user_tasks[0].text.startswith("在不牺牲")
+    assert proposal.pains[0].severity == "high"
+    assert proposal.evidence[0].evidence_id == "post"
+
+
+def test_deepseek_topic_consolidator_never_silently_uses_rule_topics() -> None:
+    """A failed Pro call must stay retryable instead of producing a report labelled as DeepSeek."""
+    thread = _thread()
+    signal = opportunity_radar.PostSignal.from_thread(
+        thread,
+        opportunity_radar.PostAnalysis(
+            topics=(opportunity_radar.TopicCandidate("Towing EGT control", ("post",)),),
+            claims=(),
+        ),
+    )
+
+    class FailingClient:
+        def chat_json(self, *_args, **_kwargs):
+            raise opportunity_radar.DeepSeekError("gateway unavailable")
+
+    consolidator = DeepSeekTopicConsolidator(
+        client=FailingClient(), model="deepseek-v4-pro"
+    )
+
+    with pytest.raises(opportunity_radar.DeepSeekError, match="gateway unavailable"):
+        consolidator.consolidate("Cummins", (signal,))
 
 
 def test_radar_run_uses_codex_for_both_analysis_stages_without_rule_topics(tmp_path) -> None:

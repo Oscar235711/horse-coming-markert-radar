@@ -7,8 +7,9 @@ from threading import Event, Thread
 import time
 from urllib.request import Request, urlopen
 
-from opportunity_radar.server import RunManager, build_server
-from opportunity_radar.cli import main
+from opportunity_radar.server import RunManager, ScheduleManager, build_server
+from opportunity_radar.cli import build_parser, main
+from opportunity_radar.dashboard import dashboard_html
 
 
 class BlockingApp:
@@ -46,6 +47,7 @@ def _payload() -> dict:
         "depth": "standard",
         "analysis_engine": "codex",
         "communities": ["Cummins", "Duramax", "powerstroke", "FordDiesels"],
+        "keywords": ["cummins"],
     }
 
 
@@ -70,6 +72,62 @@ def test_run_manager_blocks_a_second_chrome_collection(tmp_path) -> None:
     assert app.calls[0][1]["analysis_engine"] == "codex"
     assert app.calls[0][1]["scope"].depth == "standard"
     assert app.calls[0][1]["selected_communities"] == tuple(_payload()["communities"])
+
+
+def test_active_run_can_be_cancelled_and_cannot_overwrite_interrupted_state(tmp_path) -> None:
+    """Cancellation must take effect immediately and remain interrupted after the worker returns."""
+    report = tmp_path / "report.html"
+    report.write_text("report", encoding="utf-8")
+    app = BlockingApp(report, block=True)
+    manager = RunManager(
+        app=app, config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+
+    created = manager.create_run(_payload())
+    assert app.started.wait(timeout=2)
+
+    cancelled = manager.cancel_run(created["run_id"])
+    assert cancelled["status"] == "interrupted"
+    assert cancelled["stage"] == "cancelled"
+
+    app.release.set()
+    manager.wait(created["run_id"], timeout=2)
+    assert manager.snapshot(created["run_id"])["status"] == "interrupted"
+
+
+def test_local_http_page_exposes_cancel_endpoint_for_active_run(tmp_path) -> None:
+    """The browser must offer a direct cancel action instead of requiring a process kill."""
+    report = tmp_path / "report.html"
+    report.write_text("report", encoding="utf-8")
+    app = BlockingApp(report, block=True)
+    manager = RunManager(
+        app=app, config_path="config.yaml", runs_root=tmp_path,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+    server = build_server(manager, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        home = urlopen(base + "/", timeout=3).read().decode("utf-8")
+        assert "取消任务" in home
+        request = Request(
+            base + "/api/runs", data=json.dumps(_payload()).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        created = json.loads(urlopen(request, timeout=3).read().decode("utf-8"))
+        assert app.started.wait(timeout=2)
+        cancel_request = Request(base + f"/api/runs/{created['run_id']}/cancel", method="POST")
+        cancelled = json.loads(urlopen(cancel_request, timeout=3).read().decode("utf-8"))
+        assert cancelled["status"] == "interrupted"
+        app.release.set()
+        manager.wait(created["run_id"], timeout=2)
+    finally:
+        app.release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_local_http_page_creates_run_and_returns_status(tmp_path) -> None:
@@ -130,6 +188,15 @@ def test_serve_cli_dispatches_local_host_and_port(monkeypatch, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["status"] == "stopped"
 
 
+def test_unlimited_complete_mode_is_the_default_user_entrypoint() -> None:
+    """A new run must not silently fall back to the capped standard preset."""
+    arguments = build_parser().parse_args(["run", "--config", "configs/diesel_90d.yaml"])
+    assert arguments.depth == "complete"
+    page = dashboard_html(("Cummins",), ("cummins",))
+    assert '<option value="complete" selected>' in page
+    assert "完整模式不设项目数量上限" in page
+
+
 def test_completed_run_can_resume_without_locking_the_task_manager(tmp_path) -> None:
     """Calling snapshot while holding a non-reentrant lock would freeze the resume endpoint."""
     report = tmp_path / "report.html"
@@ -146,3 +213,77 @@ def test_completed_run_can_resume_without_locking_the_task_manager(tmp_path) -> 
 
     assert resumed["stage"] == "resume_queued"
     assert manager.snapshot(created["run_id"])["status"] == "completed"
+
+
+def test_schedule_manager_persists_rolling_window_and_toggles(tmp_path) -> None:
+    report = tmp_path / "report.html"
+    report.write_text("report", encoding="utf-8")
+    manager = RunManager(app=BlockingApp(report), config_path="config.yaml", runs_root=tmp_path,
+                         now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC))
+    schedules = ScheduleManager(manager, tmp_path / "schedules.json",
+                                now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC))
+    created = schedules.create({
+        "name": "每周扫描", "frequency": "weekly", "at_time": "09:00",
+        "window_days": 90, "depth": "standard", "communities": ["cummins"],
+        "keywords": ["cummins"],
+    })
+    assert created["enabled"] is True
+    assert created["next_run_at"].startswith("2026-09-07T09:00")
+    toggled = schedules.toggle(created["schedule_id"])
+    assert toggled["enabled"] is False
+    assert schedules.list()[0]["keywords"] == ["cummins"]
+
+
+def test_schedule_api_creates_and_lists_schedule(tmp_path) -> None:
+    report = tmp_path / "report.html"
+    report.write_text("report", encoding="utf-8")
+    manager = RunManager(app=BlockingApp(report), config_path="config.yaml", runs_root=tmp_path,
+                         now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC))
+    schedules = ScheduleManager(manager, tmp_path / "schedules.json",
+                                now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC))
+    server = build_server(manager, schedule_manager=schedules, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        request = Request(base + "/api/schedules", data=json.dumps({
+            "name": "定时测试", "frequency": "daily", "at_time": "09:00",
+            "window_days": 30, "depth": "quick", "communities": ["Cummins"], "keywords": ["cummins"],
+        }).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        created = json.loads(urlopen(request, timeout=3).read().decode("utf-8"))
+        rows = json.loads(urlopen(base + "/api/schedules", timeout=3).read().decode("utf-8"))["schedules"]
+        assert rows[0]["schedule_id"] == created["schedule_id"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_local_http_page_can_delete_a_finished_run(tmp_path) -> None:
+    """Deleting a finished run removes only its local run directory."""
+    report = tmp_path / "report.html"
+    report.write_text("report", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    manager = RunManager(
+        app=BlockingApp(report), config_path="config.yaml", runs_root=runs_root,
+        now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC),
+    )
+    server = build_server(manager, host="127.0.0.1", port=0)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        request = Request(
+            base + "/api/runs", data=json.dumps(_payload()).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        created = json.loads(urlopen(request, timeout=3).read().decode("utf-8"))
+        manager.wait(created["run_id"], timeout=2)
+        delete_request = Request(base + f"/api/runs/{created['run_id']}", method="DELETE")
+        deleted = json.loads(urlopen(delete_request, timeout=3).read().decode("utf-8"))
+        assert deleted == {"status": "deleted", "run_id": created["run_id"]}
+        assert not (runs_root / created["run_id"]).exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

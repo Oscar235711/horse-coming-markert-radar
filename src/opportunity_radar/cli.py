@@ -30,9 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--run-id")
     run_parser.add_argument("--start-date")
     run_parser.add_argument("--end-date")
-    run_parser.add_argument("--depth", choices=("quick", "standard", "deep"), default="standard")
+    run_parser.add_argument("--depth", choices=("quick", "standard", "deep", "complete"), default="complete")
     run_parser.add_argument("--analysis-engine", choices=("codex", "rules", "deepseek"), default="codex")
+    run_parser.add_argument("--research-question", default="", help="自然语言研究问题；系统会自动扩展检索词")
     run_parser.add_argument("--communities", default="")
+    run_parser.add_argument("--keywords", default="", help="可选，逗号分隔的已激活关键词")
 
     resume_parser = subparsers.add_parser("resume")
     resume_parser.add_argument("--run-id", required=True)
@@ -109,12 +111,20 @@ def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]
                 depth=arguments.depth,
             )
         communities = tuple(value.strip() for value in arguments.communities.split(",") if value.strip())
-        return app.run(
-            arguments.config,
+        keywords = tuple(value.strip() for value in arguments.keywords.split(",") if value.strip())
+        run_kwargs = dict(
             run_id=arguments.run_id,
             scope=scope,
             analysis_engine=arguments.analysis_engine,
             selected_communities=communities,
+        )
+        if arguments.research_question:
+            run_kwargs["research_question"] = arguments.research_question
+        if keywords:
+            run_kwargs["selected_keywords"] = keywords
+        return app.run(
+            arguments.config,
+            **run_kwargs,
         )
     if arguments.command == "resume":
         return app.resume(arguments.run_id)

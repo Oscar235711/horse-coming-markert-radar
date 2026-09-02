@@ -79,6 +79,14 @@ class EvidenceBackedClaim:
 
     text: str
     evidence: Sequence[TopicEvidence]
+    status: str = "inference"
+    field: str = ""
+    post_ids: tuple[str, ...] = ()
+    author_ids: tuple[str, ...] = ()
+    frequency: int = 0
+    severity: str = "unknown"
+    consequence: str = "unknown"
+    explanation: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +116,9 @@ class ProTopicProposal:
     consequences: tuple[EvidenceBackedClaim, ...] = ()
     risks: tuple[EvidenceBackedClaim, ...] = ()
     product_decision: str = "no_product"
+    seller_insight: EvidenceBackedClaim = EvidenceBackedClaim("", ())
+    user_tasks: tuple[EvidenceBackedClaim, ...] = ()
+    scene_details: tuple[EvidenceBackedClaim, ...] = ()
 
 
 class ProTopicConsolidator(Protocol):
@@ -267,6 +278,36 @@ class TopicAggregator:
         )
         consequences = _validated_claims(proposal.consequences, post_ids, signal_by_id)
         risks = _validated_claims(proposal.risks, post_ids, signal_by_id)
+        seller_insight = _validated_claim(proposal.seller_insight, post_ids, signal_by_id)
+        user_tasks = _validated_claims(proposal.user_tasks, post_ids, signal_by_id)
+        scene_details = _validated_claims(proposal.scene_details, post_ids, signal_by_id)
+        # The rich fields are additive: legacy consumers keep their compact
+        # arrays, while the report receives one evidence-backed card per
+        # assertion.  No card is emitted without a valid source citation.
+        scene_values = proposal.scenarios
+        if not scene_details and not scene_values:
+            # When Pro emits only a narrative summary and JTBD cards, retain
+            # the concrete scene extracted by Flash from each source post.
+            # This is still source-grounded; it is not a generic template.
+            scene_values = tuple(
+                value
+                for value in (
+                    getattr(signal_by_id[post_id].analysis.scenario, "value", "")
+                    for post_id in post_ids
+                    if post_id in signal_by_id
+                )
+                if value and value != "unknown"
+            )
+        scene_cards = scene_details or _labelled_evidence(scene_values, evidence)
+        jtbd_cards = user_tasks
+        if not jtbd_cards:
+            jtbd_cards = _labelled_evidence(proposal.needs, evidence)
+        growth_rate = None
+        if baseline_rate > 0:
+            growth_rate = round((current_rate - baseline_rate) / baseline_rate, 4)
+        trend_label = {"new": "新出现", "rising": "上升", "stable": "稳定", "falling": "下降"}.get(
+            _trend(formal, current_rate, baseline_rate), "未知"
+        )
         record = self._registry.get_or_create(
             community=community,
             canonical_key=proposal.canonical_key,
@@ -280,6 +321,8 @@ class TopicAggregator:
             "label_en": record.label_en,
             "label_zh": record.label_zh,
             "summary": summary["text"] if summary is not None else "unknown",
+            "summary_zh": summary["text"] if summary is not None else "当前证据未形成结论摘要",
+            "seller_insight_zh": seller_insight["text"] if seller_insight is not None else "当前证据未形成卖家洞察",
             "status": "formal" if formal else "weak_signal",
             "trend": _trend(formal, current_rate, baseline_rate),
             "post_count": len(posts),
@@ -294,11 +337,34 @@ class TopicAggregator:
             "baseline_post_count": len(baseline_posts),
             "current_daily_rate": round(current_rate, 4),
             "baseline_daily_rate": round(baseline_rate, 4),
+            "data_snapshot": {
+                "supporting_posts": len(posts),
+                "authors": len({post.author for post in posts if post.author}),
+                "commenters": commenter_count,
+                "participants": len(post_author_names | commenter_names),
+                "comments": sum(len(signal_by_id[post_id].comments) for post_id in post_ids),
+                "evidence": len(evidence),
+            },
+            "trend_card": {
+                "current_30d_posts": len(current_posts),
+                "baseline_60d_posts": len(baseline_posts),
+                "current_daily_rate": round(current_rate, 4),
+                "baseline_daily_rate": round(baseline_rate, 4),
+                "growth_rate": growth_rate,
+                "trend_label": trend_label,
+                "evidence_count": len(evidence),
+            },
             "heat_score": 0.0,
             "vehicles": list(proposal.vehicles),
             "platforms": list(proposal.platforms),
             "scenarios": list(proposal.scenarios),
             "user_types": list(proposal.user_types),
+            "scene_cards": scene_cards,
+            "jtbd_cards": jtbd_cards,
+            "need_cards": needs,
+            "pain_point_cards": pains,
+            "solution_cards": current_solutions,
+            "gap_cards": gaps,
             "pains": [claim["text"] for claim in pains],
             "needs": [claim["text"] for claim in needs],
             "current_solutions": [claim["text"] for claim in current_solutions],
@@ -317,6 +383,9 @@ class TopicAggregator:
             "opposing_views": _views(evidence, "opposing"),
             "claim_evidence": {
                 "summary": summary if summary is not None else {"text": "unknown", "evidence": []},
+                "seller_insight": seller_insight if seller_insight is not None else {"text": "unknown", "evidence": []},
+                "scenes": scene_cards,
+                "user_tasks": jtbd_cards,
                 "pains": pains,
                 "needs": needs,
                 "current_solutions": current_solutions,
@@ -494,6 +563,8 @@ def _validated_evidence(
             "url": url,
             "claim_en": item.claim.strip(),
             "claim_zh": item.translation_zh.strip(),
+            "quote_original": item.claim.strip(),
+            "translation_zh": item.translation_zh.strip(),
             "stance": item.stance if item.stance in {"supporting", "opposing"} else "supporting",
         })
     return result
@@ -504,10 +575,37 @@ def _validated_claim(
 ) -> dict[str, Any] | None:
     if not claim.text.strip():
         return None
+    status = claim.status if claim.status in {"fact", "inference", "unknown"} else "unknown"
+    if status == "unknown":
+        return None
     evidence = _validated_evidence(claim.evidence, accepted_post_ids, signal_by_id)
     if evidence is None:
         return None
-    return {"text": claim.text.strip(), "evidence": evidence}
+    post_ids = tuple(dict.fromkeys(
+        claim.post_ids or tuple(item["post_id"] for item in evidence)
+    ))
+    author_ids = tuple(dict.fromkeys(
+        claim.author_ids or tuple(
+            signal_by_id[post_id].post.author.casefold()
+            for post_id in post_ids
+            if post_id in signal_by_id and signal_by_id[post_id].post.author
+        )
+    ))
+    return {
+        "field": claim.field,
+        "text": claim.text.strip(),
+        "status": status,
+        "evidence": evidence,
+        "evidence_ids": [item["evidence_id"] for item in evidence],
+        "post_ids": list(post_ids),
+        "author_ids": list(author_ids),
+        "post_count": len(post_ids),
+        "author_count": len(author_ids),
+        "frequency": claim.frequency or len(evidence),
+        "severity": claim.severity or "unknown",
+        "consequence": claim.consequence or "unknown",
+        "explanation": claim.explanation or "",
+    }
 
 
 def _validated_claims(

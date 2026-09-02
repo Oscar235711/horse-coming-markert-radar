@@ -15,11 +15,13 @@ param(
   [string]$SuggestionId,
   [string]$StartDate,
   [string]$EndDate,
-  [ValidateSet("quick", "standard", "deep")]
+  [ValidateSet("quick", "standard", "deep", "complete")]
   [string]$Depth,
   [ValidateSet("codex", "rules", "deepseek")]
   [string]$AnalysisEngine,
   [string]$Communities,
+  [string]$Keywords,
+  [string]$ResearchQuestion,
   [string]$HostAddress,
   [int]$Port,
   [switch]$NoOpen
@@ -68,6 +70,7 @@ function Invoke-RadarPythonCli {
   $propagatedNames = $propagatedNames | Sort-Object -Unique
 
   $previousValues = @{}
+  $previousPythonPath = $env:PYTHONPATH
   try {
     foreach ($name in $propagatedNames) {
       $previousValues[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
@@ -76,9 +79,15 @@ function Invoke-RadarPythonCli {
         [Environment]::SetEnvironmentVariable($name, $value, "Process")
       }
     }
+    # The Windows venv launcher can delegate to the base Python interpreter.
+    # Put this checkout's src directory first so the command never imports an
+    # older globally installed opportunity_radar package.
+    $sourcePath = Join-Path $repoRoot "src"
+    $env:PYTHONPATH = if ($previousPythonPath) { "$sourcePath;$previousPythonPath" } else { $sourcePath }
     & $pythonExe "-m" "opportunity_radar" @Arguments
   }
   finally {
+    if ($null -eq $previousPythonPath) { Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue } else { $env:PYTHONPATH = $previousPythonPath }
     foreach ($name in $propagatedNames) {
       [Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
     }
@@ -165,6 +174,8 @@ switch ($Command) {
     if ($Depth) { $arguments += @("--depth", $Depth) }
     if ($AnalysisEngine) { $arguments += @("--analysis-engine", $AnalysisEngine) }
     if ($Communities) { $arguments += @("--communities", $Communities) }
+    if ($Keywords) { $arguments += @("--keywords", $Keywords) }
+    if ($ResearchQuestion) { $arguments += @("--research-question", $ResearchQuestion) }
     Invoke-RadarPythonCli -Arguments $arguments
   }
   "resume" {

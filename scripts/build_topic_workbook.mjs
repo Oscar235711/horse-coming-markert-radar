@@ -66,6 +66,29 @@ function table(sheet, headers, rows, widths) {
 }
 
 function values(items) { return Array.isArray(items) ? items.join("；") : ""; }
+function claimTextRich(items, limit = 8) {
+  if (!Array.isArray(items)) return "";
+  return items.slice(0, limit).map((item) => {
+    if (item && typeof item === "object") {
+      const text = String(item.text ?? item.value ?? "").trim();
+      const explanation = String(item.explanation ?? "").trim();
+      const consequence = String(item.consequence ?? "").trim();
+      const meta = [explanation, consequence && consequence !== "unknown" ? `后果：${consequence}` : ""].filter(Boolean).join("；");
+      return meta ? `${text}（${meta}）` : text;
+    }
+    return String(item ?? "").trim();
+  }).filter(Boolean).join("\n");
+}
+function topicClaims(topic, richKey, legacyKey) {
+  const rich = topic[richKey];
+  if (Array.isArray(rich) && rich.length) return rich;
+  return Array.isArray(topic[legacyKey]) ? topic[legacyKey] : [];
+}
+function trendText(topic) {
+  const trend = topic.trend_card && typeof topic.trend_card === "object" ? topic.trend_card : {};
+  const growth = trend.growth_rate === null || trend.growth_rate === undefined ? "未知" : `${Math.round(Number(trend.growth_rate || 0) * 100)}%`;
+  return [`状态：${trend.trend_label ?? topic.trend ?? "未知"}`, `最近30天：${trend.current_30d_posts ?? topic.current_post_count ?? 0}`, `前60天：${trend.baseline_60d_posts ?? topic.baseline_post_count ?? 0}`, `变化：${growth}`].join("；");
+}
 function objectValue(item, key, fallback = "未知") {
   return item && typeof item === "object" && item[key] !== undefined && item[key] !== null && String(item[key]).trim() !== ""
     ? item[key]
@@ -127,9 +150,9 @@ function columnName(number) {
 
 {
   const sheet = workbook.worksheets.getItem("话题分析卡");
-  title(sheet, "话题分析卡（VOC场景—任务—痛点—方案—产品判断）", "T");
-  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "使用场景", "用户任务/需求", "主要痛点", "当前产品/解决方案", "现有方案不足", "机会假设", "产品决策类型", "判断状态", "判断依据", "社区信号分", "需求验证（帖/作者/评论者/参与者/评论）", "车辆/平台", "标签", "验证问题", "支持观点", "反对观点"], topics.filter((topic) => topic.status === "formal").map((topic) => [
-    topic.topic_id, topic.label_zh, topic.label_en, topic.summary, values(topic.scenarios), values(topic.needs),
+  title(sheet, "话题分析卡（VOC场景—任务—痛点—方案—产品判断）", "AB");
+  table(sheet, ["话题ID", "中文标签", "English label", "摘要", "使用场景", "用户任务/需求", "主要痛点", "当前产品/解决方案", "现有方案不足", "机会假设", "产品决策类型", "判断状态", "判断依据", "社区信号分", "需求验证（帖/作者/评论者/参与者/评论）", "车辆/平台", "标签", "验证问题", "支持观点", "反对观点", "Seller Insight", "趋势卡", "场景卡（证据绑定）", "JTBD卡（证据绑定）", "需求卡（证据绑定）", "痛点卡（解释/后果）", "方案卡", "缺口卡"], topics.filter((topic) => topic.status === "formal").map((topic) => [
+    topic.topic_id, topic.label_zh, topic.label_en, topic.summary_zh ?? topic.summary, values(topic.scenarios), values(topic.needs),
     values(topic.pains), values(topic.current_solutions), values(topic.gaps), values(topic.opportunity_hypotheses),
     objectValue(objectValue(topic, "product_decision", {}), "type", "暂不形成产品机会"),
     objectValue(objectValue(topic, "product_decision", {}), "status", "unknown"),
@@ -138,7 +161,11 @@ function columnName(number) {
     [topic.post_count ?? 0, topic.author_count ?? 0, topic.commenter_count ?? 0, topic.participant_count ?? "未记录", topic.collected_comment_count ?? "未记录"].join(" / "),
     [values(topic.vehicles), values(topic.platforms)].filter(Boolean).join(" / "),
     [values(topic.category_tags), values(topic.brand_tags), values(topic.competitor_tags)].filter(Boolean).join("；"), values(topic.validation_questions), values(topic.supporting_views), values(topic.opposing_views),
-  ]), [26, 20, 22, 35, 28, 28, 28, 28, 28, 34, 20, 14, 36, 12, 28, 28, 30, 30, 30, 30]);
+    topic.seller_insight_zh ?? "当前证据未形成卖家洞察", trendText(topic),
+    claimTextRich(topicClaims(topic, "scene_cards", "scenarios")), claimTextRich(topicClaims(topic, "jtbd_cards", "needs")),
+    claimTextRich(topicClaims(topic, "need_cards", "needs")), claimTextRich(topicClaims(topic, "pain_point_cards", "pains")),
+    claimTextRich(topicClaims(topic, "solution_cards", "current_solutions")), claimTextRich(topicClaims(topic, "gap_cards", "gaps")),
+  ]), [26, 20, 22, 35, 28, 28, 28, 28, 28, 34, 20, 14, 36, 12, 28, 28, 30, 30, 30, 30, 38, 36, 42, 42, 42, 48, 42, 42]);
 }
 
 {

@@ -1,5 +1,1166 @@
 {
-  "communities": [],
-  "updated_at": "",
+  "communities": [
+    {
+      "aliases": [],
+      "display_name": "ask",
+      "first_seen": "2026-08-31T12:59:31.339384+00:00",
+      "key": "ask",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 2,
+      "run_ids": [
+        "20260831T-full365",
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vejzjq"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/ask",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "AskAMechanic",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "askamechanic",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3j5lh"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/AskAMechanic/comments/1w3j5lh/2003_ram_2500_59_cummins_47re_transmission_line"
+      ],
+      "status": "approved",
+      "subreddit": "r/askamechanic",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "askcarsales",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "askcarsales",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3j5lh"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/askcarsales",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "AskMechanics",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "askmechanics",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 2,
+      "source_post_ids": [
+        "t3_1w3iv8k",
+        "t3_1w30dfn"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/AskMechanics/comments/1w3iv8k/20045_ram_2500_59_cummins_electrical_iod_issue",
+        "https://www.reddit.com/r/AskMechanics/comments/1w30dfn/bad_wheelhub_2019_ram_2500_cummins"
+      ],
+      "status": "approved",
+      "subreddit": "r/askmechanics",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "Autobody",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "autobody",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 2,
+      "source_post_ids": [
+        "t3_1w3j5lh",
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/autobody",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "AutoBodyRepair",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "autobodyrepair",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/autobodyrepair",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "autoelectrical",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "autoelectrical",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3ywk8"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/autoelectrical/comments/1w3ywk8/3rd_gen_electrical_problem_iod_problem_radio_door"
+      ],
+      "status": "approved",
+      "subreddit": "r/autoelectrical",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "cBallast",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "cballast",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w2dslr"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/cBallast/comments/1w2dslr/filter_element_crossreference_done_properly_how"
+      ],
+      "status": "approved",
+      "subreddit": "r/cballast",
+      "topic_ids": []
+    },
+    {
+      "aliases": [
+        "cummins",
+        "5.9 cummins",
+        "6.7 cummins"
+      ],
+      "display_name": "Cummins",
+      "first_seen": "2026-08-31T08:45:24.094807+00:00",
+      "key": "cummins",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "Ram",
+        "Cummins"
+      ],
+      "run_count": 4,
+      "run_ids": [
+        "20260831T-smoke",
+        "20260831T-full365",
+        "20260901T160411Z-25a4d5",
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 46,
+      "source_post_ids": [
+        "t3_1w2p2rk",
+        "t3_1w142sb",
+        "t3_1w1wv1b",
+        "t3_1w2wwu2",
+        "t3_1vxjok9",
+        "t3_1w18w5p",
+        "t3_1w24pka",
+        "t3_1w2i7ir",
+        "t3_1vwp6rn",
+        "t3_1vyic90",
+        "t3_1vpiixq",
+        "t3_1rh3du8",
+        "t3_1t3kogq",
+        "t3_1v8h3i7",
+        "t3_1vlv7l5",
+        "t3_1tjmrc4",
+        "t3_1vewssb",
+        "t3_1st61rc",
+        "t3_1tkvsz4",
+        "t3_1vcrzip",
+        "t3_1vm9rjq",
+        "t3_1vw9k5i",
+        "t3_1vl0117",
+        "t3_1vk5yan",
+        "t3_1vg98co",
+        "t3_1vijfxo",
+        "t3_1vimvsn",
+        "t3_1vvbbpb",
+        "t3_1viizo5",
+        "t3_1vuppxq",
+        "t3_1w3yw4l",
+        "t3_1w3ysws",
+        "t3_1w3sa3m",
+        "t3_1w3jt57",
+        "t3_1w3ipwy",
+        "t3_1vyi9i0",
+        "t3_1vxu17t",
+        "t3_1vvtw11",
+        "t3_1vvs1je",
+        "t3_1vvq17j",
+        "t3_1vv1zcd",
+        "t3_1vu204d",
+        "t3_1vsub23",
+        "t3_1vsn8gf",
+        "t3_1vsbeor",
+        "t3_1w49he0"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/Cummins/comments/1w2p2rk/picked_up_a_g56",
+        "https://www.reddit.com/r/Cummins/comments/1w142sb/help",
+        "https://www.reddit.com/r/Cummins/comments/1w1wv1b/2018_67_leak_around_filter_adapter",
+        "https://www.reddit.com/r/Cummins/comments/1w2wwu2/shifting_issue_in_automatic_99",
+        "https://www.reddit.com/r/Cummins/comments/1vxjok9/cracked_overdrive_housing_fix",
+        "https://www.reddit.com/r/Cummins/comments/1w18w5p/built_24v_opinions",
+        "https://www.reddit.com/r/Cummins/comments/1w24pka/99_24_valve_blowby_after_head_gasket_replacement",
+        "https://www.reddit.com/r/Cummins/comments/1w2i7ir/air_dog_lift_pump_blowing_fuse",
+        "https://www.reddit.com/r/Cummins/comments/1vwp6rn/door_hinge_issues",
+        "https://www.reddit.com/r/Cummins/comments/1vyic90/reusing_a_deleted_set_up",
+        "https://www.reddit.com/r/Cummins/comments/1vpiixq/will_this_giant_tire_fit",
+        "https://www.reddit.com/r/Cummins/comments/1rh3du8/im_22_yo_and_im_hoping_to_never_have_to_buy",
+        "https://www.reddit.com/r/Cummins/comments/1t3kogq/99_with_300k_miles_in_perfect_condition",
+        "https://www.reddit.com/r/Cummins/comments/1v8h3i7/diesel_power_source_s300_vgt_review_75810",
+        "https://www.reddit.com/r/Cummins/comments/1vlv7l5/buyer_warning_choate_engine_building",
+        "https://www.reddit.com/r/Cummins/comments/1tjmrc4/68rfe_p0868_obvious_leak_but_not_sure_where_from",
+        "https://www.reddit.com/r/Cummins/comments/1vewssb/new_fan_clutch_failure",
+        "https://www.reddit.com/r/Cummins/comments/1st61rc/68rfe_same_issue_after_rebuild",
+        "https://www.reddit.com/r/Cummins/comments/1tkvsz4/2001_59_cummins_vp44_truck_fuel_pressure_issues",
+        "https://www.reddit.com/r/Cummins/comments/1vcrzip/high_egts_with_compounds",
+        "https://www.reddit.com/r/Cummins/comments/1vm9rjq/vgt_install_fail_procedure_status_code_6",
+        "https://www.reddit.com/r/Cummins/comments/1vw9k5i/banks_monster_ram_air_upgrade",
+        "https://www.reddit.com/r/Cummins/comments/1vl0117/my_new_grandpa_truck_project",
+        "https://www.reddit.com/r/Cummins/comments/1vk5yan/looking_for_advice_first_time_towing_long_range",
+        "https://www.reddit.com/r/Cummins/comments/1vg98co/no_idea_what_to_list_for",
+        "https://www.reddit.com/r/Cummins/comments/1vijfxo/dealership_wrong_about_transmission",
+        "https://www.reddit.com/r/Cummins/comments/1vimvsn/new_to_me_02_24v",
+        "https://www.reddit.com/r/Cummins/comments/1vvbbpb/3rd_gen_power_steering_and_brake_upgrade_on_the",
+        "https://www.reddit.com/r/Cummins/comments/1viizo5/uh_oh",
+        "https://www.reddit.com/r/Cummins/comments/1vuppxq/value_20045_slt_nv5600_4x4_crew_cab_maroon_ext",
+        "https://www.reddit.com/r/Cummins/comments/1w3yw4l/transfer_case_poppet",
+        "https://www.reddit.com/r/Cummins/comments/1w3ysws/long_arm_levelling_kit",
+        "https://www.reddit.com/r/Cummins/comments/1w3sa3m/update_i_think_im_finally_starting_to_like_this",
+        "https://www.reddit.com/r/Cummins/comments/1w3jt57/cm_flatbed_install",
+        "https://www.reddit.com/r/Cummins/comments/1w3ipwy/3rd_gen_electrical_problem_iod_problem_radio_door",
+        "https://www.reddit.com/r/Cummins/comments/1vyi9i0/reflashing_egr_deleted_set_up",
+        "https://www.reddit.com/r/Cummins/comments/1vxu17t/ordering_a_cooling_fan_online_return_policy",
+        "https://www.reddit.com/r/Cummins/comments/1vvtw11/3rd_gen_67_exhaust_options",
+        "https://www.reddit.com/r/Cummins/comments/1vvs1je/brake_help",
+        "https://www.reddit.com/r/Cummins/comments/1vvq17j/3rd_gen_to_4th_gen_steering_upgrade_update_from",
+        "https://www.reddit.com/r/Cummins/comments/1vv1zcd/4th_gen_evaporator",
+        "https://www.reddit.com/r/Cummins/comments/1vu204d/fan_clutch",
+        "https://www.reddit.com/r/Cummins/comments/1vsub23/2010_ram_aftermaket_towing_transmission_options",
+        "https://www.reddit.com/r/Cummins/comments/1vsn8gf/3rd_gen_to_4th_gen_brake_master_question",
+        "https://www.reddit.com/r/Cummins/comments/1vsbeor/third_gen_thuren_sway_bar_question",
+        "https://www.reddit.com/r/Cummins/comments/1w49he0/2010_interior_into_a_20075_how_far_would_you_go"
+      ],
+      "status": "approved",
+      "subreddit": "r/cummins",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "Daily_TechJobs_India",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "daily_techjobs_india",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vzpapf"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/Daily_TechJobs_India/comments/1vzpapf/fresh_jobs_hiring_in_tech_across_india_27_aug"
+      ],
+      "status": "approved",
+      "subreddit": "r/daily_techjobs_india",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "DieselTechs",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "dieseltechs",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w0rqjv"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/DieselTechs/comments/1w0rqjv/first_3rd_member_replacement_easy_to_take_out"
+      ],
+      "status": "approved",
+      "subreddit": "r/dieseltechs",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "Diyautobody",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "diyautobody",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/diyautobody",
+      "topic_ids": []
+    },
+    {
+      "aliases": [
+        "duramax",
+        "lb7",
+        "l5p"
+      ],
+      "display_name": "Duramax",
+      "first_seen": "2026-08-31T12:26:01.441268+00:00",
+      "key": "duramax",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "Chevrolet/GMC",
+        "Duramax"
+      ],
+      "run_count": 3,
+      "run_ids": [
+        "20260831T-full365",
+        "20260901T160411Z-25a4d5",
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 41,
+      "source_post_ids": [
+        "t3_1v26vrf",
+        "t3_1ugoyfe",
+        "t3_1pinykj",
+        "t3_1uv0ip7",
+        "t3_1vpbfie",
+        "t3_1vlhn6u",
+        "t3_1vlveaq",
+        "t3_1um5ao7",
+        "t3_1v943cg",
+        "t3_1vrlszv",
+        "t3_1u56mhs",
+        "t3_1tf4qbi",
+        "t3_1w16hgs",
+        "t3_1vsmx7h",
+        "t3_1uc95ha",
+        "t3_1th7b8k",
+        "t3_1vloiyp",
+        "t3_1vktame",
+        "t3_1vq91od",
+        "t3_1vrjsad",
+        "t3_1w0vwt3",
+        "t3_1vmvowq",
+        "t3_1w3w7k9",
+        "t3_1w3t4sa",
+        "t3_1w2j5dv",
+        "t3_1w22d6r",
+        "t3_1w1uh4t",
+        "t3_1w1qz1d",
+        "t3_1w0y2yf",
+        "t3_1w0hyae",
+        "t3_1w0bw0m",
+        "t3_1w07sh3",
+        "t3_1vyfke0",
+        "t3_1vxbtzf",
+        "t3_1vwgqs7",
+        "t3_1vwb3kf",
+        "t3_1vvvsdj",
+        "t3_1vvqfiu",
+        "t3_1vvn6hp",
+        "t3_1w4f1hn",
+        "t3_1w4vxyb"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/Duramax/comments/1v26vrf/just_scored_this_lbz_for_700_bucks_and_drove_it",
+        "https://www.reddit.com/r/Duramax/comments/1ugoyfe/new_tires_and_suspension_today",
+        "https://www.reddit.com/r/Duramax/comments/1pinykj/update_just_had_my_2019_duramax_leveled_and_the",
+        "https://www.reddit.com/r/Duramax/comments/1uv0ip7/how_to_lb7_egr_delete",
+        "https://www.reddit.com/r/Duramax/comments/1vpbfie/2005_chevy_silverado_2500hd_lly_duramax_build",
+        "https://www.reddit.com/r/Duramax/comments/1vlhn6u/2015_gmc_3500_duramax_keep_fixing_it_or_finally",
+        "https://www.reddit.com/r/Duramax/comments/1vlveaq/buyer_warning_choate_engine",
+        "https://www.reddit.com/r/Duramax/comments/1um5ao7/2015_duramax_check_engine_light",
+        "https://www.reddit.com/r/Duramax/comments/1v943cg/help_diagnose_my_lb7",
+        "https://www.reddit.com/r/Duramax/comments/1vrlszv/2012_gmc_sierra_2500hd_lml_c013101_brake_pressure",
+        "https://www.reddit.com/r/Duramax/comments/1u56mhs/probably_dumbest_thing_ive_done_yet",
+        "https://www.reddit.com/r/Duramax/comments/1tf4qbi/random_tick",
+        "https://www.reddit.com/r/Duramax/comments/1w16hgs/looking_for_insight",
+        "https://www.reddit.com/r/Duramax/comments/1vsmx7h/18_l5p_smoking_rail_pressure",
+        "https://www.reddit.com/r/Duramax/comments/1uc95ha/begging_for_help",
+        "https://www.reddit.com/r/Duramax/comments/1th7b8k/exhaust_leak",
+        "https://www.reddit.com/r/Duramax/comments/1vloiyp/l5p_and_an_lbz_pinch_me_im_dreaming",
+        "https://www.reddit.com/r/Duramax/comments/1vktame/my_first_truck_at_30",
+        "https://www.reddit.com/r/Duramax/comments/1vq91od/l5p_delete_help",
+        "https://www.reddit.com/r/Duramax/comments/1vrjsad/39k_mile_lbz_egr_delete_discussion",
+        "https://www.reddit.com/r/Duramax/comments/1w0vwt3/am_i_off_my_rocker_lml_advice",
+        "https://www.reddit.com/r/Duramax/comments/1vmvowq/tuning_advice",
+        "https://www.reddit.com/r/Duramax/comments/1w3w7k9/lml_duramax_rhythmic_intake_chuff_after_being_run",
+        "https://www.reddit.com/r/Duramax/comments/1w3t4sa/diablosport_intune3_platinum",
+        "https://www.reddit.com/r/Duramax/comments/1w2j5dv/oil_leak_on_engine",
+        "https://www.reddit.com/r/Duramax/comments/1w22d6r/2022_66_duramax",
+        "https://www.reddit.com/r/Duramax/comments/1w1uh4t/cp3_swapped_lml_issues",
+        "https://www.reddit.com/r/Duramax/comments/1w1qz1d/turbo_set_up_for_sale",
+        "https://www.reddit.com/r/Duramax/comments/1w0y2yf/2024_allison_10_speed_10l1000_service",
+        "https://www.reddit.com/r/Duramax/comments/1w0hyae/2001_lb7",
+        "https://www.reddit.com/r/Duramax/comments/1w0bw0m/where_are_the_diesel_master_mechanics_at",
+        "https://www.reddit.com/r/Duramax/comments/1w07sh3/oil_pressure",
+        "https://www.reddit.com/r/Duramax/comments/1vyfke0/20045_lly",
+        "https://www.reddit.com/r/Duramax/comments/1vxbtzf/lmm_vibration_noise_help",
+        "https://www.reddit.com/r/Duramax/comments/1vwgqs7/2015_duramax_weird_fuel_pressure_drop_cp4_or",
+        "https://www.reddit.com/r/Duramax/comments/1vwb3kf/mevotech_ttx_upper_ball_joint_failed_after_7k",
+        "https://www.reddit.com/r/Duramax/comments/1vvvsdj/egr_deletegrid_heater",
+        "https://www.reddit.com/r/Duramax/comments/1vvqfiu/steering_shaft_question_2007_classic",
+        "https://www.reddit.com/r/Duramax/comments/1vvn6hp/hey_all_looking_for_opinions",
+        "https://www.reddit.com/r/Duramax/comments/1w4f1hn/lift_vs_level_for_towingdaily_2018_l5p",
+        "https://www.reddit.com/r/Duramax/comments/1w4vxyb/l5p_fueling"
+      ],
+      "status": "approved",
+      "subreddit": "r/duramax",
+      "topic_ids": []
+    },
+    {
+      "aliases": [
+        "forddiesels",
+        "ford diesels",
+        "ford diesel forum"
+      ],
+      "display_name": "FordDiesels",
+      "first_seen": "2026-08-31T12:26:01.441268+00:00",
+      "key": "forddiesels",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "Ford",
+        "Powerstroke"
+      ],
+      "run_count": 3,
+      "run_ids": [
+        "20260831T-full365",
+        "20260901T160411Z-25a4d5",
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 28,
+      "source_post_ids": [
+        "t3_1vejzjq",
+        "t3_1vfbuvg",
+        "t3_1txs03t",
+        "t3_1nb8ejt",
+        "t3_1slrgkf",
+        "t3_1qopj28",
+        "t3_1tcnlko",
+        "t3_1uuqi07",
+        "t3_1uvmslz",
+        "t3_1vwci1v",
+        "t3_1vt850t",
+        "t3_1qcgd4i",
+        "t3_1s3vsng",
+        "t3_1vhgjxu",
+        "t3_1vt7j5h",
+        "t3_1w1k6l5",
+        "t3_1vw6kcq",
+        "t3_1w1vkpr",
+        "t3_1vt9ba2",
+        "t3_1w0t3tx",
+        "t3_1vmmnfw",
+        "t3_1w2wsn7",
+        "t3_1vnx76a",
+        "t3_1w3xtb2",
+        "t3_1w2tg6b",
+        "t3_1vz4ukl",
+        "t3_1w4aecn",
+        "t3_1w4x021"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/FordDiesels/comments/1vejzjq/ccv_reroute_tube_venting_coolant_fumes",
+        "https://www.reddit.com/r/FordDiesels/comments/1vfbuvg/tunes_via_hpt_sct",
+        "https://www.reddit.com/r/FordDiesels/comments/1txs03t/new_73_purchase",
+        "https://www.reddit.com/r/FordDiesels/comments/1nb8ejt/is_this_too_much_rust",
+        "https://www.reddit.com/r/FordDiesels/comments/1slrgkf/i_bought_a_2001_73l",
+        "https://www.reddit.com/r/FordDiesels/comments/1qopj28/73_idi_fuel_delivery_nightmare_need_guidance",
+        "https://www.reddit.com/r/FordDiesels/comments/1tcnlko/1995_73_oil_leak",
+        "https://www.reddit.com/r/FordDiesels/comments/1uuqi07/ect_2_shows_40_degree_temp_my_ac_doesnt_blow_cold",
+        "https://www.reddit.com/r/FordDiesels/comments/1uvmslz/73_idi_factory_turbo_diagnosis",
+        "https://www.reddit.com/r/FordDiesels/comments/1vwci1v/looking_for_any_advice_2001_73_powerstroke",
+        "https://www.reddit.com/r/FordDiesels/comments/1vt850t/97_f250_73l_cranknostart_no_wts_light_no_pcm_comms",
+        "https://www.reddit.com/r/FordDiesels/comments/1qcgd4i/help_please_blown_head_gaskets",
+        "https://www.reddit.com/r/FordDiesels/comments/1s3vsng/help_me_decide_if_this_is_a_good_purchase_or_a",
+        "https://www.reddit.com/r/FordDiesels/comments/1vhgjxu/honest_feedback_on_the_4r100",
+        "https://www.reddit.com/r/FordDiesels/comments/1vt7j5h/thanks_a_lot_ford",
+        "https://www.reddit.com/r/FordDiesels/comments/1w1k6l5/howd_i_do_on_this_73",
+        "https://www.reddit.com/r/FordDiesels/comments/1vw6kcq/u_joint_strap_bolt_snapped_99l_73_zf6_4x4",
+        "https://www.reddit.com/r/FordDiesels/comments/1w1vkpr/a_year_after_crashing_my_270k_mile_daily_im",
+        "https://www.reddit.com/r/FordDiesels/comments/1vt9ba2/where_would_your_guess_be_for_whats_causing_this",
+        "https://www.reddit.com/r/FordDiesels/comments/1w0t3tx/73_282k",
+        "https://www.reddit.com/r/FordDiesels/comments/1vmmnfw/2017_67_upper_pan_leak",
+        "https://www.reddit.com/r/FordDiesels/comments/1w2wsn7/73_hungry_for_belts",
+        "https://www.reddit.com/r/FordDiesels/comments/1vnx76a/trying_to_find_fan_clutch_for_93_f250_73idi",
+        "https://www.reddit.com/r/FordDiesels/comments/1w3xtb2/new_to_me_2002_f350_73_110k_miles_need_air_box",
+        "https://www.reddit.com/r/FordDiesels/comments/1w2tg6b/60_p0278_when_hot_multiple_injectors",
+        "https://www.reddit.com/r/FordDiesels/comments/1vz4ukl/64_surgingbucking_at_2100_rpm",
+        "https://www.reddit.com/r/FordDiesels/comments/1w4aecn/need_advice_on_leaks",
+        "https://www.reddit.com/r/FordDiesels/comments/1w4x021/would_you_rather_stock_73_or_bulletproofed_60"
+      ],
+      "status": "approved",
+      "subreddit": "r/forddiesels",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "GameProfessional",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "gameprofessional",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 4,
+      "source_post_ids": [
+        "t3_1w3w6bz",
+        "t3_1w2za42",
+        "t3_1w216yl",
+        "t3_1w05ce0"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/GameProfessional/comments/1w3w6bz/game_professional_up_auto_shop_2019_international",
+        "https://www.reddit.com/r/GameProfessional/comments/1w2za42/game_professional_up_auto_shop_2020_inter_4dr",
+        "https://www.reddit.com/r/GameProfessional/comments/1w216yl/game_professional_up_auto_shop_2021_26ft_box",
+        "https://www.reddit.com/r/GameProfessional/comments/1w05ce0/game_professional_up_auto_shop_2026_ram_2500"
+      ],
+      "status": "approved",
+      "subreddit": "r/gameprofessional",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "Generator",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "generator",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w4ks2j"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/Generator/comments/1w4ks2j/just_committed_to_a_kohler"
+      ],
+      "status": "approved",
+      "subreddit": "r/generator",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "GMDetroitDiesel",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "gmdetroitdiesel",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w18izw"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/GMDetroitDiesel/comments/1w18izw/would_it_fit"
+      ],
+      "status": "approved",
+      "subreddit": "r/gmdetroitdiesel",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "GMT400",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "gmt400",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vygpry"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/GMT400/comments/1vygpry/65l_to_59l_swap"
+      ],
+      "status": "approved",
+      "subreddit": "r/gmt400",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "IndianCricket",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "indiancricket",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vx3cbe"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/IndianCricket/comments/1vx3cbe/the_2027_world_cup"
+      ],
+      "status": "approved",
+      "subreddit": "r/indiancricket",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "insurance",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "insurance",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 2,
+      "source_post_ids": [
+        "t3_1w3j5lh",
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/insurance",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "Justrolledintotheshop",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "justrolledintotheshop",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/justrolledintotheshop",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "mechanic",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "mechanic",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w08stx"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/mechanic/comments/1w08stx/2001_59_cummins_suddenly_barely_cranks_overnight"
+      ],
+      "status": "approved",
+      "subreddit": "r/mechanic",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "MechanicAdvice",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "mechanicadvice",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3iu1f"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/MechanicAdvice/comments/1w3iu1f/20045_ram_2500_cummins_electrical_iod_issue_radio"
+      ],
+      "status": "approved",
+      "subreddit": "r/mechanicadvice",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "NissanZ",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "nissanz",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vwuc0q"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/NissanZ/comments/1vwuc0q/trade_offer"
+      ],
+      "status": "approved",
+      "subreddit": "r/nissanz",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "OBSFords",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "obsfords",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "Powerstroke"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3if5g"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/OBSFords/comments/1w3if5g/1989_f250_460_efi_rebuild_kit_recommendations"
+      ],
+      "status": "approved",
+      "subreddit": "r/obsfords",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "oldtrucks",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "oldtrucks",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 2,
+      "source_post_ids": [
+        "t3_1w3v86c",
+        "t3_1w2updx"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/oldtrucks/comments/1w3v86c/custom_truck_build_in_future",
+        "https://www.reddit.com/r/oldtrucks/comments/1w2updx/custom_built_truck_in_the_future"
+      ],
+      "status": "approved",
+      "subreddit": "r/oldtrucks",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "OT42",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "ot42",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w4i3cq"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/OT42/comments/1w4i3cq/the_bizarre_world_of_scientology_films_behind_the"
+      ],
+      "status": "approved",
+      "subreddit": "r/ot42",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "PakMatchTimeViews",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "pakmatchtimeviews",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1vx8u5g"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/PakMatchTimeViews/comments/1vx8u5g/rizwan_is_a_victim_of_excessive_t20is"
+      ],
+      "status": "approved",
+      "subreddit": "r/pakmatchtimeviews",
+      "topic_ids": []
+    },
+    {
+      "aliases": [
+        "powerstroke",
+        "6.0 powerstroke",
+        "6.7 powerstroke"
+      ],
+      "display_name": "powerstroke",
+      "first_seen": "2026-08-31T12:26:01.441268+00:00",
+      "key": "powerstroke",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "Ford",
+        "Powerstroke"
+      ],
+      "run_count": 3,
+      "run_ids": [
+        "20260831T-full365",
+        "20260901T160411Z-25a4d5",
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 42,
+      "source_post_ids": [
+        "t3_1vl7guh",
+        "t3_1vwh711",
+        "t3_1uxg9lw",
+        "t3_1qrluto",
+        "t3_1seh3vq",
+        "t3_1s0awqm",
+        "t3_1rt0t8h",
+        "t3_1r2u0ft",
+        "t3_1uis5vn",
+        "t3_1s0lclr",
+        "t3_1tvk9tv",
+        "t3_1vataui",
+        "t3_1tuzq69",
+        "t3_1taix06",
+        "t3_1vii51m",
+        "t3_1vvt3d1",
+        "t3_1w0c21k",
+        "t3_1vl10o1",
+        "t3_1vwbzmt",
+        "t3_1vh2q5c",
+        "t3_1vl8qvf",
+        "t3_1vefqxi",
+        "t3_1w3tv5u",
+        "t3_1w2rvrl",
+        "t3_1w2rh37",
+        "t3_1w27l2w",
+        "t3_1w1a53i",
+        "t3_1w19ynm",
+        "t3_1w18z4b",
+        "t3_1w0ok8s",
+        "t3_1w0c9dm",
+        "t3_1vz4s2r",
+        "t3_1vyw2rq",
+        "t3_1vygyzd",
+        "t3_1vygm7b",
+        "t3_1vyfkw2",
+        "t3_1vwp6tj",
+        "t3_1vwdvbf",
+        "t3_1vuvwg7",
+        "t3_1vuvom3",
+        "t3_1vt8iy0",
+        "t3_1vrb6bl"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/powerstroke/comments/1vl7guh/need_help",
+        "https://www.reddit.com/r/powerstroke/comments/1vwh711/fixing_my_2012_ford_f450_power_door_lock",
+        "https://www.reddit.com/r/powerstroke/comments/1uxg9lw/73_engine_washed_now_wont_start",
+        "https://www.reddit.com/r/powerstroke/comments/1qrluto/e350_needed_some_repairs",
+        "https://www.reddit.com/r/powerstroke/comments/1seh3vq/60_misfires",
+        "https://www.reddit.com/r/powerstroke/comments/1s0awqm/2002_f350_coolant_leak_from_timing_cover_and",
+        "https://www.reddit.com/r/powerstroke/comments/1rt0t8h/absolutely_stumped_73_oil_leak",
+        "https://www.reddit.com/r/powerstroke/comments/1r2u0ft/mightve_fucked_up_need_some_advice",
+        "https://www.reddit.com/r/powerstroke/comments/1uis5vn/need_help_with_my_new_truck",
+        "https://www.reddit.com/r/powerstroke/comments/1s0lclr/how_screwed_am_i_2016_f250_oil_leak",
+        "https://www.reddit.com/r/powerstroke/comments/1tvk9tv/fuel_knock_nightmare",
+        "https://www.reddit.com/r/powerstroke/comments/1vataui/2007_f350_67_with_p06a7_code",
+        "https://www.reddit.com/r/powerstroke/comments/1tuzq69/repair_shop_recommendations_los_angeles_orange",
+        "https://www.reddit.com/r/powerstroke/comments/1taix06/73_l_oil_leak_lots_of_work_still_not_fixed",
+        "https://www.reddit.com/r/powerstroke/comments/1vii51m/iso",
+        "https://www.reddit.com/r/powerstroke/comments/1vvt3d1/2019_f350_limp_mode",
+        "https://www.reddit.com/r/powerstroke/comments/1w0c21k/air_in_fuel_please_help",
+        "https://www.reddit.com/r/powerstroke/comments/1vl10o1/i_give_up_on_my_60",
+        "https://www.reddit.com/r/powerstroke/comments/1vwbzmt/73_chasing_high_pressure_oil_leaks",
+        "https://www.reddit.com/r/powerstroke/comments/1vh2q5c/hydra_tuner_99_73",
+        "https://www.reddit.com/r/powerstroke/comments/1vl8qvf/potentially_going_to_buy_a_02_73_tomorrow",
+        "https://www.reddit.com/r/powerstroke/comments/1vefqxi/how_did_the_rocker_snap",
+        "https://www.reddit.com/r/powerstroke/comments/1w3tv5u/e99_2wd_suspension_options",
+        "https://www.reddit.com/r/powerstroke/comments/1w2rvrl/67_powerstroke_downpipe_leak",
+        "https://www.reddit.com/r/powerstroke/comments/1w2rh37/2004_f350_battery_cable_upgrade",
+        "https://www.reddit.com/r/powerstroke/comments/1w27l2w/making_more_power",
+        "https://www.reddit.com/r/powerstroke/comments/1w1a53i/no_starthard_start_73",
+        "https://www.reddit.com/r/powerstroke/comments/1w19ynm/need_help",
+        "https://www.reddit.com/r/powerstroke/comments/1w18z4b/2002_73_powerstroke_randomly_shuts_off_when",
+        "https://www.reddit.com/r/powerstroke/comments/1w0ok8s/99_f250_has_always_had_a_bit_of_wiggle_in_the",
+        "https://www.reddit.com/r/powerstroke/comments/1w0c9dm/60_turbo_flutter_noise",
+        "https://www.reddit.com/r/powerstroke/comments/1vz4s2r/64_buckssurges_at_2100_rpm",
+        "https://www.reddit.com/r/powerstroke/comments/1vyw2rq/2011_f250_diesel_p2047",
+        "https://www.reddit.com/r/powerstroke/comments/1vygyzd/73_edge_tuner_custom_tunes",
+        "https://www.reddit.com/r/powerstroke/comments/1vygm7b/leak_check_exhaust_without_smoke_machine_73",
+        "https://www.reddit.com/r/powerstroke/comments/1vyfkw2/60_pushing_coolant_under_heavy_load",
+        "https://www.reddit.com/r/powerstroke/comments/1vwp6tj/just_bought_first_73",
+        "https://www.reddit.com/r/powerstroke/comments/1vwdvbf/2000_excursion_73_p1280_bad_tuner",
+        "https://www.reddit.com/r/powerstroke/comments/1vuvwg7/anyone_know_what_the_part_number_is_for_this",
+        "https://www.reddit.com/r/powerstroke/comments/1vuvom3/ficm_tune",
+        "https://www.reddit.com/r/powerstroke/comments/1vt8iy0/73_powerstroke_buzz_test_failure",
+        "https://www.reddit.com/r/powerstroke/comments/1vrb6bl/i_had_it_wrong_this_entire_time"
+      ],
+      "status": "approved",
+      "subreddit": "r/powerstroke",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "r",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "r",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w0rqjv"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/r",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "ram_trucks",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "ram_trucks",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 7,
+      "source_post_ids": [
+        "t3_1w3j0ou",
+        "t3_1w2nka1",
+        "t3_1w243yc",
+        "t3_1w1urfa",
+        "t3_1w17ran",
+        "t3_1w0s6bt",
+        "t3_1w06tbs"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/ram_trucks/comments/1w3j0ou/2003_ram_2500_cummins_heat_exchanger_delete_and",
+        "https://www.reddit.com/r/ram_trucks/comments/1w2nka1/recall_work_led_to_2_transmission_failures_and",
+        "https://www.reddit.com/r/ram_trucks/comments/1w243yc/new_to_me_cummins_from_a_3rd_gen_to_a_5th_gen",
+        "https://www.reddit.com/r/ram_trucks/comments/1w1urfa/first_time_ram_owner_couldnt_pass_up_the_deal",
+        "https://www.reddit.com/r/ram_trucks/comments/1w17ran/new_transmission_under_warranty",
+        "https://www.reddit.com/r/ram_trucks/comments/1w0s6bt/2026_ram_2500_cummins_limited_in_shop_for_12_weeks",
+        "https://www.reddit.com/r/ram_trucks/comments/1w06tbs/what_to_look_for_when_buying_used"
+      ],
+      "status": "approved",
+      "subreddit": "r/ram_trucks",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "upautoshop",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "upautoshop",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "跨社区柴油皮卡讨论",
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 4,
+      "source_post_ids": [
+        "t3_1w3w6c6",
+        "t3_1w2za4f",
+        "t3_1w216yu",
+        "t3_1w05ce9"
+      ],
+      "source_urls": [
+        "https://www.reddit.com/r/upautoshop/comments/1w3w6c6/up_auto_shop_2019_international_4300_sa_thermo",
+        "https://www.reddit.com/r/upautoshop/comments/1w2za4f/up_auto_shop_2020_inter_4dr_crew_cab_stakebed",
+        "https://www.reddit.com/r/upautoshop/comments/1w216yu/up_auto_shop_2021_26ft_box_truck_150k_mi_lane",
+        "https://www.reddit.com/r/upautoshop/comments/1w05ce9/up_auto_shop_2026_ram_2500_rebel_crew_truck"
+      ],
+      "status": "approved",
+      "subreddit": "r/upautoshop",
+      "topic_ids": []
+    },
+    {
+      "aliases": [],
+      "display_name": "whatcarshouldIbuy",
+      "first_seen": "2026-09-02T03:59:49.250192+00:00",
+      "key": "whatcarshouldibuy",
+      "last_seen": "2026-09-02T03:59:49.250192+00:00",
+      "platforms": [
+        "柴油皮卡"
+      ],
+      "run_count": 1,
+      "run_ids": [
+        "20260902T103630Z-2030ef"
+      ],
+      "source_post_count": 1,
+      "source_post_ids": [
+        "t3_1w3j5lh"
+      ],
+      "source_urls": [],
+      "status": "observed",
+      "subreddit": "r/whatcarshouldibuy",
+      "topic_ids": []
+    }
+  ],
+  "updated_at": "2026-09-02T03:59:49.250192+00:00",
   "version": "community-library.v1"
 }

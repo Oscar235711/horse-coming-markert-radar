@@ -23,6 +23,16 @@ _KEYWORD_NOISE = frozenset({
     "http", "https", "www", "com", "reddit", "org", "amp", "comments", "comment", "replies", "reply",
     "gallery", "share", "view", "more", "removed", "deleted", "edit", "as", "well", "if", "don", "doesn",
     "didn", "isn", "won", "wouldn", "t", "s", "ve", "re", "ll", "now", "right", "sure", "know", "make", "no",
+    "just", "got", "because", "im", "i", "m", "was", "were", "been", "being", "all", "over", "also",
+    "can", "could", "would", "should", "have", "has", "had", "do", "does", "did", "not", "will", "still",
+})
+_KEYWORD_ANCHORS = frozenset({
+    "cummins", "duramax", "powerstroke", "ford", "diesel", "dpf", "egr", "ccv", "pcv", "downpipe",
+    "tuner", "tuning", "exhaust", "egt", "temperature", "cooler", "valve", "pipe", "kit", "clamp",
+    "regen", "leak", "failure", "failed", "broken", "crack", "clog", "problem", "issue", "fitment",
+    "installation", "towing", "hauling", "commute", "winter", "off", "road", "work", "truck", "engine",
+    "manifold", "intercooler", "gauge", "sensor", "injector", "turbo", "cooling", "system", "fuel", "oil",
+    "filter", "delete", "price", "cost", "upgrade", "performance", "solution",
 })
 
 
@@ -110,6 +120,40 @@ def load_project_library(root: str | Path) -> dict[str, Any]:
     }
 
 
+def active_keywords(root: str | Path) -> tuple[str, ...]:
+    """Return deduplicated terms that must be used by the next search cycle."""
+    active_statuses = {"seed", "configured", "formal", "approved", "active"}
+    rows = load_project_library(root)["keywords"]
+    return tuple(dict.fromkeys(
+        str(item.get("normalized_term") or item.get("term_en") or "").strip()
+        for item in rows
+        if str(item.get("status") or "").casefold() in active_statuses
+        and _useful_keyword(item.get("normalized_term") or item.get("term_en"))
+        and str(item.get("normalized_term") or item.get("term_en") or "").strip()
+    ))
+
+
+def active_communities(root: str | Path, *, minimum_source_posts: int = 3) -> tuple[str, ...]:
+    """Return configured communities plus strongly evidenced discoveries.
+
+    A discovered subreddit becomes usable without a manual copy step once at
+    least three different source posts mention it. Rejected/disabled rows can
+    never be promoted by this helper.
+    """
+    rows = load_project_library(root)["communities"]
+    output: list[str] = []
+    for item in rows:
+        status = str(item.get("status") or "observed").casefold()
+        source_count = len(set(str(value) for value in _as_list(item.get("source_post_ids")) if value))
+        if status in {"rejected", "disabled"}:
+            continue
+        if status in {"seed", "configured", "approved", "active"} or source_count >= minimum_source_posts:
+            name = str(item.get("display_name") or item.get("subreddit") or item.get("key") or "").strip().removeprefix("r/")
+            if name and name.casefold() not in {value.casefold() for value in output}:
+                output.append(name)
+    return tuple(output)
+
+
 def _community_observations(analysis: Mapping[str, Any], posts: Sequence[Any], comments: Sequence[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in _as_list(analysis.get("community_library")):
@@ -182,6 +226,8 @@ def _upsert_communities(
         item["last_seen"] = max(str(item.get("last_seen") or timestamp.isoformat()), timestamp.isoformat())
         item["run_count"] = len(item.get("run_ids", []))
         item["source_post_count"] = len(item.get("source_post_ids", []))
+        if item.get("status") == "observed" and item["source_post_count"] >= 3:
+            item["status"] = "active"
     records.sort(key=lambda item: str(item.get("key", "")))
 
 
@@ -246,14 +292,38 @@ def _upsert_keywords(
     # A previous run may have been generated before URL/UI filtering existed;
     # clean those rows as they are loaded so the cumulative library converges
     # instead of preserving known noise forever.
-    records[:] = [item for item in records if _useful_keyword(item.get("normalized_term") or item.get("term_en"))]
+    for item in records:
+        if not _useful_keyword(item.get("normalized_term") or item.get("term_en")):
+            item["status"] = "quarantined"
+    # Keywords are global search concepts.  Community provenance belongs in a
+    # list on the row; it must not create duplicate keyword identities.
+    migrated: dict[str, dict[str, Any]] = {}
+    for existing in records:
+        term = _normalise(existing.get("normalized_term") or existing.get("term_en"))
+        if not term:
+            continue
+        prior = migrated.get(term)
+        if prior is None:
+            existing["key"] = term
+            community = str(existing.pop("community", "") or "").strip()
+            existing.setdefault("communities", [])
+            if community:
+                _merge_values(existing["communities"], [community])
+            migrated[term] = existing
+        else:
+            for field in ("communities", "variants", "source_post_ids", "source_comment_ids", "source_urls", "signal_types", "run_ids"):
+                _merge_values(prior.setdefault(field, []), existing.get(field, ()))
+            community = str(existing.get("community") or "").strip()
+            if community:
+                _merge_values(prior.setdefault("communities", []), [community])
+    records[:] = list(migrated.values())
     by_key = {str(item.get("key", "")).casefold(): item for item in records if item.get("key")}
     for raw in candidates:
         term = _normalise(raw.get("term_en") or raw.get("term") or "")
         if not _useful_keyword(term):
             continue
-        community = _community_key(raw.get("community")) or "global"
-        identity = f"{community}|{term}"
+        community = str(raw.get("community") or "").strip().removeprefix("r/")
+        identity = term
         item = by_key.get(identity)
         if item is None:
             item = {
@@ -262,7 +332,7 @@ def _upsert_keywords(
                 "normalized_term": term,
                 "term_en": str(raw.get("term_en") or raw.get("term") or term),
                 "term_zh": str(raw.get("term_zh") or "待翻译"),
-                "community": community if community != "global" else "",
+                "communities": [],
                 "topic_keys": [],
                 "variants": [],
                 "source_post_ids": [],
@@ -275,6 +345,8 @@ def _upsert_keywords(
             }
             records.append(item)
             by_key[identity] = item
+        if community:
+            _merge_values(item.setdefault("communities", []), [community])
         for field in ("variants", "source_post_ids", "source_comment_ids", "signal_types"):
             _merge_values(item.setdefault(field, []), raw.get(field, ()))
         topic_key = str(raw.get("topic_key") or "").strip()
@@ -295,6 +367,13 @@ def _upsert_keywords(
         item["run_count"] = len(item.get("run_ids", []))
         item["source_post_count"] = len(item.get("source_post_ids", []))
         item["source_comment_count"] = len(item.get("source_comment_ids", []))
+        if (
+            str(item.get("status", "")).casefold() not in {"rejected", "disabled"}
+            and item["source_post_count"] >= 2
+            and item["author_count_max"] >= 2
+            and _float(item.get("score_max")) >= 20
+        ):
+            item["status"] = "active"
     records.sort(key=lambda item: (-_float(item.get("score_max")), str(item.get("normalized_term", ""))))
 
 
@@ -361,6 +440,7 @@ def _useful_keyword(value: Any) -> bool:
     term = _normalise(value)
     tokens = term.split()
     return bool(term and len(tokens) >= 2 and not any(token in _KEYWORD_NOISE for token in tokens)
+                and any(token in _KEYWORD_ANCHORS for token in tokens)
                 and not any(token.isdigit() and len(token) >= 2 for token in tokens))
 
 
@@ -413,7 +493,7 @@ def _slug(value: str) -> str:
 
 
 def _keyword_status(current: Any, incoming: Any) -> str:
-    priority = {"configured": 4, "formal": 4, "observed": 3, "candidate_review": 2, "weak_signal": 1, "rejected": 0}
+    priority = {"seed": 6, "active": 5, "approved": 5, "configured": 4, "formal": 4, "observed": 3, "candidate_review": 2, "weak_signal": 1, "rejected": 0}
     current_text = str(current or "observed")
     incoming_text = str(incoming or "observed")
     return incoming_text if priority.get(incoming_text, 1) > priority.get(current_text, 1) else current_text

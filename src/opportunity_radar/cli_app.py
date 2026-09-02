@@ -16,13 +16,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from threading import Event, RLock
+import time
 from typing import Any
 
 import yaml
 
 from .config import load_community_catalog, load_config, load_diesel_domain_config, write_community_catalog
-from .collector import CollectionFailure, OpenCliCollector, ThreadDocument
-from .codex_analysis import CodexAnalysisClient, CodexTopicConsolidator
+from .collector import CollectionCancelled, CollectionFailure, OpenCliCollector, ThreadDocument
+from .codex_analysis import CodexAnalysisClient, CodexTopicConsolidator, ChunkedCodexTopicConsolidator
 from .deepseek import (
     DEFAULT_BASE_URL,
     FLASH_MODEL,
@@ -35,11 +37,11 @@ from .deepseek import (
     TopicCandidate,
     AnalysisField,
 )
-from .evidence import apply_diesel_evidence_gate
+from .evidence import apply_diesel_evidence_gate, classify_diesel_evidence
 from .models import CollectionScope, Community, CommunityCatalog, RadarConfig, RunManifest
 from .storage import TopicRegistry, create_run_paths, read_manifest, write_keyword_library, write_manifest
 from .keywords import build_topic_keyword_library
-from .library import update_project_library
+from .library import active_communities, active_keywords, update_project_library
 from .metrics import build_report_metrics
 from .topics import (
     EvidenceBackedClaim,
@@ -52,6 +54,8 @@ from .topics import (
     export_topic_analysis,
 )
 from .report import render_html
+from .voc_analysis import synthesize_topic_voc
+from .query_planner import build_research_brief
 
 
 ToolRunner = Callable[[tuple[str, ...]], str]
@@ -134,6 +138,10 @@ class RadarCliApp:
         self._exporter = exporter or self._default_exporter
         self._now = now or (lambda: datetime.now(UTC))
         self._flash_rule_fallback_used = False
+        self._cancel_lock = RLock()
+        self._cancel_events: dict[str, Event] = {}
+        self._active_run_id: str | None = None
+        self._active_processes: dict[str, subprocess.Popen[str]] = {}
 
     @property
     def runs_root(self) -> Path:
@@ -223,6 +231,8 @@ class RadarCliApp:
         scope: CollectionScope | None = None,
         analysis_engine: str = "legacy",
         selected_communities: Sequence[str] = (),
+        selected_keywords: Sequence[str] = (),
+        research_question: str = "",
     ) -> dict[str, Any]:
         """Start a new run and persist resumable state under one run directory."""
         resolved_config = self._resolve_path(config_path)
@@ -248,7 +258,33 @@ class RadarCliApp:
         write_manifest(paths, manifest)
         state = self._base_state(run_id, resolved_config, active_catalog_path, config)
         state["analysis_engine"] = analysis_engine
+        normalized_question = " ".join(str(research_question or "").split()).strip()
+        if normalized_question:
+            brief = build_research_brief(normalized_question, seed_terms=tuple(selected_keywords))
+            if analysis_engine == "deepseek" and self._environment.get("DEEPSEEK_API_KEY", "").strip():
+                try:
+                    planned = self._flash_client.plan_research(
+                        brief.question,
+                        seed_terms=brief.query_terms,
+                        model=self._deepseek_flash_model(),
+                    )
+                    expanded_terms = tuple(dict.fromkeys((
+                        *brief.query_terms,
+                        *tuple(str(item).strip() for item in planned.get("query_terms", ()) if str(item).strip()),
+                    )))
+                    brief = replace(brief, query_terms=expanded_terms, source="deepseek")
+                except Exception:
+                    # The deterministic brief keeps a run usable when the
+                    # gateway is temporarily unavailable; the actual post
+                    # analysis still reports the model error if it recurs.
+                    pass
+            state["research_question"] = brief.question
+            state["research_brief"] = brief.as_dict()
+            selected_keywords = brief.query_terms
+        elif "research_question" not in state:
+            state["research_question"] = ""
         state["selected_communities"] = [community.name for community in config.communities]
+        state["selected_keywords"] = [str(item).strip() for item in selected_keywords if str(item).strip()]
         state["collection_scope"] = self._scope_to_dict(scope)
         state["completed_stages"] = ["configured"]
         state["progress"] = {
@@ -258,7 +294,14 @@ class RadarCliApp:
             "message": "任务已创建，准备启动采集。",
         }
         self._write_state(paths.state_path, state)
-        return self._continue_run(paths, config, state, scope=scope, analysis_engine=analysis_engine)
+        self._begin_run_context(run_id)
+        try:
+            return self._continue_run(
+                paths, config, state, scope=scope, analysis_engine=analysis_engine,
+                selected_keywords=selected_keywords,
+            )
+        finally:
+            self._end_run_context(run_id)
 
     def resume(self, run_id: str) -> dict[str, Any]:
         """Continue a previously incomplete run from its saved checkpoints."""
@@ -273,13 +316,47 @@ class RadarCliApp:
         config = load_config(paths.config_snapshot_path)
         config = self._select_communities(config, tuple(state.get("selected_communities", ())))
         scope = self._scope_from_dict(state.get("collection_scope"))
-        return self._continue_run(
-            paths,
-            config,
-            state,
-            scope=scope,
-            analysis_engine=str(state.get("analysis_engine", "codex")),
-        )
+        self._begin_run_context(run_id)
+        try:
+            return self._continue_run(
+                paths,
+                config,
+                state,
+                scope=scope,
+                analysis_engine=str(state.get("analysis_engine", "codex")),
+                selected_keywords=tuple(str(item) for item in state.get("selected_keywords", ()) if str(item).strip()),
+            )
+        finally:
+            self._end_run_context(run_id)
+
+    def request_cancel(self, run_id: str) -> None:
+        """Signal cancellation and terminate the active OpenCLI process tree."""
+        with self._cancel_lock:
+            self._cancel_events.setdefault(run_id, Event()).set()
+            process = self._active_processes.get(run_id)
+        if process is not None and process.poll() is None:
+            self._terminate_process_tree(process)
+
+    def _begin_run_context(self, run_id: str) -> None:
+        with self._cancel_lock:
+            self._active_run_id = run_id
+            self._cancel_events.setdefault(run_id, Event()).clear()
+
+    def _end_run_context(self, run_id: str) -> None:
+        with self._cancel_lock:
+            if self._active_run_id == run_id:
+                self._active_run_id = None
+            self._active_processes.pop(run_id, None)
+
+    def _check_cancelled(self, run_id: str | None = None) -> None:
+        key = run_id or self._active_run_id
+        if not key:
+            return
+        with self._cancel_lock:
+            event = self._cancel_events.get(key)
+            cancelled = event is not None and event.is_set()
+        if cancelled:
+            raise CollectionCancelled("任务已取消")
 
     def status(self, run_id: str) -> dict[str, Any]:
         """Return the secret-free saved state for one run."""
@@ -457,11 +534,26 @@ class RadarCliApp:
         *,
         scope: CollectionScope | None = None,
         analysis_engine: str = "legacy",
+        selected_keywords: Sequence[str] = (),
     ) -> dict[str, Any]:
+        activated_names = active_communities(self._library_root)
+        # The cumulative library is discovery evidence, not crawl authority.
+        # Only the communities selected for this run may drive subreddit
+        # listing collection; keyword search can still discover posts across
+        # Reddit without turning noisy mentions into thousands of extra reads.
+        state["community_expansion"] = {
+            "loaded_active_count": len(activated_names),
+            "used_community_count": len(config.communities),
+            "used_communities": [community.name for community in config.communities],
+            "library_only_count": len({name.casefold() for name in activated_names} - {community.name.casefold() for community in config.communities}),
+        }
         collect_arguments: dict[str, Any] = {
             "paths": paths,
             "as_of": self._now(),
-            "deep_read": True,
+            # Discover the whole selected surface first. The subsequent
+            # keyword-search pass merges global results and then deep-reads
+            # the deduplicated relevant set once.
+            "deep_read": False if scope is not None and analysis_engine == "codex" else True,
             "shortlist_limit": config.shortlist_per_community,
         }
         if scope is not None:
@@ -469,6 +561,7 @@ class RadarCliApp:
         def report_collection_progress(update: Mapping[str, Any]) -> None:
             # Persist each meaningful collection milestone so the local task
             # page can show progress while OpenCLI is still fetching data.
+            self._check_cancelled()
             state["stage"] = str(update.get("stage", "collecting"))
             state["progress"] = dict(update)
             self._write_state(paths.state_path, state)
@@ -491,7 +584,58 @@ class RadarCliApp:
                 raw_arguments["scope"] = scope
             collection = self._collector.load_from_raw(config.communities, **raw_arguments)
         else:
+            self._check_cancelled()
             collection = self._collector.collect(config.communities, **collect_arguments)
+
+        self._check_cancelled()
+
+        # The four configured subreddits are seed surfaces, not the market
+        # boundary.  Every dated run also executes the persistent keyword
+        # library across Reddit and deep-reads each newly discovered post in
+        # complete mode.  This happens before the evidence gate so searched
+        # posts follow the exact same VOC and citation contract as seed posts.
+        domain = load_diesel_domain_config(paths.config_snapshot_path)
+        library_terms = active_keywords(self._library_root)
+        requested_terms = tuple(
+            dict.fromkeys(" ".join(str(term).split()) for term in selected_keywords if str(term).strip())
+        )
+        # An empty selection means “use the current active library”.  When the
+        # web UI sends a selection, keep the run auditable and do not silently
+        # add unrelated terms from the default dictionary.
+        expansion_terms = requested_terms or tuple(dict.fromkeys((*self._search_terms(domain), *library_terms)))
+        if scope is not None and domain.keyword_search.enabled and expansion_terms:
+            expansion = self._collector.collect_round_two(
+                expansion_terms,
+                paths=paths,
+                as_of=self._now(),
+                existing_candidates=collection.candidates,
+                existing_deep_reads=collection.deep_reads,
+                max_posts_per_term=domain.keyword_search.max_posts_per_keyword,
+                max_terms=domain.keyword_search.max_candidate_keywords,
+                scope=scope,
+                deep_read=True,
+                progress=report_collection_progress,
+                post_filter=lambda item: self._search_post_relevant(item, config, domain),
+                allowed_communities=(
+                    None if state.get("research_question") else tuple(community.name for community in config.communities)
+                ),
+            )
+            collection = replace(
+                collection,
+                candidates=expansion.candidates,
+                deep_reads=expansion.deep_reads,
+                failures=tuple((*collection.failures, *expansion.failures)),
+            )
+            state["expansion"] = {
+                "loaded_keyword_count": len(library_terms),
+                "used_keyword_count": len(expansion.selected_terms),
+                "used_keywords": list(expansion.selected_terms),
+                "initial_query_terms": list(requested_terms),
+                "selected_by_user": bool(requested_terms),
+                "discovered_community_count": len({
+                    item.post.subreddit.casefold() for item in expansion.candidates
+                }),
+            }
         if not collection.candidates and not collection.deep_reads and collection.failures:
             state["counts"]["failure_count"] = len(collection.failures)
             state["failures"] = [self._failure_to_dict(failure) for failure in collection.failures]
@@ -530,7 +674,6 @@ class RadarCliApp:
         }
         self._write_state(paths.state_path, state)
 
-        domain = load_diesel_domain_config(paths.config_snapshot_path)
         eligible_threads, audit = self._gate_threads(collection.deep_reads, config, domain)
         audit_path = paths.artifacts_dir / "evidence_gate.json"
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
@@ -553,7 +696,11 @@ class RadarCliApp:
         def record_success(thread: ThreadDocument, analysis: PostAnalysis) -> None:
             analyses_by_post[thread.post.post_id] = analysis
             self._write_analysis_checkpoint(paths, thread.post.post_id, analysis)
-            state["progress"]["completed"] = len(analyses_by_post)
+            total = int(state.get("progress", {}).get("total", 0) or 0)
+            state["progress"]["completed"] = min(
+                total,
+                len(analyses_by_post) + len(flash_failures),
+            )
             self._write_state(paths.state_path, state)
 
         def record_failure(thread: ThreadDocument, error: Exception) -> None:
@@ -565,25 +712,34 @@ class RadarCliApp:
             )
             flash_failures.append(failure)
             self._write_failed_analysis_checkpoint(paths, thread.post.post_id, failure.message)
+            # A failed item is still processed for this attempt. Persist the
+            # count so the dashboard cannot appear frozen below its total.
+            total = int(state.get("progress", {}).get("total", 0) or 0)
+            state["progress"]["completed"] = min(
+                total,
+                len(analyses_by_post) + len(flash_failures),
+            )
+            self._write_state(paths.state_path, state)
 
-        if analysis_engine == "codex" and self._codex_concurrency > 1 and pending_threads:
-            # Each Codex request is an independent read-only process. Running a
-            # small number concurrently removes repeated CLI startup latency,
-            # while keeping Chrome collection itself strictly serialized.
-            with ThreadPoolExecutor(max_workers=self._codex_concurrency) as executor:
-                futures = {
-                    executor.submit(self._codex_client.extract_post, thread): thread
-                    for thread in pending_threads
-                }
-                for future in as_completed(futures):
-                    thread = futures[future]
-                    try:
-                        record_success(thread, future.result())
-                    except Exception as error:
-                        record_failure(thread, error)
-        else:
-            for thread in pending_threads:
+        def analyse_pending(targets: Sequence[ThreadDocument]) -> None:
+            if analysis_engine == "codex" and self._codex_concurrency > 1 and targets:
+                # Independent read-only Codex jobs remove repeated startup
+                # latency without parallelising the authenticated browser.
+                with ThreadPoolExecutor(max_workers=self._codex_concurrency) as executor:
+                    futures = {
+                        executor.submit(self._codex_client.extract_post, thread): thread
+                        for thread in targets
+                    }
+                    for future in as_completed(futures):
+                        thread = futures[future]
+                        try:
+                            record_success(thread, future.result())
+                        except Exception as error:
+                            record_failure(thread, error)
+                return
+            for thread in targets:
                 try:
+                    self._check_cancelled()
                     if analysis_engine == "codex":
                         analysis = self._codex_client.extract_post(thread)
                     elif analysis_engine == "rules":
@@ -600,8 +756,6 @@ class RadarCliApp:
                             raise DeepSeekError("DeepSeek 未配置，使用规则提取。")
                     record_success(thread, analysis)
                 except Exception as error:
-                    # The first version must remain runnable before the gateway key is
-                    # available. Rule extraction is explicit in the final model_mode.
                     try:
                         allow_rule_fallback = analysis_engine == "legacy" and not self._environment.get("DEEPSEEK_API_KEY", "").strip()
                         analysis = _rule_extract_post(thread, domain) if allow_rule_fallback else None
@@ -613,16 +767,72 @@ class RadarCliApp:
                         continue
                     record_failure(thread, error)
 
+        analyse_pending(pending_threads)
+
+        # Close the discovery loop inside the same run. Model-discovered
+        # English terms supported by at least two independent posts/authors
+        # are searched immediately; the loop ends only when no new active term
+        # remains. Existing query checkpoints prevent re-fetching old terms.
+        if analysis_engine in {"codex", "deepseek"} and scope is not None and domain.keyword_search.enabled:
+            used_terms = set(str(term).casefold() for term in state.get("expansion", {}).get("used_keywords", []))
+            while True:
+                discovered = self._analysis_keyword_terms(eligible_threads, analyses_by_post)
+                new_terms = tuple(term for term in discovered if term.casefold() not in used_terms)
+                if not new_terms:
+                    break
+                used_terms.update(term.casefold() for term in new_terms)
+                expansion = self._collector.collect_round_two(
+                    tuple((*state.get("expansion", {}).get("used_keywords", []), *new_terms)),
+                    paths=paths,
+                    as_of=self._now(),
+                    existing_candidates=collection.candidates,
+                    existing_deep_reads=collection.deep_reads,
+                    max_posts_per_term=domain.keyword_search.max_posts_per_keyword,
+                    max_terms=None,
+                    scope=scope,
+                    deep_read=True,
+                    progress=report_collection_progress,
+                    post_filter=lambda item: self._search_post_relevant(item, config, domain),
+                    allowed_communities=(
+                        None if state.get("research_question") else tuple(community.name for community in config.communities)
+                    ),
+                )
+                prior_post_ids = {thread.post.post_id for thread in collection.deep_reads}
+                collection = replace(
+                    collection,
+                    candidates=expansion.candidates,
+                    deep_reads=expansion.deep_reads,
+                    failures=tuple((*collection.failures, *expansion.failures)),
+                )
+                state.setdefault("expansion", {})["used_keywords"] = list(expansion.selected_terms)
+                state["expansion"]["used_keyword_count"] = len(expansion.selected_terms)
+                eligible_threads, audit = self._gate_threads(collection.deep_reads, config, domain)
+                audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+                added_targets = [
+                    thread for thread in eligible_threads
+                    if thread.post.post_id not in analyses_by_post
+                ]
+                if not added_targets and not ({thread.post.post_id for thread in collection.deep_reads} - prior_post_ids):
+                    break
+                state["progress"] = {
+                    "stage": "post_analysis",
+                    "completed": len(analyses_by_post),
+                    "total": len(eligible_threads),
+                    "message": "正在分析自动扩展检索新增的帖子。",
+                }
+                analyse_pending(added_targets)
+
         state["counts"]["analyzed_posts"] = len(analyses_by_post)
         state["counts"]["failure_count"] = len(collection.failures) + len(flash_failures)
         state["failures"].extend(self._failure_to_dict(failure) for failure in flash_failures)
         # A failed post must not discard a run when other evidence was
-        # successfully analysed.  In particular, Codex runs are expected to
-        # continue to topic consolidation and report export while exposing the
-        # failed post in the run's failure log.  Preserve the legacy behaviour
-        # for the old DeepSeek-only path when every extraction failed.
+        # successfully analysed.  Codex and DeepSeek runs both continue to
+        # topic consolidation and report export while exposing failed posts in
+        # the run's failure log.  If every model extraction failed, keep the
+        # run resumable instead of fabricating an empty report; preserve the
+        # legacy path's historical all-failure behavior for other engines.
         if flash_failures and (
-            analysis_engine != "codex" or not analyses_by_post
+            analysis_engine not in {"codex", "deepseek"} or not analyses_by_post
         ):
             state["status"] = "incomplete"
             state["stage"] = "flash_extract"
@@ -641,7 +851,7 @@ class RadarCliApp:
             return state
 
         topic_consolidator = (
-            CodexTopicConsolidator(client=self._codex_client)
+            ChunkedCodexTopicConsolidator(client=self._codex_client, chunk_size=8)
             if analysis_engine == "codex" else self._pro_consolidator
         )
         state["stage"] = "topic_consolidation"
@@ -660,6 +870,10 @@ class RadarCliApp:
             pro_consolidator=topic_consolidator,
             model_mode=analysis_engine if analysis_engine != "legacy" else None,
         )
+        if state.get("research_question"):
+            analysis["research_question"] = state["research_question"]
+            analysis["research_brief"] = state.get("research_brief", {})
+            analysis["query_expansion"] = state.get("expansion", {})
         topic_failures = [
             item for item in analysis.get("topic_failures", [])
             if isinstance(item, Mapping)
@@ -667,11 +881,35 @@ class RadarCliApp:
         if topic_failures:
             state["failures"].extend(dict(item) for item in topic_failures)
             state["counts"]["failure_count"] = len(state["failures"])
+        if analysis_engine == "deepseek" and topic_failures and not analysis.get("topics"):
+            state["status"] = "incomplete"
+            state["stage"] = "topic_consolidation"
+            state["progress"] = {
+                "stage": "topic_consolidation",
+                "completed": 0,
+                "total": len(config.communities),
+                "message": "DeepSeek 话题归并未完成，已保留分析检查点，可直接续跑。",
+            }
+            self._write_state(paths.state_path, state)
+            manifest = read_manifest(paths)
+            write_manifest(
+                paths,
+                RunManifest(
+                    run_id=manifest.run_id,
+                    started_at=manifest.started_at,
+                    config_sha256=manifest.config_sha256,
+                    status="incomplete",
+                    completed_stages=tuple(state["completed_stages"]),
+                ),
+            )
+            return state
         analyzed_threads = tuple(
             thread for thread in eligible_threads if thread.post.post_id in analyses_by_post
         )
         report_metrics = build_report_metrics(
-            communities=tuple(community.name for community in config.communities),
+            communities=tuple(dict.fromkeys(
+                thread.post.subreddit for thread in analyzed_threads
+            )),
             collection=collection,
             analyzed_threads=analyzed_threads,
             topics=tuple(
@@ -827,6 +1065,89 @@ class RadarCliApp:
             return extract(thread, model=self._deepseek_flash_model())
         return extract(thread)
 
+    @staticmethod
+    def _search_terms(domain: Any) -> tuple[str, ...]:
+        """Build broad but diesel-anchored seed queries for global Reddit search."""
+        dictionaries = domain.dictionaries
+        raw_terms = (
+            *dictionaries.platforms,
+            *dictionaries.products,
+            *dictionaries.vehicle_terms,
+            *dictionaries.slang,
+        )
+        terms: list[str] = []
+        for raw in raw_terms:
+            term = " ".join(str(raw).strip().split())
+            if not term:
+                continue
+            if len(term.split()) == 1 and term.casefold() not in {"cummins", "duramax", "powerstroke"}:
+                term = f"diesel {term}"
+            if term.casefold() not in {item.casefold() for item in terms}:
+                terms.append(term)
+        # Intent queries collect problems and desired outcomes that a product
+        # dictionary alone would miss. They remain discovery inputs only;
+        # Codex, not these strings, creates the VOC analysis.
+        for term in (
+            "diesel truck problem", "diesel truck failure", "diesel truck towing",
+            "diesel truck fitment", "diesel truck install", "diesel truck recommend",
+            "diesel truck aftermarket", "diesel truck repair",
+        ):
+            if term.casefold() not in {item.casefold() for item in terms}:
+                terms.append(term)
+        return tuple(terms)
+
+    @staticmethod
+    def _analysis_keyword_terms(
+        threads: Sequence[ThreadDocument], analyses_by_post: Mapping[str, PostAnalysis],
+    ) -> tuple[str, ...]:
+        """Promote model-discovered English terms with independent evidence."""
+        support: dict[str, dict[str, set[str]]] = {}
+        display: dict[str, str] = {}
+        for thread in threads:
+            analysis = analyses_by_post.get(thread.post.post_id)
+            if analysis is None:
+                continue
+            fields = (*analysis.keyword_candidates, *analysis.topic_candidates, *analysis.products)
+            for field in fields:
+                term = " ".join(str(field.value or "").strip().split())
+                if field.status == "unknown" or not field.evidence_ids or not term or term.casefold() == "unknown":
+                    continue
+                if len(term) > 80 or not re.search(r"[A-Za-z]", term) or re.search(r"[\u4e00-\u9fff]", term):
+                    continue
+                key = re.sub(r"\s+", " ", term.casefold().replace("-", " ")).strip()
+                if len(key.split()) < 2:
+                    continue
+                bucket = support.setdefault(key, {"posts": set(), "authors": set(), "communities": set()})
+                bucket["posts"].add(thread.post.post_id)
+                if thread.post.author:
+                    bucket["authors"].add(str(thread.post.author))
+                bucket["communities"].add(thread.post.subreddit.casefold())
+                display.setdefault(key, term)
+        return tuple(
+            display[key] for key, values in support.items()
+            if len(values["posts"]) >= 2 and len(values["authors"]) >= 2
+        )
+
+    @staticmethod
+    def _search_post_relevant(item: Any, config: RadarConfig, domain: Any) -> bool:
+        """High-recall cleaning before expensive thread retrieval."""
+        post = item.post
+        quality = classify_diesel_evidence(
+            {
+                "post_id": post.post_id,
+                "record_type": "post",
+                "author": post.author,
+                "subreddit": post.subreddit,
+                "title": post.title,
+                "body": post.body,
+                "score": post.score,
+            },
+            dictionaries=domain.dictionaries,
+            exclusions=domain.exclusions,
+            approved_communities=tuple(community.name for community in config.communities),
+        )
+        return not quality.hard_exclusion and quality.evidence_role != "noise"
+
     def _aggregate_run(
         self,
         config: RadarConfig,
@@ -843,8 +1164,29 @@ class RadarCliApp:
         topic_failures: list[dict[str, str]] = []
         results: list[TopicAggregationResult] = []
         active_consolidator = pro_consolidator or self._pro_consolidator
-        for community in config.communities:
-            community_threads = tuple(thread for thread in threads if thread.post.subreddit.casefold() == community.name.casefold())
+        communities: list[Community] = list(config.communities)
+        configured_keys = {community.name.casefold() for community in communities}
+        for thread in threads:
+            name = str(thread.post.subreddit or "").strip().removeprefix("r/")
+            if name and name.casefold() not in configured_keys:
+                communities.append(Community(
+                    name=name,
+                    category="keyword_discovered",
+                    brand="跨社区柴油皮卡讨论",
+                    status="observed",
+                ))
+                configured_keys.add(name.casefold())
+        for community in communities:
+            # Failed model extractions remain in the audit log, but cannot be
+            # passed to the topic consolidator without a matching analysis.
+            # Aggregate only the successfully analysed threads so one
+            # transient DeepSeek failure does not crash the whole report.
+            community_threads = tuple(
+                thread
+                for thread in threads
+                if thread.post.subreddit.casefold() == community.name.casefold()
+                and thread.post.post_id in analyses_by_post
+            )
             community_analyses = tuple(analyses_by_post[thread.post.post_id] for thread in community_threads)
             if not community_threads:
                 continue
@@ -882,7 +1224,11 @@ class RadarCliApp:
             for thread in analyzed_threads for comment in thread.comments
         ]
         community_library = build_community_library(
-            config.communities, combined_topics, config.community_catalog_version,
+            [community for community in communities if any(
+                thread.post.subreddit.casefold() == community.name.casefold() for thread in analyzed_threads
+            )],
+            combined_topics,
+            config.community_catalog_version,
         )
         keyword_library = build_topic_keyword_library(
             [thread.post for thread in analyzed_threads], comments, all_analyses,
@@ -892,7 +1238,7 @@ class RadarCliApp:
         return {
             "analysis_version": "1.0",
             "generated_at": self._now().isoformat(),
-            "communities": [community.name for community in config.communities],
+            "communities": list(dict.fromkeys(thread.post.subreddit for thread in analyzed_threads)),
             "community_library": community_library,
             "keyword_library": keyword_library,
             "topics": combined_topics,
@@ -1067,16 +1413,71 @@ class RadarCliApp:
         )
 
     def _default_tool_runner(self, arguments: tuple[str, ...]) -> str:
-        completed = subprocess.run(
+        try:
+            timeout_seconds = float(self._environment.get("RADAR_OPENCLI_TIMEOUT_SECONDS", "60"))
+        except (TypeError, ValueError):
+            timeout_seconds = 60.0
+        run_id = self._active_run_id
+        self._check_cancelled(run_id)
+        process = subprocess.Popen(
             arguments,
-            check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             cwd=self._repo_root,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         )
-        return completed.stdout
+        if run_id:
+            with self._cancel_lock:
+                self._active_processes[run_id] = process
+        deadline = time.monotonic() + max(5.0, timeout_seconds)
+        try:
+            while True:
+                self._check_cancelled(run_id)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate_process_tree(process)
+                    raise subprocess.TimeoutExpired(arguments, max(5.0, timeout_seconds))
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, arguments, output=stdout, stderr=stderr)
+            return stdout
+        except CollectionCancelled:
+            self._terminate_process_tree(process)
+            raise
+        finally:
+            if run_id:
+                with self._cancel_lock:
+                    if self._active_processes.get(run_id) is process:
+                        self._active_processes.pop(run_id, None)
+
+    @staticmethod
+    def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+                    check=False,
+                    capture_output=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+        else:
+            process.kill()
+        try:
+            process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
 
     def _http_transport(self, method: str, url: str, headers: dict[str, str], payload: dict[str, Any]) -> HttpResponse:
         import urllib.request
@@ -1390,17 +1791,289 @@ def _opencli_session_flags() -> tuple[str, ...]:
     return ("--window", "foreground", "--site-session", "persistent")
 
 
+def _analysis_value(field: AnalysisField) -> str:
+    value = getattr(field, "value", "")
+    return str(value or "").strip()
+
+
+def _analysis_values(fields: Sequence[AnalysisField]) -> list[str]:
+    return [value for value in (_analysis_value(field) for field in fields) if value and value != "unknown"]
+
+
+def _deepseek_proposals_from_document(document: Mapping[str, Any], signals: Sequence[Any]) -> tuple[ProTopicProposal, ...]:
+    """Normalize DeepSeek gateway variants into the evidence-gated topic contract."""
+    signal_by_id = {signal.post.post_id: signal for signal in signals}
+    topics = document.get("topics")
+    if not isinstance(topics, list):
+        nested = document.get("analysis")
+        topics = nested.get("topics") if isinstance(nested, Mapping) else []
+    proposals: list[ProTopicProposal] = []
+    for item in topics if isinstance(topics, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        post_ids = tuple(dict.fromkeys(
+            value for value in item.get("post_ids", [])
+            if isinstance(value, str) and value in signal_by_id
+        ))
+        if not post_ids:
+            continue
+        summary_text = _deepseek_text(item.get("summary"))
+        evidence = _deepseek_topic_evidence(item.get("evidence"), item, post_ids, signal_by_id, summary_text)
+        if not evidence or not summary_text:
+            continue
+        summary = _deepseek_claim(item.get("summary"), summary_text, evidence, post_ids, signal_by_id, field="summary")
+        if not summary.evidence:
+            summary = replace(summary, evidence=evidence[:3])
+        proposals.append(ProTopicProposal(
+            canonical_key=str(item.get("canonical_key", "")).strip() or _topic_key_from_label(item.get("label_en") or item.get("label_zh")),
+            label_en=str(item.get("label_en", "")).strip() or str(item.get("label_zh", "")).strip(),
+            label_zh=str(item.get("label_zh", "")).strip() or str(item.get("label_en", "")).strip(),
+            summary=summary,
+            post_ids=post_ids,
+            evidence=evidence,
+            vehicles=_strings_from_any(item.get("vehicles")),
+            platforms=_strings_from_any(item.get("platforms")),
+            scenarios=_strings_from_any(item.get("scenarios")),
+            pains=_deepseek_claims(item.get("pains"), evidence, post_ids, signal_by_id, "pains"),
+            needs=_deepseek_claims(item.get("needs"), evidence, post_ids, signal_by_id, "needs"),
+            current_solutions=_deepseek_claims(item.get("current_solutions"), evidence, post_ids, signal_by_id, "current_solutions"),
+            gaps=_deepseek_claims(item.get("gaps"), evidence, post_ids, signal_by_id, "gaps"),
+            opportunity_hypotheses=_deepseek_claims(item.get("opportunity_hypotheses"), evidence, post_ids, signal_by_id, "opportunity_hypotheses"),
+            category_tags=_strings_from_any(item.get("category_tags")),
+            brand_tags=_strings_from_any(item.get("brand_tags")),
+            competitor_tags=_strings_from_any(item.get("competitor_tags")),
+            confidence=max(0.0, min(1.0, _float_or_zero(item.get("confidence")))),
+            validation_questions=_strings_from_any(item.get("validation_questions")),
+            user_types=_strings_from_any(item.get("user_types")),
+            consequences=_deepseek_claims(item.get("consequences"), evidence, post_ids, signal_by_id, "consequences"),
+            risks=_deepseek_claims(item.get("risks"), evidence, post_ids, signal_by_id, "risks"),
+            product_decision=str(item.get("product_decision", "no_product")) if str(item.get("product_decision", "no_product")) in {
+                "improve_existing", "new_fitment_sku", "accessory_bundle", "new_product", "content_service", "no_product"
+            } else "no_product",
+            seller_insight=_deepseek_claim(item.get("seller_insight"), _deepseek_text(item.get("seller_insight")), evidence, post_ids, signal_by_id, field="seller_insight"),
+            user_tasks=_deepseek_claims(
+                _first_nonempty(item, "user_tasks", "jtbd_cards", "tasks"),
+                evidence, post_ids, signal_by_id, "user_tasks",
+            ),
+            scene_details=_deepseek_claims(
+                _first_nonempty(item, "scene_cards", "scenes", "scenarios", "scenario", "scene"),
+                evidence, post_ids, signal_by_id, "scenes",
+            ),
+        ))
+    return tuple(item for item in proposals if item.canonical_key)
+
+
+def _strings_from_any(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            item = item.get("text", item.get("value", ""))
+        text = str(item or "").strip()
+        if text and text != "unknown" and text not in result:
+            result.append(text)
+    return tuple(result)
+
+
+def _first_nonempty(item: Mapping[str, Any], *keys: str) -> Any:
+    """Pick the first populated alias emitted by a gateway deployment."""
+    for key in keys:
+        value = item.get(key)
+        if value not in (None, "", [], (), {}):
+            return value
+    return None
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _deepseek_text(value: Any) -> str:
+    if isinstance(value, Mapping):
+        for key in ("text", "value", "summary", "claim"):
+            text = str(value.get(key, "") or "").strip()
+            if text:
+                return text
+        # Scene/JTBD cards from the Higress deployment use descriptive keys
+        # instead of the common ``text`` key.  Preserve that structure as one
+        # Chinese claim so it can still be evidence-gated and displayed.
+        parts = []
+        for key, label in (("scene", "场景"), ("context", "条件"), ("goal", "目标"), ("task", "任务"), ("challenge", "挑战"), ("problem", "问题")):
+            text = str(value.get(key, "") or "").strip()
+            if text:
+                parts.append(f"{label}：{text}")
+        if parts:
+            return "；".join(parts)
+        return ""
+    return str(value or "").strip()
+
+
+def _topic_key_from_label(value: Any) -> str:
+    """Create a stable, non-empty key when a gateway omits canonical_key."""
+    text = " ".join(str(value or "").casefold().split())
+    key = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    return key[:96] or "topic_unlabelled"
+
+
+def _deepseek_refs(value: Any) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    raw = value.get("evidence") if isinstance(value, Mapping) else value
+    if isinstance(raw, Mapping):
+        raw = list(raw.keys())
+    if not isinstance(raw, (list, tuple)):
+        return refs
+    for item in raw:
+        if isinstance(item, Mapping):
+            post_id = str(item.get("post_id", "")).strip()
+            evidence_id = str(item.get("evidence_id", item.get("id", ""))).strip()
+            if post_id and evidence_id:
+                refs.append((post_id, evidence_id))
+        elif isinstance(item, str):
+            value = item.strip()
+            if ":" in value:
+                post_id, evidence_id = value.split(":", 1)
+                refs.append((post_id, evidence_id))
+            elif value:
+                refs.append(("", value))
+    return refs
+
+
+def _deepseek_topic_evidence(raw: Any, item: Mapping[str, Any], post_ids: Sequence[str], signal_by_id: Mapping[str, Any], summary_text: str) -> tuple[TopicEvidence, ...]:
+    rows: list[TopicEvidence] = []
+    if isinstance(raw, list):
+        for record in raw:
+            if not isinstance(record, Mapping):
+                continue
+            post_id = str(record.get("post_id", "")).strip()
+            evidence_id = str(record.get("evidence_id", "")).strip()
+            signal = signal_by_id.get(post_id)
+            # Several OpenAI-compatible gateway deployments echo the post ID
+            # as the evidence ID for the post itself.  Normalize that wire
+            # shape to our canonical ``post`` key before validating it.
+            if signal is not None and evidence_id == post_id:
+                evidence_id = "post"
+            if signal is not None and ":" in evidence_id:
+                prefix, suffix = evidence_id.split(":", 1)
+                if prefix == post_id and suffix in signal.evidence_urls:
+                    evidence_id = suffix
+            if not post_id or not evidence_id or signal is None or evidence_id not in signal.evidence_urls:
+                continue
+            claim = str(record.get("claim", "") or "").strip() or _source_excerpt_for_signal(signal, evidence_id)
+            translation = str(record.get("translation_zh", "") or "").strip() or summary_text
+            rows.append(TopicEvidence(post_id, evidence_id, claim, str(record.get("stance", "supporting")), translation))
+    elif isinstance(raw, Mapping):
+        url_to_ref = {
+            url: (signal.post.post_id, evidence_id)
+            for signal in signal_by_id.values()
+            for evidence_id, url in signal.evidence_urls.items()
+        }
+        for key, url in raw.items():
+            post_id, evidence_id = url_to_ref.get(str(url), ("", str(key)))
+            if post_id and evidence_id == post_id:
+                evidence_id = "post"
+            if not post_id:
+                for candidate in post_ids:
+                    signal = signal_by_id[candidate]
+                    if evidence_id == candidate:
+                        evidence_id = "post"
+                    if evidence_id in signal.evidence_urls:
+                        post_id = candidate
+                        break
+            signal = signal_by_id.get(post_id)
+            if signal is None or evidence_id not in signal.evidence_urls:
+                continue
+            rows.append(TopicEvidence(post_id, evidence_id, _source_excerpt_for_signal(signal, evidence_id), "supporting", summary_text))
+    # Do not let a model that omitted citations erase a topic which is plainly
+    # grounded in the supplied post IDs.  We bind the fallback to the exact
+    # source post and use only its title/body excerpt as evidence.
+    if not rows:
+        for post_id in post_ids[:3]:
+            signal = signal_by_id.get(post_id)
+            if signal is None:
+                continue
+            rows.append(TopicEvidence(
+                post_id,
+                "post",
+                _source_excerpt_for_signal(signal, "post"),
+                "supporting",
+                summary_text or _source_excerpt_for_signal(signal, "post"),
+            ))
+    unique: dict[tuple[str, str], TopicEvidence] = {}
+    for row in rows:
+        unique.setdefault((row.post_id, row.evidence_id), row)
+    return tuple(unique.values())
+
+
+def _source_excerpt_for_signal(signal: Any, evidence_id: str) -> str:
+    if evidence_id == "post":
+        return str(signal.post.title or signal.post.body or "").strip()[:280]
+    for comment in signal.comments:
+        if comment.comment_id == evidence_id:
+            return str(comment.body or "").strip()[:280]
+    return str(signal.post.title or "").strip()[:280]
+
+
+def _deepseek_claim(value: Any, text: str, evidence: Sequence[TopicEvidence], post_ids: Sequence[str], signal_by_id: Mapping[str, Any], *, field: str) -> EvidenceBackedClaim:
+    if not text:
+        return EvidenceBackedClaim("", ())
+    refs = _deepseek_refs(value)
+    selected: list[TopicEvidence] = []
+    for ref_post, ref_id in refs:
+        selected.extend(item for item in evidence if item.evidence_id == ref_id and (not ref_post or item.post_id == ref_post))
+    if not selected:
+        selected = list(evidence[:3])
+    mapping = value if isinstance(value, Mapping) else {}
+    return EvidenceBackedClaim(
+        text=text,
+        evidence=tuple(dict.fromkeys(selected)),
+        status=str(mapping.get("status", "inference")) if str(mapping.get("status", "inference")) in {"fact", "inference", "unknown"} else "inference",
+        field=field,
+        post_ids=tuple(dict.fromkeys(item.post_id for item in selected)) or tuple(post_ids),
+        author_ids=tuple(dict.fromkeys(signal_by_id[post_id].post.author.casefold() for post_id in post_ids if post_id in signal_by_id and signal_by_id[post_id].post.author)),
+        frequency=_int_or_zero(mapping.get("frequency", len(selected)) or len(selected)) or len(selected),
+        severity=str(mapping.get("severity", "unknown") or "unknown"),
+        consequence=str(mapping.get("consequence", "unknown") or "unknown"),
+        explanation=str(mapping.get("explanation", "") or "").strip(),
+    )
+
+
+def _deepseek_claims(value: Any, evidence: Sequence[TopicEvidence], post_ids: Sequence[str], signal_by_id: Mapping[str, Any], field: str) -> tuple[EvidenceBackedClaim, ...]:
+    if isinstance(value, (str, Mapping)):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[EvidenceBackedClaim] = []
+    for item in value:
+        text = _deepseek_text(item)
+        claim = _deepseek_claim(item, text, evidence, post_ids, signal_by_id, field=field)
+        if claim.text and claim.evidence:
+            result.append(claim)
+    return tuple(result)
+
+
 class DeepSeekTopicConsolidator:
     """Use DeepSeek Pro to consolidate per-post signals into community topics."""
 
     def __init__(self, *, client: DeepSeekClient, model: str) -> None:
         self._client = client
         self._model = model
-        self._fallback_used = False
 
     @property
     def mode(self) -> str:
-        return "rule_fallback" if self._fallback_used else "deepseek_pro"
+        return "deepseek_pro"
 
     def consolidate(self, community: str, signals: Sequence[Any]) -> Sequence[ProTopicProposal]:
         signal_payload = [
@@ -1408,83 +2081,70 @@ class DeepSeekTopicConsolidator:
                 "post_id": signal.post.post_id,
                 "title": signal.post.title,
                 "subreddit": signal.post.subreddit,
+                "created_at": signal.post.created_at.isoformat(),
+                "author": signal.post.author,
+                "score": signal.post.score,
+                "comment_count": signal.post.comment_count,
+                "body": str(signal.post.body or "")[:1200],
                 "topics": [topic.label for topic in signal.analysis.topics],
-                "claims": [claim.claim for claim in signal.analysis.claims if claim.status == "supported"],
+                "scenario": _analysis_value(signal.analysis.scenario),
+                "goal": _analysis_value(signal.analysis.goal),
+                "user_type": _analysis_value(signal.analysis.user_type),
+                "pains": _analysis_values(signal.analysis.pain_points),
+                "needs": _analysis_values(signal.analysis.needs),
+                "solutions": _analysis_values(signal.analysis.current_solutions),
+                "gaps": _analysis_values(signal.analysis.gaps),
+                "consequences": _analysis_values(signal.analysis.consequences),
+                "opportunities": _analysis_values(signal.analysis.opportunity_hypotheses),
+                "products": _analysis_values(signal.analysis.products),
+                "brands": _analysis_values(signal.analysis.brands),
                 "evidence": signal.evidence_urls,
+                "comments": [
+                    {"evidence_id": comment.comment_id, "author": comment.author, "body": str(comment.body or "")[:500], "url": comment.url}
+                    for comment in signal.comments[:8]
+                ],
             }
             for signal in signals
         ]
-        try:
-            document = self._client.chat_json(
-                (
-                    {"role": "system", "content": "You consolidate Reddit product signals into evidence-backed community topics."},
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "community": community,
-                                "signals": signal_payload,
-                                "instruction": "Return JSON with topics[]. Each topic needs canonical_key, label_en, label_zh, post_ids, evidence, summary, category_tags, brand_tags, confidence.",
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ),
-                model=self._model,
-            )
-        except Exception:
-            self._fallback_used = True
-            return self._rule_fallback(signals)
-        proposals: list[ProTopicProposal] = []
-        for item in document.get("topics", []) if isinstance(document.get("topics"), list) else []:
-            if not isinstance(item, Mapping):
-                continue
-            post_ids = tuple(value for value in item.get("post_ids", []) if isinstance(value, str))
-            evidence = tuple(
-                TopicEvidence(
-                    post_id=str(record.get("post_id", "")),
-                    evidence_id=str(record.get("evidence_id", "")),
-                    claim=str(record.get("claim", "")).strip(),
-                    stance=str(record.get("stance", "supporting")),
-                    translation_zh=str(record.get("translation_zh", "")).strip(),
-                )
-                for record in item.get("evidence", [])
-                if isinstance(record, Mapping)
-            )
-            summary = item.get("summary", {})
-            proposals.append(
-                ProTopicProposal(
-                    canonical_key=str(item.get("canonical_key", "")).strip(),
-                    label_en=str(item.get("label_en", "")).strip(),
-                    label_zh=str(item.get("label_zh", "")).strip(),
-                    summary=EvidenceBackedClaim(
-                        str(summary.get("text", "")).strip() if isinstance(summary, Mapping) else "",
-                        evidence,
+        document = self._client.chat_json(
+            (
+                {"role": "system", "content": "你是北美柴油皮卡改装市场的VOC研究员。只根据输入证据归并社区话题，不能编造事实。"},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "community": community,
+                            "signals": signal_payload,
+                            "instruction": (
+                                "返回JSON对象 {topics:[...] }，每个社区最多归并4个核心话题。只保留同类用户任务、问题或期望结果的话题，禁止other/general/rule话题。"
+                                "每个话题必须包含 canonical_key、label_en、label_zh、post_ids、evidence、summary、seller_insight、"
+                                "scene_cards、user_tasks、pains、needs、current_solutions、gaps、opportunity_hypotheses、"
+                                "supporting_views、opposing_views、validation_questions、product_decision、confidence。"
+                                "除车型、发动机、品牌、产品名和label_en外，所有叙述必须使用简体中文。"
+                                "summary、seller_insight、scene_cards、user_tasks及每一条pains/needs/solutions/gaps/opportunity都必须引用证据。"
+                                "断言格式为 {text,explanation,status,evidence:[{post_id,evidence_id}],frequency,severity,consequence}；"
+                                "evidence格式为数组 [{post_id,evidence_id,claim,translation_zh,stance}]，claim必须是输入中的原文摘录或忠实概括。"
+                                "所有证据ID必须来自输入，无法支持的内容不要输出。product_decision只能是 improve_existing、"
+                                "new_fitment_sku、accessory_bundle、new_product、content_service、no_product。"
+                            ),
+                        },
+                        ensure_ascii=False,
                     ),
-                    post_ids=post_ids,
-                    evidence=evidence,
-                    category_tags=tuple(
-                        value for value in item.get("category_tags", []) if isinstance(value, str)
-                    ),
-                    brand_tags=tuple(
-                        value for value in item.get("brand_tags", []) if isinstance(value, str)
-                    ),
-                    confidence=float(item.get("confidence", 0.0) or 0.0),
-                )
-            )
+                },
+            ),
+            model=self._model,
+        )
+        proposals = list(_deepseek_proposals_from_document(document, signals))
         if not proposals:
-            self._fallback_used = True
-            return self._rule_fallback(signals)
+            raise DeepSeekError("DeepSeek Pro 未返回可验证的话题；保留检查点等待重试。")
         return proposals
 
     def _rule_fallback(self, signals: Sequence[Any]) -> Sequence[ProTopicProposal]:
         """Produce an evidence-linked local VOC analysis when Pro is unavailable.
 
-        This is deliberately more than a label fallback: it groups the actual
-        post/comment text into concrete diesel-pickup problem spaces and emits
-        Chinese pains, needs, solution gaps and testable opportunity hypotheses.
-        Every statement remains explicitly a rule-based signal, not a launch
-        conclusion.
+        Topic specs remain matching lenses only.  The text shown in a report is
+        synthesized from the selected post/comment evidence; the old version
+        copied fixed pains, gaps and opportunity prose into every topic.
         """
         grouped: dict[str, list[Any]] = {spec["key"]: [] for spec in _LOCAL_TOPIC_SPECS}
         for signal in signals:
@@ -1508,18 +2168,31 @@ class DeepSeekTopicConsolidator:
             topic_signals = grouped[spec["key"]]
             if not topic_signals:
                 continue
-            evidence = _rule_topic_evidence(topic_signals, spec)
             post_ids = tuple(signal.post.post_id for signal in topic_signals)
-            evidence_for_claims = evidence or tuple(_rule_post_evidence(signal) for signal in topic_signals)
-            claims = lambda values: tuple(EvidenceBackedClaim(value, evidence_for_claims[: min(3, len(evidence_for_claims))]) for value in values)
-            dynamic = _local_dynamic_claims(topic_signals, spec)
-            pains = claims(tuple(dict.fromkeys((*spec["pains"], *dynamic["pains"]))))
-            needs = claims(tuple(dict.fromkeys((*spec["needs"], *dynamic["needs"]))))
-            solutions = claims(tuple(dict.fromkeys((*spec["solutions"], *dynamic["solutions"]))))
-            gaps = claims(tuple(dict.fromkeys((*spec["gaps"], *dynamic["gaps"]))))
-            hypotheses = claims(tuple(dict.fromkeys(spec["hypotheses"])))
+            topic_voc = synthesize_topic_voc(
+                topic_signals,
+                spec["key"],
+                topic_patterns=spec["patterns"],
+            )
+            signal_by_id = {signal.post.post_id: signal for signal in topic_signals}
+            claims = lambda field: tuple(
+                _voc_claim_to_evidence_claim(claim, signal_by_id)
+                for claim in topic_voc.claims.get(field, ())
+            )
+            pains = claims("pain")
+            needs = claims("need")
+            solutions = claims("current_solution")
+            gaps = claims("solution_gap")
+            consequences = claims("consequence")
+            hypotheses = tuple(
+                _voc_claim_to_evidence_claim(claim, signal_by_id)
+                for claim in topic_voc.opportunity_hypotheses
+            )
+            evidence_for_claims = _topic_voc_evidence(topic_voc, signal_by_id)
+            if not evidence_for_claims:
+                evidence_for_claims = tuple(_rule_post_evidence(signal) for signal in topic_signals[:3])
             summary = EvidenceBackedClaim(
-                f"{spec['summary']} 本轮从 {len(post_ids)} 篇帖子及其 {sum(len(getattr(s, 'comments', ())) for s in topic_signals)} 条评论中观察到；这是社区样本信号，不是全市场占有率。",
+                _topic_voc_summary(topic_voc, len(post_ids), sum(len(getattr(s, "comments", ())) for s in topic_signals)),
                 evidence_for_claims[: min(5, len(evidence_for_claims))],
             )
             proposals.append(
@@ -1532,20 +2205,115 @@ class DeepSeekTopicConsolidator:
                     evidence=evidence_for_claims,
                     vehicles=_rule_values(topic_signals, "vehicle"),
                     platforms=_rule_values(topic_signals, "platform"),
-                    scenarios=tuple(dict.fromkeys((*_rule_values(topic_signals, "scenario"), *spec["scenarios"]))),
+                    scenarios=_rule_values(topic_signals, "scenario"),
                     pains=pains,
                     needs=needs,
                     current_solutions=solutions,
                     gaps=gaps,
                     opportunity_hypotheses=hypotheses,
-                    category_tags=spec["tags"],
+                    category_tags=tuple(dict.fromkeys((*spec["tags"], "evidence_synthesized"))),
                     brand_tags=_rule_values(topic_signals, "brands"),
                     competitor_tags=_rule_values(topic_signals, "competitors"),
-                    confidence=min(0.88, 0.45 + 0.08 * len(post_ids) + 0.01 * min(20, sum(len(getattr(s, "comments", ())) for s in topic_signals))),
-                    validation_questions=spec["validation_questions"],
+                    confidence=min(0.88, 0.35 + 0.08 * len(post_ids) + 0.01 * min(20, sum(len(getattr(s, "comments", ())) for s in topic_signals))),
+                    validation_questions=_topic_validation_questions(topic_voc),
+                    consequences=consequences,
+                    product_decision=("emerging_product" if topic_voc.opportunity_status == "emerging_product" else "no_product"),
                 )
             )
         return proposals
+
+
+def _voc_claim_to_evidence_claim(claim: Any, signal_by_id: Mapping[str, Any]) -> EvidenceBackedClaim:
+    evidence: list[TopicEvidence] = []
+    for qualified_id in claim.evidence_ids:
+        post_id, separator, source_id = str(qualified_id).partition(":")
+        if not separator:
+            post_id, source_id = (claim.post_ids[0] if claim.post_ids else ""), qualified_id
+        signal = signal_by_id.get(post_id)
+        if signal is None:
+            continue
+        url = signal.evidence_urls.get(source_id)
+        if not url:
+            continue
+        evidence.append(TopicEvidence(
+            post_id=post_id,
+            evidence_id=source_id,
+            claim=_source_excerpt(signal, source_id),
+            stance="supporting",
+            translation_zh=claim.text,
+        ))
+    return EvidenceBackedClaim(
+        claim.text,
+        tuple(evidence),
+        status=claim.status,
+        field=claim.field,
+        post_ids=tuple(claim.post_ids),
+        author_ids=tuple(claim.author_ids),
+        frequency=int(claim.frequency),
+        severity=claim.severity,
+        consequence=claim.consequence,
+    )
+
+
+def _topic_voc_evidence(topic_voc: Any, signal_by_id: Mapping[str, Any]) -> tuple[TopicEvidence, ...]:
+    values: list[TopicEvidence] = []
+    seen: set[tuple[str, str]] = set()
+    for claims in topic_voc.claims.values():
+        for claim in claims:
+            for item in _voc_claim_to_evidence_claim(claim, signal_by_id).evidence:
+                key = (item.post_id, item.evidence_id)
+                if key not in seen:
+                    seen.add(key)
+                    values.append(item)
+    for claim in topic_voc.opportunity_hypotheses:
+        for item in _voc_claim_to_evidence_claim(claim, signal_by_id).evidence:
+            key = (item.post_id, item.evidence_id)
+            if key not in seen:
+                seen.add(key)
+                values.append(item)
+    return tuple(values)
+
+
+def _source_excerpt(signal: Any, source_id: str) -> str:
+    if source_id == "post":
+        post = signal.post
+        text = " — ".join(
+            str(value or "").strip() for value in (post.title, post.body)
+            if str(value or "").strip()
+        )
+    else:
+        text = next(
+            (str(getattr(comment, "body", "") or "").strip()
+             for comment in getattr(signal, "comments", ()) or ()
+             if str(getattr(comment, "comment_id", "") or "") == source_id),
+            "",
+        )
+    return " ".join(text.split())[:420] or "未提供原文"
+
+
+def _topic_voc_summary(topic_voc: Any, post_count: int, comment_count: int) -> str:
+    parts: list[str] = []
+    if topic_voc.scenario:
+        parts.append("场景：" + "、".join(topic_voc.scenario[:3]))
+    if topic_voc.user_task != "unknown":
+        parts.append("用户任务：" + topic_voc.user_task)
+    pains = topic_voc.claims.get("pain", ())
+    if pains:
+        parts.append("主要痛点：" + pains[0].text)
+    if not parts:
+        parts.append("当前帖子尚未形成可稳定归纳的具体任务或痛点")
+    return "；".join(parts) + f"。基于 {post_count} 篇帖子和 {comment_count} 条评论的社区样本信号，不代表全市场占有率。"
+
+
+def _topic_validation_questions(topic_voc: Any) -> tuple[str, ...]:
+    questions: list[str] = []
+    if not topic_voc.claims.get("pain"):
+        questions.append("是否有更多独立作者描述同一具体问题？")
+    if not topic_voc.claims.get("solution_gap"):
+        questions.append("现有产品或维修办法具体缺少哪一项能力？")
+    if topic_voc.claims.get("pain") and topic_voc.claims.get("solution_gap"):
+        questions.append("同一车型、负载或安装条件下，问题是否会重复发生？")
+    return tuple(dict.fromkeys(questions))
 
 
 # Local, explainable VOC lenses.  The patterns are intentionally broad enough
@@ -1762,7 +2530,7 @@ def _rule_extract_post(thread: ThreadDocument, domain: Any) -> PostAnalysis:
     pain_matches = tuple(
         label for pattern, label in (
             (r"leak|seep", "leak/seep"),
-            (r"fail|failed|failure|broken|crack", "failure"),
+            (r"fail|failed|failure|broken(?!\s+in)|crack", "failure"),
             (r"fitment|fit|compatib", "fitment"),
             (r"install|installation|clearance", "installation complexity"),
             (r"regen|regeneration|dpf", "regeneration/DPF"),
@@ -1787,10 +2555,13 @@ def _rule_extract_post(thread: ThreadDocument, domain: Any) -> PostAnalysis:
         return AnalysisField(value=value, evidence_ids=evidence_ids, status=status)
 
     pains = tuple(field(value) for value in pain_matches[:5])
-    needs = tuple(field("更可靠的适配与安装信息", "inference") for _ in range(1)) if pains else ()
+    # Needs, gaps and opportunity directions are synthesized later from the
+    # actual sentences across the topic.  Do not inject a generic claim for
+    # every post at extraction time.
+    needs = ()
     solutions = tuple(field(value) for value in solution_matches[:5])
-    gaps = tuple(field("现有方案可能需要额外返工或适配确认", "inference") for _ in range(1)) if pains else ()
-    hypotheses = tuple(field(f"机会假设：验证 {topic_labels[0] if topic_labels else '该问题'} 的改进方案", "inference") for _ in range(1)) if topic_labels else ()
+    gaps = ()
+    hypotheses = ()
     sentiment = field("negative", "inference") if pains else field("neutral", "inference")
     return PostAnalysis(
         topics=tuple(TopicCandidate(label, evidence_ids) for label in dict.fromkeys(topic_labels[:3])),

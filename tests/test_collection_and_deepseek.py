@@ -144,6 +144,89 @@ def test_collector_materializes_generator_communities_before_reusing_them(tmp_pa
     assert [entry.post.post_id for entry in result.deep_reads] == ["t3_one"]
 
 
+def test_complete_collection_checkpoints_deep_reads_in_batches_of_three(tmp_path) -> None:
+    """Complete reads use small browser batches that fit inside the OpenCLI timeout."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    records = [
+        _listing(f"post{index}", created_at=as_of - timedelta(days=1), title=f"Post {index}")
+        for index in range(11)
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        calls.append(arguments)
+        if arguments[2] == "range":
+            return json.dumps(records)
+        if arguments[2] == "batch-read":
+            ids = arguments[3].split(",")
+            return json.dumps([
+                {"post_id": post_id, "comments": [], "status": "success", "error": ""}
+                for post_id in ids
+            ])
+        raise AssertionError(f"unexpected command: {arguments}")
+
+    progress: list[dict] = []
+    paths = opportunity_radar.create_run_paths(tmp_path, "complete-batches")
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        scope=opportunity_radar.CollectionScope(
+            (as_of - timedelta(days=30)).date(), as_of.date(), "complete"
+        ),
+        progress=progress.append,
+    )
+
+    batch_sizes = [len(call[3].split(",")) for call in calls if call[2] == "batch-read"]
+    attempted = [item["completed"] for item in progress if "完整评论批量读取已尝试" in item["message"]]
+    assert batch_sizes == [3, 3, 3, 2]
+    assert attempted == [3, 6, 9, 11]
+    assert len(result.deep_reads) == 11
+
+
+def test_complete_collection_reports_failed_batches_before_single_post_retry(tmp_path) -> None:
+    """A timed-out batch must advance visible progress before resumable per-post reads start."""
+    as_of = datetime(2026, 8, 26, tzinfo=UTC)
+    records = [
+        _listing(f"post{index}", created_at=as_of - timedelta(days=1), title=f"Post {index}")
+        for index in range(4)
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        calls.append(arguments)
+        if arguments[2] == "range":
+            return json.dumps(records)
+        if arguments[2] == "batch-read":
+            raise RuntimeError("batch timeout")
+        if arguments[2] == "read":
+            return json.dumps([])
+        raise AssertionError(f"unexpected command: {arguments}")
+
+    progress: list[dict] = []
+    paths = opportunity_radar.create_run_paths(tmp_path, "failed-complete-batches")
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect(
+        (opportunity_radar.Community("diesel"),),
+        paths=paths,
+        as_of=as_of,
+        deep_read=True,
+        scope=opportunity_radar.CollectionScope(
+            (as_of - timedelta(days=30)).date(), as_of.date(), "complete"
+        ),
+        progress=progress.append,
+    )
+
+    batch_sizes = [len(call[3].split(",")) for call in calls if call[2] == "batch-read"]
+    failed_attempts = [
+        item["completed"] for item in progress
+        if "批量读取超时或失败" in item["message"]
+    ]
+    assert batch_sizes == [3, 1]
+    assert failed_attempts == [3, 4]
+    assert len(result.deep_reads) == 4
+
+
 def test_collector_caps_deep_reads_per_requested_community_even_when_records_share_a_subreddit(tmp_path) -> None:
     """Collector limits must be scoped to the approved communities being queried."""
     as_of = datetime(2026, 8, 26, tzinfo=UTC)
@@ -422,6 +505,37 @@ def test_collector_round_two_preserves_raw_deduplicates_and_retries_only_failed_
     assert checkpoint["queries"]["egr coolant cap"]["status"] == "success"
 
 
+def test_round_two_keyword_deep_read_honors_standard_limit_per_community(tmp_path) -> None:
+    """A standard web run must not turn a keyword hit list into 957 thread reads."""
+    as_of = datetime(2026, 8, 31, tzinfo=UTC)
+    records = [
+        _listing(f"cummins-{index}", created_at=as_of - timedelta(days=10), subreddit="Cummins")
+        for index in range(90)
+    ] + [
+        _listing(f"duramax-{index}", created_at=as_of - timedelta(days=10), subreddit="Duramax")
+        for index in range(90)
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        calls.append(arguments)
+        if arguments[2] == "read":
+            return "[]"
+        return json.dumps(records)
+
+    paths = opportunity_radar.create_run_paths(tmp_path, "round-two-limit")
+    scope = opportunity_radar.CollectionScope(
+        start_date=as_of.date() - timedelta(days=30), end_date=as_of.date(), depth="standard"
+    )
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect_round_two(
+        ("diesel truck",), paths=paths, as_of=as_of, max_posts_per_term=None,
+        scope=scope, deep_read=True,
+    )
+
+    assert len(result.deep_reads) == 160
+    assert sum(1 for call in calls if call[2] == "read") == 160
+
+
 def test_thread_comments_preserve_author_ids_for_distinct_commenter_counts() -> None:
     """Deep-read normalization must retain public commenter authors, not only text and URLs."""
     post = opportunity_radar.NormalizedPost(
@@ -473,6 +587,107 @@ def test_deepseek_retries_malformed_json_then_filters_unsupported_claim_evidence
     assert analysis.topics[0].evidence_ids == ("post", "c1")
     assert analysis.claims[0].evidence_ids == ("c1",)
     assert analysis.claims[1].status == "unknown"
+
+
+def test_deepseek_disables_gateway_reasoning_for_structured_json() -> None:
+    """Higress must return the structured answer in ``content`` instead of spending the budget on reasoning."""
+    transport = FakeTransport([
+        opportunity_radar.HttpResponse(200, json.dumps({
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+        })),
+    ])
+    client = opportunity_radar.DeepSeekClient(
+        transport=transport,
+        environment={"DEEPSEEK_API_KEY": "test"},
+        sleeper=lambda _: None,
+    )
+
+    result = client.chat_json([{"role": "user", "content": "Return JSON."}])
+
+    assert result == {"ok": True}
+    assert transport.calls[0][3]["thinking"] == {"type": "disabled"}
+
+
+def test_deepseek_normalizes_gateway_nested_diesel_response() -> None:
+    """The deployed model may wrap diesel fields and emit string topic labels."""
+    post = opportunity_radar.NormalizedPost(
+        post_id="t3_gateway", url="https://www.reddit.com/r/diesel/comments/gateway/example",
+        subreddit="diesel", title="Turbo issue", body="My turbo failed.", author="owner",
+        created_at=datetime(2026, 8, 25, tzinfo=UTC), score=1, comment_count=1, source_surfaces=("hot",),
+    )
+    thread = opportunity_radar.ThreadDocument(
+        post=post,
+        comments=(opportunity_radar.ThreadComment("c1", "The shaft fused after heat cycles.", post.url + "?comment=c1"),),
+    )
+    gateway_document = {
+        "topics": ["Turbo reliability", "7.3 maintenance"],
+        "claims": ["The turbo failed after repeated heat cycles"],
+        "diesel": {
+            "platform": {"value": "Ford Super Duty", "evidence_ids": ["post"], "status": "fact"},
+            "scenario": {"value": "Repairing a diesel truck after a turbo failure", "evidence_ids": ["post", "c1"], "status": "fact"},
+            "pain_points": {"value": "Turbo failure", "evidence_ids": ["post", "c1"], "status": "fact"},
+            "topic_candidates": {"value": "Turbo reliability", "evidence_ids": ["post", "c1"], "status": "fact"},
+        },
+    }
+    transport = FakeTransport([
+        opportunity_radar.HttpResponse(200, json.dumps({
+            "choices": [{"message": {"content": json.dumps(gateway_document, ensure_ascii=False)}}],
+        })),
+    ])
+    client = opportunity_radar.DeepSeekClient(transport=transport, environment={"DEEPSEEK_API_KEY": "test"}, sleeper=lambda _: None)
+
+    analysis = client.extract_post(thread)
+
+    assert [topic.label for topic in analysis.topics] == ["Turbo reliability", "7.3 maintenance"]
+    assert analysis.platform.value == "Ford Super Duty"
+    assert analysis.scenario.value.startswith("Repairing a diesel truck")
+    assert analysis.pain_points[0].evidence_ids == ("post", "c1")
+
+
+def test_deepseek_extracts_all_comments_in_chunks_and_merges_evidence() -> None:
+    """Removing a request-size cap must not force a giant model request."""
+    post = opportunity_radar.NormalizedPost(
+        post_id="t3_chunked", url="https://www.reddit.com/r/diesel/comments/chunked/example",
+        subreddit="diesel", title="Long discussion", body="Post context", author="owner",
+        created_at=datetime(2026, 8, 25, tzinfo=UTC), score=1, comment_count=2,
+        source_surfaces=("new",),
+    )
+    thread = opportunity_radar.ThreadDocument(post=post, comments=(
+        opportunity_radar.ThreadComment("c1", "first " + "a" * 1400, post.url + "?comment=c1"),
+        opportunity_radar.ThreadComment("c2", "second " + "b" * 1400, post.url + "?comment=c2"),
+    ))
+
+    class ChunkTransport:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def __call__(self, method, url, headers, payload):
+            self.calls.append(payload)
+            prompt = json.loads(payload["messages"][1]["content"])
+            comment = prompt["comments"][0]
+            content = {
+                "claims": [{
+                    "claim": f"证据 {comment['evidence_id']} 需要保留",
+                    "evidence_ids": [comment["evidence_id"]],
+                    "urls": [comment["url"]],
+                }],
+            }
+            return opportunity_radar.HttpResponse(200, json.dumps({
+                "choices": [{"message": {"content": json.dumps(content, ensure_ascii=False)}}],
+            }))
+
+    transport = ChunkTransport()
+    client = opportunity_radar.DeepSeekClient(
+        transport=transport,
+        environment={"DEEPSEEK_API_KEY": "test"},
+        sleeper=lambda _: None,
+        chunk_chars=1000,
+    )
+
+    analysis = client.extract_post(thread)
+
+    assert len(transport.calls) == 2
+    assert {claim.evidence_ids for claim in analysis.claims} == {("c1",), ("c2",)}
 
 
 @pytest.mark.parametrize(

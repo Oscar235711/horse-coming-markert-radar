@@ -13,14 +13,15 @@ cli({
     { name: 'subreddit', type: 'string', required: true, positional: true },
     { name: 'start-date', type: 'string', required: true },
     { name: 'end-date', type: 'string', required: true },
-    { name: 'limit', type: 'int', default: 1000 },
+    { name: 'limit', type: 'int', default: 0 },
   ],
   columns: ['id', 'title', 'subreddit', 'author', 'upvotes', 'comments', 'url', 'created_utc', 'selftext', 'source_surfaces', 'coverage_status'],
   func: async (page, kwargs) => {
     const subreddit = String(kwargs.subreddit || '').replace(/^r\//i, '');
     const startDate = String(kwargs['start-date']);
     const endDate = String(kwargs['end-date']);
-    const limit = Math.max(1, Math.min(1000, Number(kwargs.limit || 1000)));
+    const requestedLimit = Number(kwargs.limit || 0);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : 0;
     const daySpan = Math.max(1, Math.ceil((Date.parse(`${endDate}T23:59:59Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000));
     const time = daySpan <= 1 ? 'day' : daySpan <= 7 ? 'week' : daySpan <= 31 ? 'month' : 'year';
     const result = await page.evaluate(async ({ subreddit, startDate, endDate, limit, time }) => {
@@ -57,13 +58,16 @@ cli({
       let after = '';
       let reachedStart = false;
       let exhausted = false;
-      while (collected.length < limit) {
+      const seenAfter = new Set();
+      while (!limit || collected.length < limit) {
         const pageResult = await fetchListing('new', 'new', after);
         if (!pageResult.rows.length) { exhausted = true; break; }
         collected.push(...pageResult.rows);
         const oldest = Math.min(...pageResult.rows.map((row) => Number(row.created_utc || Infinity)));
         if (oldest <= start) { reachedStart = true; break; }
         if (!pageResult.after) { exhausted = true; break; }
+        if (seenAfter.has(pageResult.after)) { exhausted = true; break; }
+        seenAfter.add(pageResult.after);
         after = pageResult.after;
       }
       for (const [sort, surface] of [['top', 'top'], ['controversial', 'controversial'], ['hot', 'hot']]) {
@@ -72,7 +76,9 @@ cli({
       }
       return { rows: collected, coverageStatus: reachedStart || exhausted ? 'complete' : 'partial' };
     }, { subreddit, startDate, endDate, limit, time });
-    return selectBalancedRangeRows(mergeRangeRows(result.rows, startDate, endDate), limit)
+    const merged = mergeRangeRows(result.rows, startDate, endDate);
+    const selected = limit ? selectBalancedRangeRows(merged, limit) : merged;
+    return selected
       .map((row) => ({ ...row, coverage_status: result.coverageStatus }));
   },
 });

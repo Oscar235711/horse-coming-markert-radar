@@ -114,3 +114,40 @@ def test_html_contains_rich_report_sections_and_single_payload(tmp_path: Path):
     for unsupported in ("Pricing band", "Margin potential", "Manufacturing Profile"):
         assert unsupported not in html
     assert html.count('id="analysis-data"') == 1
+
+
+def test_html_renders_seller_insight_scene_task_pain_and_trend_cards_in_chinese(tmp_path: Path):
+    analysis = {
+        "generated_at": AS_OF.isoformat(),
+        "communities": ["Cummins"],
+        "topics": [{
+            "topic_id": "topic-rich",
+            "community": "Cummins",
+            "label_zh": "拖挂排温控制",
+            "label_en": "Towing EGT control",
+            "status": "formal",
+            "trend": "rising",
+            "summary_zh": "拖挂爬坡时排温升高，车主需要可验证的控制方案。",
+            "seller_insight_zh": "用户正在自行组合仪表和驾驶策略，说明适配清晰、可验证的组合方案存在验证价值。",
+            "data_snapshot": {"supporting_posts": 6, "authors": 6, "commenters": 12, "comments": 48, "evidence": 9},
+            "trend_card": {"current_30d_posts": 4, "baseline_60d_posts": 2, "growth_rate": 3.0, "trend_label": "上升"},
+            "scene_cards": [{"text": "拖挂第五轮上坡时，持续高负载导致排温升高。", "status": "fact", "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x"}]}],
+            "jtbd_cards": [{"text": "在不牺牲拖挂动力的情况下把排温控制在可接受范围。", "status": "fact", "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x"}]}],
+            "pain_point_cards": [{"text": "爬坡时排温过高，用户只能降速。", "explanation": "高负载下无法维持目标车速，拖挂效率下降。", "frequency": 4, "severity": "高", "consequence": "拖挂效率下降", "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x", "quote_original": "I have to slow down", "translation_zh": "我只能降速"}]}],
+            "solution_cards": [{"text": "加装排温表并调整驾驶方式。", "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x"}]}],
+            "gap_cards": [{"text": "用户需要自行试错，缺少一套清晰的适配路径。", "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x"}]}],
+            "product_decision": {"type": "配件或组合包", "status": "inference", "rationale": "现有证据支持先验证组合包。"},
+            "post_count": 6, "author_count": 6, "commenter_count": 12, "participant_count": 18, "collected_comment_count": 48,
+            "evidence": [{"url": "https://www.reddit.com/r/Cummins/comments/x", "claim_en": "I have to slow down", "claim_zh": "我只能降速"}],
+            "pains": ["爬坡时排温过高，用户只能降速。"], "needs": ["可验证的排温控制方案"], "current_solutions": ["加装排温表"], "gaps": ["缺少清晰适配路径"], "opportunity_hypotheses": ["验证组合包"],
+            "platforms": ["Cummins"], "vehicles": ["Ram 2500"], "scenarios": ["拖挂爬坡"], "user_types": ["拖挂车主"], "validation_questions": ["不同负载下是否重复出现？"],
+        }],
+        "report_metrics": {"community_count": 1, "topic_count": 1, "scanned_post_count": 10, "deep_read_post_count": 6, "analyzed_post_count": 6, "participant_count": 18, "evidence_count": 1, "communities": {"Cummins": {"topic_count": 1}}},
+        "research_scope": {"start_date": "2026-06-01", "end_date": "2026-08-26", "depth": "standard", "coverage": {}},
+    }
+    path = opportunity_radar.render_html(analysis, tmp_path / "report.html")
+    html = path.read_text(encoding="utf-8")
+    for phrase in ("Seller Insight", "趋势卡", "场景", "用户任务", "Pain Points", "痛点后果", "当前解决方案", "方案不足", "上升", "爬坡时排温过高"):
+        assert phrase in html
+    assert "拖挂爬坡时排温升高" in html
+    assert "我只能降速" in html

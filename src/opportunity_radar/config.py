@@ -34,8 +34,8 @@ class DieselExclusions:
 @dataclass(frozen=True, slots=True)
 class KeywordSearchSettings:
     enabled: bool
-    max_candidate_keywords: int
-    max_posts_per_keyword: int
+    max_candidate_keywords: int | None
+    max_posts_per_keyword: int | None
     require_human_approval: bool
 
 
@@ -99,8 +99,8 @@ def load_diesel_domain_config(path: str | Path) -> DieselDomainConfig:
         ),
         keyword_search=KeywordSearchSettings(
             enabled=_as_bool(keyword_search.get("enabled"), "keyword_search.enabled"),
-            max_candidate_keywords=_positive_int(keyword_search.get("max_candidate_keywords"), "keyword_search.max_candidate_keywords"),
-            max_posts_per_keyword=_positive_int(keyword_search.get("max_posts_per_keyword"), "keyword_search.max_posts_per_keyword"),
+            max_candidate_keywords=_optional_positive_int(keyword_search.get("max_candidate_keywords"), "keyword_search.max_candidate_keywords"),
+            max_posts_per_keyword=_optional_positive_int(keyword_search.get("max_posts_per_keyword"), "keyword_search.max_posts_per_keyword"),
             require_human_approval=_as_bool(keyword_search.get("require_human_approval"), "keyword_search.require_human_approval"),
         ),
         report=ReportSettings(
@@ -285,6 +285,12 @@ def _positive_int(value: object, field_name: str) -> int:
     if converted < 1:
         raise ValueError(f"{field_name} must be a positive integer")
     return converted
+
+
+def _optional_positive_int(value: object, field_name: str) -> int | None:
+    if value is None or value == 0:
+        return None
+    return _positive_int(value, field_name)
 
 
 def _positive_float(value: object, field_name: str) -> float:

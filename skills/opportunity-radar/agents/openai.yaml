@@ -1,0 +1,4 @@
+interface:
+  display_name: "Opportunity Radar"
+  short_description: "Reddit柴油皮卡VOC机会雷达采集分析与报告全流程"
+  default_prompt: "请使用Opportunity Radar按指定时间范围采集并分析Reddit柴油皮卡社区，输出中文VOC报告。"

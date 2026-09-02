@@ -27,6 +27,19 @@ _NOISE_TOKENS = frozenset({
     "don", "doesn", "didn", "isn", "won", "wouldn", "t", "s", "ve", "re", "ll", "now", "right", "sure",
     "know", "make", "no", "miles",
 })
+_GRAMMAR_FRAGMENT_TOKENS = frozenset({
+    "just", "got", "get", "because", "im", "i", "m", "was", "were", "been", "being",
+    "all", "over", "also", "can", "could", "would", "should", "have", "has", "had",
+    "do", "does", "did", "not", "will", "still", "really", "thing", "things",
+})
+_SEMANTIC_ANCHORS = frozenset({
+    "cummins", "duramax", "powerstroke", "ford", "diesel", "dpf", "egr", "ccv", "pcv",
+    "downpipe", "tuner", "tuning", "exhaust", "egt", "temperature", "cooler", "valve",
+    "pipe", "kit", "clamp", "regen", "leak", "failure", "failed", "broken", "crack",
+    "clog", "fitment", "installation", "towing", "hauling", "commute", "winter", "off",
+    "road", "work", "truck", "engine", "manifold", "intercooler", "gauge", "sensor",
+    "injector", "turbo", "cooling", "system", "fuel", "oil", "filter", "delete",
+})
 _PAIN = re.compile(r"\b(leak|leaked|seep|seeping|fail|failed|broken|crack|cracked|regen|clog|issue|problem)\b", re.I)
 _WORKAROUND = re.compile(r"\b(fix|fixed|replace|replaced|install|installed|clamp|solution)\b", re.I)
 _PURCHASE = re.compile(r"\b(buy|bought|purchase|price|cost|order|ordered|recommend|what should i)\b", re.I)
@@ -130,17 +143,18 @@ def discover_diesel_keywords(
 
 
 def select_round_two_terms(
-    candidates: Sequence[KeywordCandidate], *, max_terms: int = 20, minimum_score: int = 65,
+    candidates: Sequence[KeywordCandidate], *, max_terms: int | None = 20, minimum_score: int = 65,
     minimum_users: int = 2, minimum_communities: int = 2,
 ) -> tuple[str, ...]:
     """Return the only terms allowed to issue second-round queries."""
-    return tuple(
+    selected = tuple(
         candidate.term for candidate in candidates
         if candidate.status not in {"formal", "rejected"}
         and candidate.discovery_score >= minimum_score
         and candidate.unique_user_count >= minimum_users
         and candidate.community_count >= minimum_communities
-    )[:max_terms]
+    )
+    return selected if max_terms is None else selected[:max_terms]
 
 
 def build_topic_keyword_library(
@@ -218,7 +232,7 @@ def build_topic_keyword_library(
     # Keep the review table useful on real comment-heavy runs. Every retained
     # row still has source IDs; low-signal tail terms remain reproducible in
     # raw comments rather than overwhelming the report.
-    candidates = [item for item in candidates if item["post_count"] or item["source_comment_ids"]][:500]
+    candidates = [item for item in candidates if item["post_count"] or item["source_comment_ids"]]
     return {"version": "topic-keywords.v1", "formal_terms": sorted(formal), "candidates": candidates}
 
 
@@ -294,17 +308,30 @@ def _keep(term: str, formal: frozenset[str], brands: frozenset[str]) -> bool:
 
 
 def _useful_phrase(term: str) -> bool:
-    """Reject URL fragments and Reddit UI text before they enter the library."""
+    """Reject grammatical fragments before they enter the project library."""
+    return is_searchable_keyword(term)
+
+
+def clean_keyword_term(value: object) -> str | None:
+    """Return a domain-complete search phrase, or ``None`` for language noise."""
+    term = _normalise(value)
     tokens = term.split()
     if not term or len(tokens) < 2 or term in {"diesel truck", "pickup truck", "diesel pickup"}:
-        return False
-    if any(token in _NOISE_TOKENS for token in tokens):
-        return False
+        return None
+    if any(token in _NOISE_TOKENS or token in _GRAMMAR_FRAGMENT_TOKENS for token in tokens):
+        return None
     if any(token.isdigit() and len(token) >= 2 for token in tokens):
-        return False
-    if not any(any(char.isalpha() for char in token) for token in tokens):
-        return False
-    return True
+        return None
+    if not any(token in _SEMANTIC_ANCHORS for token in tokens):
+        return None
+    if not any(char.isalpha() for char in term):
+        return None
+    return term
+
+
+def is_searchable_keyword(value: object) -> bool:
+    """Whether a phrase is eligible for global search or library activation."""
+    return clean_keyword_term(value) is not None
 
 
 def _normalise(value: object) -> str:

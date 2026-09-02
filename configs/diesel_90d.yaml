@@ -178,9 +178,10 @@ exclusions:
 
 keyword_search:
   enabled: true
-  max_candidate_keywords: 20
-  max_posts_per_keyword: 10
-  require_human_approval: true
+  # null means: stop on date boundary/provider exhaustion, not a row quota.
+  max_candidate_keywords: null
+  max_posts_per_keyword: null
+  require_human_approval: false
 
 report:
   formats:

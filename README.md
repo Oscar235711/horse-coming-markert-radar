@@ -3,32 +3,34 @@
 Opportunity Radar 是 SuncentAuto 的本地市场探索工具。它把 Reddit 的公开讨论整理为：
 
 ```text
-网页选择社区、日期和采集深度
-→ OpenCLI 分页采集帖子、评论和回复
-→ 本机 Codex 提取 VOC
+用户输入研究问题、日期和采集深度
+→ DeepSeek 生成检索计划并自动扩词
+→ OpenCLI 全站/种子社区采集帖子、评论和回复
+→ DeepSeek 提取 VOC 并归并话题
 → 社区内聚类
 → analysis.json
 → 社区图谱、右侧预览、完整话题报告和 Excel
 ```
 
-当前固定四个社区：`r/Cummins`、`r/Duramax`、`r/powerstroke`、`r/FordDiesels`。不做用户主页深挖，也不会自动扩展社区。
+当前默认使用四个种子社区：`r/Cummins`、`r/Duramax`、`r/powerstroke`、`r/FordDiesels`。它们只作为后台基线；用户不需要选择社区。关键词和社区库会跨运行累计，相关的新社区会根据本轮证据归因。
 
 报告用于发现和排序信号。任何改款、SKU、组合包或新品方向都是“机会假设”，不是开品结论；没有业务数据时不推断价格、利润、制造工艺或供应链结论。
 
 ## 1. 当前已实现
 
-- 网页可选一个或多个社区，以及最近 30、90、180、365 天或自定义日期。
-- 快速、标准、深度三档，分别最多深读 30、80、150 篇/社区。
+- 网页以“你想了解什么？”作为唯一研究入口，自动生成检索词；日期和采集深度仍可自定义。
+- 快速、标准、深度和完整四档；完整档按日期/平台边界运行，不设项目数量上限。
 - 项目自带 OpenCLI 插件，按 `new` 分页，并补充 `top`、`controversial`、`hot`。
 - 精确日期过滤、帖子 ID 去重、覆盖状态和断点续跑。
 - 深读保留评论正文、作者、层级、评论 ID 和 Reddit 永久链接。
 - 分层选择高互动、月份均衡、具体问题和争议/弱信号帖。
-- 本机 `codex exec --ephemeral --sandbox read-only` 两阶段分析，不依赖 DeepSeek。
+- Higress DeepSeek 两阶段分析：先生成检索计划，再提取帖子 VOC 和社区话题；页面保留 Codex 作为可选后备。
 - VOC“场景—任务—痛点—后果—当前方案—方案不足—产品判断”报告。
 - 点击社区展开话题；点击话题先打开右侧预览；预览底部再进入完整报告。
 - URL Hash 保存社区、话题和页面状态，支持关闭、浏览器前进和后退。
 - HTML 和 Excel 只读取同一份 `analysis.json` 与 `report_metrics`，数字口径一致。
-- 项目级社区、话题和关键词累计库位于 `library/`。
+- 项目级社区、话题和关键词累计库位于 `library/`，有效概念会自动沉淀，语法碎片进入隔离区。
+- 网页可以保存每日、每周或每月滚动时间窗口任务；服务运行时自动创建普通可续跑任务。
 
 ## 2. 环境安装
 
@@ -103,13 +105,26 @@ opencli opportunity-reddit range Cummins `
 
 默认打开 `http://127.0.0.1:8765`。网页中可以：
 
-- 选择四个社区中的一个或多个；
+- 输入自然语言研究问题；
 - 选择预设时间或自定义起止日期（最多 365 天）；
 - 选择快速、标准、深度；
+- 系统自动扩展英文检索词并发现相关社区；
 - 启动任务、查看阶段进度和失败原因；
+- 对已暂停/失败/完成任务执行“续跑”或“删除任务”（删除只清理该任务本地数据、检查点和报告，不影响代码、社区库和关键词库）；
 - 打开完成的 HTML 报告或下载 Excel。
 
+网页的“定时任务”区域可以保存滚动窗口（例如每周扫描最近 90 天）。若需要让 Windows 在服务未启动时也触发任务，可使用：
+
+```powershell
+.\skills\opportunity-radar\scripts\register-schedule.ps1 `
+  -TaskName "Opportunity Radar weekly" -Frequency WEEKLY -StartTime 09:00 -WindowDays 90
+```
+
 同一时间只运行一个采集任务，避免 Chrome 会话冲突和 Reddit 限流。
+
+任务完成或暂停后，页面显示请求日期与实际覆盖日期。若 Reddit 分页、登录态或限流导致未到达开始日期，会标记为 `partial`；这不代表已获取 Reddit 全量数据。
+
+为避免单次 Reddit 请求长时间无响应，OpenCLI 子进程默认 60 秒超时；需要更长时间时可在启动服务前设置 `RADAR_OPENCLI_TIMEOUT_SECONDS`。
 
 如不希望自动打开浏览器：
 
@@ -119,7 +134,7 @@ opencli opportunity-reddit range Cummins `
 
 ## 5. 命令行运行
 
-自定义时间、社区和深度：
+用自然语言问题、时间和深度运行：
 
 ```powershell
 .\scripts\radar.ps1 run `
@@ -127,9 +142,9 @@ opencli opportunity-reddit range Cummins `
   -RunId 20260831T-demo `
   -StartDate 2026-01-01 `
   -EndDate 2026-08-31 `
-  -Depth standard `
-  -AnalysisEngine codex `
-  -Communities "Cummins,Duramax,powerstroke,FordDiesels"
+  -Depth complete `
+  -AnalysisEngine deepseek `
+  -ResearchQuestion "我想了解 Duramax 拖挂时的高温和排气改装痛点"
 ```
 
 等价 Python 命令：
@@ -138,8 +153,8 @@ opencli opportunity-reddit range Cummins `
 .\.venv\Scripts\python -m opportunity_radar run `
   --config configs/diesel_90d.yaml `
   --start-date 2026-01-01 --end-date 2026-08-31 `
-  --depth standard --analysis-engine codex `
-  --communities Cummins,Duramax,powerstroke,FordDiesels
+  --depth complete --analysis-engine deepseek `
+  --research-question "我想了解 Duramax 拖挂时的高温和排气改装痛点"
 ```
 
 断点续跑、查看状态和重新导出：
@@ -157,13 +172,16 @@ opencli opportunity-reddit range Cummins `
 .\.venv\Scripts\python -m opportunity_radar keywords approve --file <keyword_suggestions.json>
 ```
 
-## 6. 三档采集规模
+## 6. 采集规模
 
 | 档位 | 每社区列表上限 | 每社区深读上限 |
 |---|---:|---:|
 | 快速 | 300 | 30 |
 | 标准 | 1,000 | 80 |
 | 深度 | 1,000 | 150 |
+| 完整（默认） | 按日期边界或 Reddit 耗尽 | 按日期边界或 Reddit 耗尽 |
+
+完整档不设置项目侧的帖子、关键词或深读数量上限；系统会保留日期范围内采集到的全部原始证据。为适配模型上下文，分析请求会自动分块并在本地合并，分块不是对原始数据的删减。快速、标准、深度仅作为需要更快反馈时的可选加速档。
 
 标准档深读按以下思路混合选择：高互动/讨论深度、月份均衡、问题具体、争议/反对观点。不会只按赞数筛选。
 
@@ -171,10 +189,12 @@ opencli opportunity-reddit range Cummins `
 
 ## 7. 分析规则
 
-Codex 分两阶段运行：
+默认使用 Higress DeepSeek（也可切换本机 Codex）分两阶段运行：
 
 1. 帖子级提取平台、车型/年份、用户类型、场景、任务、痛点、严重度/后果、需求、当前方案、方案不足、购买/维修意向、关键词和观点。
 2. 只在同一社区内，按“用户面对的同类任务或问题”归并话题。
+
+完整档会把一个超长帖子拆成多个模型请求再合并；如需调整单次请求的安全大小，可设置 `DEEPSEEK_CHUNK_CHARS`。这只控制模型上下文，不会删除或覆盖 `.local/runs/<run_id>/` 中的原始帖子和评论。
 
 每个判断均区分：
 
@@ -221,9 +241,13 @@ library/
 └─ keywords.json
 ```
 
-每轮运行自动累计社区、稳定话题和候选关键词索引。它不会自动扩展本轮四个社区，也不会把候选词自动升级为正式检索词。Excel 的“社区库”和“话题关键词库”是本轮可阅读投影。
+每轮运行自动累计社区、稳定话题和候选关键词索引。网页只要求输入研究问题和日期；四个种子社区作为后台基线，系统同时按问题扩展词进行全站检索。候选社区和关键词先保留来源、作者数和证据，再由清洗规则决定是否进入下一轮检索。Excel 的“社区库”和“话题关键词库”是本轮可阅读投影。
 
-## 10. 测试
+## 10. 可复用 Skill
+
+完整 Codex Skill 位于 `skills/opportunity-radar/`，包含流程说明、报告契约和可执行 PowerShell 入口。它适合在新的 Codex 任务中复用“选日期 → 读库 → 采集 → Codex VOC → 导出”的完整链路；Skill 不会自行注册操作系统定时任务，注册需要用户明确执行脚本。
+
+## 11. 测试
 
 ```powershell
 python -m pytest
@@ -231,7 +255,7 @@ node --test opencli-plugin/opportunity-reddit/*.test.mjs
 opencli validate opportunity-reddit
 ```
 
-## 11. 常见问题
+## 12. 常见问题
 
 ### OpenCLI 找不到项目插件
 
@@ -256,6 +280,6 @@ opencli validate opportunity-reddit
 
 运行 `doctor` 检查 Node 和 `@oai/artifact-tool` 运行库，然后对现有 `run_id` 执行 `export`，无需重新采集。
 
-## 12. 安全边界
+## 13. 安全边界
 
 禁止提交：`.env`、`.local/`、`.venv/`、Cookie、API Key、Codex 认证信息和原始 Reddit 用户数据。报告保留市场讨论，但不生成违规操作教程。
