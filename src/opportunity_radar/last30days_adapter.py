@@ -17,11 +17,10 @@ import sys
 from threading import Event
 import time
 from typing import Any, Callable, Mapping
-import urllib.error
-import urllib.request
 
 
 DEFAULT_HOT30_DOMAIN = "North American diesel pickup aftermarket"
+DEFAULT_HOT30_SUBREDDITS = ("Cummins", "Duramax", "powerstroke", "FordDiesels")
 
 
 @dataclass(frozen=True)
@@ -116,6 +115,16 @@ def _json_file(path: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def _vendor_discovery_domain(topic: str) -> str:
+    """Use searchable English terms while retaining the UI's Chinese focus."""
+    normalized = " ".join(str(topic or "").split())
+    if not normalized:
+        return DEFAULT_HOT30_DOMAIN
+    if any("\u4e00" <= character <= "\u9fff" for character in normalized):
+        return DEFAULT_HOT30_DOMAIN
+    return normalized
+
+
 Judge = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 
 
@@ -183,13 +192,25 @@ class Hot30Adapter:
         *,
         domain: str = DEFAULT_HOT30_DOMAIN,
         emit: str = "brief",
+        subreddits: tuple[str, ...] = DEFAULT_HOT30_SUBREDDITS,
     ) -> Hot30Commands:
         """Build safe argv tuples; the adapter does not launch them itself."""
-        normalized_domain = " ".join(str(domain or "").split())
+        normalized_domain = _vendor_discovery_domain(domain)
+        normalized_subreddits = tuple(
+            dict.fromkeys(
+                str(value).strip().removeprefix("r/")
+                for value in subreddits
+                if str(value).strip()
+            )
+        ) or DEFAULT_HOT30_SUBREDDITS
         base = (self.python_executable, str(self.vendor.script_path), "--discover")
-        nominate = (*base, *( (normalized_domain,) if normalized_domain else () ), "--nominate-only", "--save-dir", str(run.work_dir))
-        judge = (*base, "--judgments", str(run.judgments_path), "--save-dir", str(run.work_dir))
-        finalize = (*base, "--finalize", "--angles", str(run.angles_path), f"--emit={emit}", "--save-dir", str(run.work_dir))
+        subreddit_args = ("--subreddits", ",".join(normalized_subreddits))
+        # ``--discover`` takes an optional positional domain. Keep the domain
+        # immediately after the flag; placing another option before it makes
+        # argparse treat the domain as an unexpected positional argument.
+        nominate = (*base, normalized_domain, *subreddit_args, "--nominate-only", "--save-dir", str(run.work_dir))
+        judge = (*base, *subreddit_args, "--judgments", str(run.judgments_path), "--save-dir", str(run.work_dir))
+        finalize = (*base, *subreddit_args, "--finalize", "--angles", str(run.angles_path), f"--emit={emit}", "--save-dir", str(run.work_dir))
         return Hot30Commands(nominate=nominate, judge=judge, finalize=finalize)
 
     def deepseek_judge_request(self, nominations: Mapping[str, Any]) -> dict[str, Any]:
@@ -403,19 +424,9 @@ class Hot30Adapter:
 
     @staticmethod
     def _http_transport(method: str, url: str, headers: dict[str, str], payload: dict[str, Any]):
-        from .deepseek import HttpResponse
+        from .deepseek import openai_http_transport
 
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers=headers,
-            method=method,
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                return HttpResponse(response.status, response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read().decode("utf-8", errors="replace"))
+        return openai_http_transport(method, url, headers, payload)
 
     def _judge_nominations(self, nominations: Mapping[str, Any], environment: Mapping[str, str]) -> Mapping[str, Any]:
         if self._judge is not None:
@@ -463,9 +474,11 @@ class Last30DaysAdapter(Hot30Adapter):
         commands = self.protocol_commands(run, domain=topic, emit=emit)
         environment = self._execution_environment(env)
         focus = " ".join(str(topic or "").split())
+        vendor_domain = _vendor_discovery_domain(focus)
         fallback = (
             self.python_executable, str(self.vendor.script_path), "--discover",
-            *( (focus,) if focus else () ), f"--emit={emit}", "--save-dir", str(run.work_dir),
+            *( (vendor_domain,) if vendor_domain else () ), f"--emit={emit}", "--save-dir", str(run.work_dir),
+            "--subreddits", ",".join(DEFAULT_HOT30_SUBREDDITS),
         )
 
         def artifacts_for(brief: str, trends: Mapping[str, Any], source_status: Mapping[str, Any]) -> dict[str, str]:
@@ -539,11 +552,17 @@ class Last30DaysAdapter(Hot30Adapter):
                 }
             trends = {"status": "unknown", "trends": [], "reason": "host_judgment_unavailable"}
             source_status = {"status": "unknown", "reason": "host_judgment_unavailable"}
-            message = (
-                "DeepSeek未配置，已降级为单次扫描；趋势不可用。"
-                if isinstance(error, Hot30ModelUnavailable)
-                else "模型判断不可用，已降级为单次扫描；趋势不可用。"
-            )
+            if isinstance(error, Hot30ModelUnavailable):
+                # A configured gateway can still fail at the transport or
+                # response-validation boundary.  Do not misreport that as a
+                # missing key; operators need the actionable distinction.
+                message = (
+                    "DeepSeek调用失败，已降级为单次扫描；趋势不可用。"
+                    if environment.get("DEEPSEEK_API_KEY")
+                    else "DeepSeek未配置，已降级为单次扫描；趋势不可用。"
+                )
+            else:
+                message = "模型判断不可用，已降级为单次扫描；趋势不可用。"
             return {
                 "mode": "hot30", "status": "degraded", "stage": "hot30_degraded", "focus": focus,
                 "paths": run.as_dict(), "artifacts": artifacts_for(brief, trends, source_status),

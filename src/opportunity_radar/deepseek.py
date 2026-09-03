@@ -4,7 +4,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 from typing import Any
+import urllib.error
+import urllib.request
 
 from .collector import ThreadDocument
 
@@ -79,6 +84,186 @@ class DeepSeekError(RuntimeError):
 
 
 HttpTransport = Callable[[str, str, dict[str, str], dict[str, Any]], HttpResponse]
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _powershell_executable() -> str | None:
+    """Return a locally available Schannel-backed PowerShell executable."""
+    if not _is_windows():
+        return None
+    return shutil.which("pwsh") or shutil.which("powershell")
+
+
+def _curl_executable() -> str | None:
+    """Return the Windows Schannel-backed curl shipped with modern Windows."""
+    if not _is_windows():
+        return None
+    return shutil.which("curl.exe") or shutil.which("curl")
+
+
+def _curl_config_value(value: str) -> str:
+    """Escape a value for curl's double-quoted config-file syntax."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _curl_http_transport(
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
+    body: bytes,
+) -> HttpResponse | None:
+    """Send the request through curl without putting the bearer token in argv.
+
+    The request JSON is held in a short-lived temp file while the curl config
+    (including the Authorization header) is piped on stdin.  This avoids both
+    a Windows OpenSSL handshake problem and credentials in process listings.
+    """
+    executable = _curl_executable()
+    if not executable:
+        return None
+    marker = "__OPPORTUNITY_RADAR_STATUS__"
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="opportunity-radar-", suffix=".json", delete=False) as handle:
+            handle.write(body)
+            temp_path = handle.name
+        config = "\n".join((
+            f'url = "{_curl_config_value(url)}"',
+            f'request = "{_curl_config_value(method)}"',
+            f'header = "Authorization: {_curl_config_value(headers.get("Authorization", ""))}"',
+            f'header = "Content-Type: {_curl_config_value(headers.get("Content-Type", "application/json"))}"',
+            f'data-binary = "@{_curl_config_value(temp_path)}"',
+            f'write-out = "\\n{marker}:%{{http_code}}"',
+            "",
+        )).encode("utf-8")
+        completed = subprocess.run(
+            (executable, "--silent", "--show-error", "--config", "-"),
+            input=config,
+            capture_output=True,
+            timeout=125,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+    if completed.returncode != 0:
+        return None
+    output = completed.stdout.decode("utf-8", errors="replace")
+    body_text, separator, status_text = output.rpartition(f"\n{marker}:")
+    if not separator:
+        return None
+    try:
+        status = int(status_text.strip())
+    except ValueError:
+        return None
+    return HttpResponse(status, body_text)
+
+
+def _powershell_http_transport(
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
+    body: bytes,
+) -> HttpResponse | None:
+    """Retry a Windows TLS request through .NET/Schannel.
+
+    Some corporate gateways accept Windows Schannel but fail during Python's
+    OpenSSL handshake.  The request body is piped over stdin and the bearer
+    token is supplied only through the child environment; neither is put in
+    the process command line or persisted to a project file.
+    """
+    executable = _powershell_executable()
+    if not executable:
+        return None
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$requestBody = [Console]::In.ReadToEnd()
+$requestHeaders = @{
+  Authorization = $env:OPPORTUNITY_RADAR_HTTP_AUTH
+  'Content-Type' = $env:OPPORTUNITY_RADAR_HTTP_CONTENT_TYPE
+}
+try {
+  $response = Invoke-WebRequest -UseBasicParsing -Uri $env:OPPORTUNITY_RADAR_HTTP_URL -Method $env:OPPORTUNITY_RADAR_HTTP_METHOD -Headers $requestHeaders -Body $requestBody -TimeoutSec 120 -ErrorAction Stop
+  $result = [ordered]@{ status = [int]$response.StatusCode; body = [string]$response.Content }
+} catch {
+  $status = 0
+  $content = [string]$_.Exception.Message
+  if ($_.Exception.Response) {
+    try {
+      $status = [int]$_.Exception.Response.StatusCode
+      $stream = $_.Exception.Response.GetResponseStream()
+      if ($stream) {
+        $reader = [IO.StreamReader]::new($stream)
+        $content = $reader.ReadToEnd()
+        $reader.Dispose()
+      }
+    } catch { }
+  }
+  $result = [ordered]@{ status = $status; body = $content }
+}
+$result | ConvertTo-Json -Compress
+""".strip()
+    child_environment = dict(os.environ)
+    child_environment.update({
+        "OPPORTUNITY_RADAR_HTTP_URL": url,
+        "OPPORTUNITY_RADAR_HTTP_METHOD": method,
+        "OPPORTUNITY_RADAR_HTTP_AUTH": headers.get("Authorization", ""),
+        "OPPORTUNITY_RADAR_HTTP_CONTENT_TYPE": headers.get("Content-Type", "application/json"),
+    })
+    try:
+        completed = subprocess.run(
+            (executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script),
+            input=body,
+            capture_output=True,
+            timeout=125,
+            check=False,
+            env=child_environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        envelope = json.loads(completed.stdout.decode("utf-8", errors="replace"))
+        return HttpResponse(int(envelope["status"]), str(envelope.get("body", "")))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def openai_http_transport(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> HttpResponse:
+    """POST JSON using urllib, with a Windows Schannel fallback for TLS errors."""
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method=method)
+    for name, value in headers.items():
+        request.add_header(name, value)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return HttpResponse(response.status, response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        return HttpResponse(error.code, error.read().decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        # curl uses Windows Schannel and is the most reliable path through
+        # the company's Higress gateway; PowerShell remains a second fallback
+        # for hosts where curl is unavailable.
+        fallback = _curl_http_transport(method, url, headers, body)
+        if fallback is None:
+            fallback = _powershell_http_transport(method, url, headers, body)
+        if fallback is not None:
+            return fallback
+        raise error
 
 
 class DeepSeekClient:

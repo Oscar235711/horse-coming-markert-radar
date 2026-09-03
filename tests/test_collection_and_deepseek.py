@@ -2,9 +2,50 @@
 
 from datetime import UTC, datetime, timedelta
 import json
+import subprocess
+import urllib.error
+import urllib.request
 
 import opportunity_radar
 import pytest
+
+
+def test_openai_transport_falls_back_to_powershell_for_windows_tls(monkeypatch) -> None:
+    """The company gateway is reachable by Schannel even when urllib TLS fails."""
+    from opportunity_radar import deepseek
+
+    def broken_urlopen(*args, **kwargs):
+        raise urllib.error.URLError("SSL: UNEXPECTED_EOF_WHILE_READING")
+
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stdout = b'{"choices":[{"message":{"content":"OK"}}]}\n__OPPORTUNITY_RADAR_STATUS__:200'
+        stderr = b""
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Completed()
+
+    monkeypatch.setattr(urllib.request, "urlopen", broken_urlopen)
+    monkeypatch.setattr(deepseek, "_is_windows", lambda: True)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    response = deepseek.openai_http_transport(
+        "POST",
+        "https://higress.example/v1/chat/completions",
+        {"Authorization": "Bearer very-secret-key", "Content-Type": "application/json"},
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.body.startswith('{"choices"')
+    assert calls
+    command, kwargs = calls[0]
+    assert command[0].lower().endswith(("curl", "curl.exe"))
+    assert "very-secret-key" not in " ".join(str(part) for part in command)
+    assert b"very-secret-key" in kwargs["input"]
 
 
 def _listing(

@@ -36,6 +36,7 @@ from .deepseek import (
     PostAnalysis,
     TopicCandidate,
     AnalysisField,
+    openai_http_transport,
 )
 from .evidence import apply_diesel_evidence_gate, classify_diesel_evidence
 from .models import CollectionScope, Community, CommunityCatalog, RadarConfig, RunManifest
@@ -1480,18 +1481,7 @@ class RadarCliApp:
             process.communicate()
 
     def _http_transport(self, method: str, url: str, headers: dict[str, str], payload: dict[str, Any]) -> HttpResponse:
-        import urllib.request
-        import urllib.error
-
-        data = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(url, data=data, method=method)
-        for name, value in headers.items():
-            request.add_header(name, value)
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                return HttpResponse(response.status, response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            return HttpResponse(error.code, error.read().decode("utf-8", errors="replace"))
+        return openai_http_transport(method, url, headers, payload)
 
     def _deepseek_environment(self) -> Mapping[str, str]:
         return {

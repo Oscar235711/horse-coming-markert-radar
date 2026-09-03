@@ -8,6 +8,7 @@ import subprocess
 from threading import Event
 
 from opportunity_radar.last30days_adapter import (
+    DEFAULT_HOT30_SUBREDDITS,
     Hot30Adapter,
     Last30DaysAdapter,
     project_root,
@@ -70,6 +71,20 @@ def test_protocol_commands_keep_secrets_out_of_arguments_and_use_a_shared_save_d
     assert "--finalize" in commands.finalize
     assert all(str(run.work_dir) in command for command in commands.as_tuple())
     assert all("top-secret" not in " ".join(command) for command in commands.as_tuple())
+
+
+def test_protocol_commands_expand_chinese_focus_and_target_seed_subreddits(tmp_path: Path) -> None:
+    adapter = Hot30Adapter(project_root=project_root(), runs_root=tmp_path)
+    run = adapter.prepare_run("hot30-reddit-seeds")
+
+    commands = adapter.protocol_commands(run, domain="北美柴油皮卡改装")
+
+    assert commands.nominate[3].lower().startswith("north american diesel pickup")
+    assert "diesel pickup" in " ".join(commands.nominate).lower()
+    assert "--subreddits" in commands.nominate
+    subreddits = commands.nominate[commands.nominate.index("--subreddits") + 1]
+    assert subreddits == ",".join(DEFAULT_HOT30_SUBREDDITS)
+    assert all("--subreddits" in command for command in commands.as_tuple())
 
 
 class _FakeProcess:
