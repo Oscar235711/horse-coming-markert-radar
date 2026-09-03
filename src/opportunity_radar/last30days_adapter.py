@@ -520,7 +520,8 @@ class Last30DaysAdapter(Hot30Adapter):
                 for value in source_status.values()
                 if isinstance(value, Mapping)
             )
-            judged_count = len(judgments) if isinstance(judgments, list) else 0
+            judged_rows = judgments.get("judgments") if isinstance(judgments, Mapping) else None
+            judged_count = len(judged_rows) if isinstance(judged_rows, list) else 0
             topic_count = len(trends.get("trends", ())) if isinstance(trends.get("trends"), list) else 0
             return {
                 "mode": "hot30", "status": "completed", "stage": "exported", "focus": focus,
