@@ -264,16 +264,113 @@ class Hot30Adapter:
         return artifacts
 
     @staticmethod
-    def _write_html_brief(path: Path, brief: str) -> Path:
-        """Render the engine's compact markdown as inert text in a local HTML view."""
+    def _write_html_brief(path: Path, brief: str, trends: Mapping[str, Any] | None = None) -> Path:
+        """Render a readable visual brief from the canonical projected trends.
+
+        The vendored Skill's markdown remains available below the fold for
+        auditability, but it is no longer the primary user-facing report.
+        Every visible metric and evidence link comes from ``trends.json``.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
-            "<title>Hot 30 brief</title><body><pre>"
-            f"{html.escape(brief)}"
-            "</pre></body></html>",
-            encoding="utf-8",
+        projected = trends if isinstance(trends, Mapping) else {}
+        cards = projected.get("trends") if isinstance(projected.get("trends"), list) else []
+        source_status = projected.get("source_status") if isinstance(projected.get("source_status"), Mapping) else {}
+        evidence_count = sum(
+            len(card.get("evidence", ()))
+            for card in cards
+            if isinstance(card, Mapping) and isinstance(card.get("evidence"), list)
         )
+        source_labels = {"reddit": "Reddit", "x": "X", "hackernews": "Hacker News", "digg": "Digg"}
+        state_labels = {
+            "ok": "已获取",
+            "no-results": "无结果",
+            "skipped-unconfigured": "未配置",
+            "error": "获取失败",
+        }
+        source_items = []
+        for source, value in source_status.items():
+            if not isinstance(value, Mapping):
+                continue
+            label = source_labels.get(str(source).casefold(), str(source))
+            state = state_labels.get(str(value.get("state") or "unknown"), str(value.get("state") or "未知"))
+            count = value.get("items_returned")
+            count_text = f" · {int(count)} 条" if isinstance(count, (int, float)) else ""
+            source_items.append(
+                f'<div class="source-card"><div class="source-name">{html.escape(label)}</div>'
+                f'<div class="source-state">{html.escape(state)}{count_text}</div></div>'
+            )
+        source_html = "".join(source_items) or '<div class="empty">没有可展示的来源状态。</div>'
+
+        card_items = []
+        for index, card in enumerate(cards, start=1):
+            if not isinstance(card, Mapping):
+                continue
+            name = str(card.get("name") or "未命名热点")
+            cluster = str(card.get("cluster_id") or "未分组")
+            evidence = card.get("evidence") if isinstance(card.get("evidence"), list) else []
+            evidence_rows = []
+            seen_urls: set[str] = set()
+            for item in evidence:
+                if not isinstance(item, Mapping):
+                    continue
+                url = str(item.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                source = source_labels.get(str(item.get("source") or "").casefold(), str(item.get("source") or "来源未知"))
+                title = str(item.get("title") or "打开原始证据")
+                published = str(item.get("published_at") or "日期未知")
+                evidence_rows.append(
+                    f'<li><span class="evidence-meta">{html.escape(source)} · {html.escape(published)}</span>'
+                    f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noreferrer">{html.escape(title)}</a></li>'
+                )
+            evidence_html = "".join(evidence_rows) or '<li class="muted">当前没有可回溯链接。</li>'
+            source_names = sorted({
+                source_labels.get(str(item.get("source") or "").casefold(), str(item.get("source") or "来源未知"))
+                for item in evidence if isinstance(item, Mapping) and item.get("source")
+            })
+            source_tags = "".join(f'<span class="tag">{html.escape(label)}</span>' for label in source_names)
+            card_items.append(
+                f'<article class="topic-card"><div class="topic-top"><span class="rank">{index:02d}</span>'
+                f'<div><h3>{html.escape(name)}</h3><div class="topic-meta">{html.escape(cluster)} · '
+                f'{len(seen_urls)} 条证据 {source_tags}</div></div></div>'
+                f'<div class="topic-summary">这是本轮模型筛选后保留的热点提名。请从下方证据链接进入原始讨论，结合上下文判断是否值得继续研究。</div>'
+                f'<details class="evidence"><summary>查看证据（{len(seen_urls)} 条）</summary><ul>{evidence_html}</ul></details></article>'
+            )
+        cards_html = "".join(card_items) or '<div class="empty">当前没有通过判断的热点。请检查来源状态或调整研究主题。</div>'
+        window = ""
+        for line in str(brief or "").splitlines():
+            if line.casefold().startswith("window:"):
+                window = line.split(":", 1)[1].strip()
+                break
+        source_count = len(source_status)
+        html_document = f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>近30天热点雷达</title>
+<style>
+*{{box-sizing:border-box}}:root{{--ink:#2c2925;--muted:#7b746c;--line:#e5ddd4;--paper:#fffdf9;--accent:#bd5d30;--soft:#f5efe8;--green:#36795d}}
+body{{margin:0;background:#f4f0ea;color:var(--ink);font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}}
+.shell{{max-width:1080px;margin:0 auto;padding:38px 24px 64px}}.eyebrow{{color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}}
+h1{{font:700 clamp(30px,5vw,46px)/1.08 Georgia,serif;margin:8px 0 8px}}h2{{font-size:19px;margin:0}}h3{{font-size:18px;margin:0 0 4px;line-height:1.3}}
+.subtitle{{color:var(--muted);max-width:720px;margin:0 0 24px}}.panel{{background:rgba(255,253,249,.94);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 12px 30px #604a3212;margin-top:16px}}
+.hero{{display:flex;justify-content:space-between;gap:24px;align-items:flex-end}}.hero-mark{{width:64px;height:64px;border:1px solid #d2bca8;border-radius:50%;display:grid;place-items:center;color:var(--accent);font:700 25px Georgia,serif;background:#fffaf4}}
+.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:22px}}.metric{{background:var(--soft);border-radius:12px;padding:13px 14px}}.metric b{{display:block;font-size:23px;line-height:1.1}}.metric span{{font-size:12px;color:var(--muted)}}
+.section-head{{display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:14px}}.section-note{{font-size:12px;color:var(--muted)}}.sources{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}}.source-card{{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}}.source-name{{font-weight:750}}.source-state{{color:var(--green);font-size:12px;margin-top:3px}}
+.topics{{display:grid;gap:12px}}.topic-card{{background:#fff;border:1px solid var(--line);border-radius:15px;padding:17px 18px}}.topic-top{{display:flex;gap:13px;align-items:flex-start}}.rank{{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:#f8e6d8;color:var(--accent);font-weight:800;font-size:12px;flex:none}}.topic-meta{{font-size:12px;color:var(--muted);display:flex;gap:7px;flex-wrap:wrap;align-items:center}}.tag{{border:1px solid #e4cfc1;border-radius:999px;padding:1px 7px;color:#946145;background:#fff9f4;font-size:11px}}.topic-summary{{color:#5e574f;margin:13px 0 8px;background:#faf6f1;border-radius:9px;padding:10px 12px;font-size:13px}}
+details{{border-top:1px solid #eee8e1;padding-top:9px}}summary{{cursor:pointer;color:var(--accent);font-weight:700;font-size:13px}}ul{{margin:9px 0 0;padding-left:19px}}li{{margin:8px 0}}li a{{color:#8d451f;text-decoration:none}}li a:hover{{text-decoration:underline}}.evidence-meta{{display:block;color:var(--muted);font-size:11px}}.muted,.empty{{color:var(--muted)}}.empty{{padding:18px;border:1px dashed var(--line);border-radius:12px;text-align:center}}
+.raw{{margin-top:18px}}.raw pre{{white-space:pre-wrap;word-break:break-word;color:#756e66;background:#faf8f5;border-radius:10px;padding:15px;max-height:420px;overflow:auto;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}}.footer{{color:var(--muted);font-size:12px;margin-top:24px}}
+@media(max-width:720px){{.shell{{padding:25px 14px 46px}}.hero{{align-items:flex-start}}.hero-mark{{display:none}}.metrics,.sources{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+</style></head><body><main class="shell">
+<div class="eyebrow">SuncentAuto · Opportunity Radar</div><div class="hero"><div><h1>近30天热点雷达</h1>
+<p class="subtitle">多平台发现 → 模型判断 → 证据下钻。这里展示的是本轮保留下来的热点提名，不把原始抓取文本直接当成结论。</p></div><div class="hero-mark">30</div></div>
+<section class="panel"><div class="section-head"><h2>本轮概览</h2><span class="section-note">{html.escape(window or "时间窗口未记录")}</span></div>
+<div class="metrics"><div class="metric"><b>{len(cards)}</b><span>保留热点</span></div><div class="metric"><b>{evidence_count}</b><span>证据链接</span></div><div class="metric"><b>{source_count}</b><span>来源渠道</span></div><div class="metric"><b>{html.escape(str(projected.get("status") or "未知"))}</b><span>数据状态</span></div></div></section>
+<section class="panel"><div class="section-head"><h2>来源状态</h2><span class="section-note">不同来源独立显示，不代表全网覆盖率</span></div><div class="sources">{source_html}</div></section>
+<section class="panel"><div class="section-head"><h2>热点卡片</h2><span class="section-note">按 Skill 返回顺序展示 · 点击证据进入原始讨论</span></div><div class="topics">{cards_html}</div></section>
+<section class="panel raw"><details><summary>展开原始 last30days Skill 简报（用于复核）</summary><pre>{html.escape(brief or "当前没有原始简报")}</pre></details></section>
+<div class="footer">说明：本页只重排已有 Skill 结果，不新增事实。热点名称、来源和链接均来自同一份趋势数据；请在进入产品决策前进一步核验原帖上下文。</div>
+</main></body></html>"""
+        path.write_text(html_document, encoding="utf-8")
         return path
 
     def _execution_environment(self, supplied: Mapping[str, str] | None) -> dict[str, str]:
@@ -487,7 +584,7 @@ class Last30DaysAdapter(Hot30Adapter):
             trends_path = run.artifacts_dir / "trends.json"
             source_path = run.artifacts_dir / "source_status.json"
             brief_md.write_text(brief, encoding="utf-8")
-            self._write_html_brief(brief_html, brief)
+            self._write_html_brief(brief_html, brief, trends)
             _json_file(trends_path, dict(trends))
             _json_file(source_path, dict(source_status))
             return {

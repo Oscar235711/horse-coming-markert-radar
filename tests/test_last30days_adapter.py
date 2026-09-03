@@ -156,6 +156,10 @@ def test_run_hot30_executes_host_judged_protocol_and_projects_evidence_trends(tm
     assert "--judgments" in calls[1]
     assert "--finalize" in calls[2]
     assert (output_dir / "brief.md").read_text(encoding="utf-8").startswith("# Hot 30")
+    visual_html = (output_dir / "brief.html").read_text(encoding="utf-8")
+    assert "热点卡片" in visual_html
+    assert "柴油拖挂 EGT" in visual_html
+    assert "原始 last30days Skill 简报" in visual_html
     trends = json.loads((output_dir / "trends.json").read_text(encoding="utf-8"))
     assert trends["status"] == "ok"
     assert trends["trends"][0]["cluster_id"] == "cluster-1"
