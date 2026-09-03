@@ -144,6 +144,14 @@ def test_run_hot30_executes_host_judged_protocol_and_projects_evidence_trends(tm
 
     assert result["status"] == "completed"
     assert result["stage"] == "exported"
+    assert result["progress"]["message"] == "近30天多平台热点研究已完成。"
+    assert result["counts"] == {
+        "candidate_count": 1,
+        "deep_read_count": 0,
+        "analyzed_posts": 0,
+        "topic_count": 1,
+        "failure_count": 0,
+    }
     assert ["--nominate-only" in command for command in calls] == [True, False, False]
     assert "--judgments" in calls[1]
     assert "--finalize" in calls[2]

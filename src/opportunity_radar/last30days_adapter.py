@@ -497,6 +497,7 @@ class Last30DaysAdapter(Hot30Adapter):
                 "source_status": str(source_path),
             }
 
+        nominations: Mapping[str, Any] = {}
         try:
             # Leg 1 intentionally happens even without model access: it creates
             # the canonical handoff bundle and retains the vendor's discovery
@@ -513,9 +514,25 @@ class Last30DaysAdapter(Hot30Adapter):
             brief = self._run_command(commands.finalize, environment=environment, cancel_event=cancel_event)
             trends = self._project_trends(nominations, pending)
             source_status = trends.get("source_status") if isinstance(trends.get("source_status"), Mapping) else {}
+            nomination_count = len(nominations.get("nominations", ())) if isinstance(nominations.get("nominations"), list) else 0
+            source_items = sum(
+                int(value.get("items_returned", 0) or 0)
+                for value in source_status.values()
+                if isinstance(value, Mapping)
+            )
+            judged_count = len(judgments) if isinstance(judgments, list) else 0
+            topic_count = len(trends.get("trends", ())) if isinstance(trends.get("trends"), list) else 0
             return {
                 "mode": "hot30", "status": "completed", "stage": "exported", "focus": focus,
                 "paths": run.as_dict(), "artifacts": artifacts_for(brief, trends, source_status),
+                "counts": {
+                    "candidate_count": max(source_items, nomination_count),
+                    "deep_read_count": 0,
+                    "analyzed_posts": judged_count,
+                    "topic_count": topic_count,
+                    "failure_count": 0,
+                },
+                "progress": {"stage": "exported", "message": "近30天多平台热点研究已完成。"},
                 "protocol": {"mode": "host_judged", "angles": "model" if angles["angles"] else "empty_no_safe_angle_generation"},
             }
         except Hot30Cancelled:
@@ -566,6 +583,13 @@ class Last30DaysAdapter(Hot30Adapter):
             return {
                 "mode": "hot30", "status": "degraded", "stage": "hot30_degraded", "focus": focus,
                 "paths": run.as_dict(), "artifacts": artifacts_for(brief, trends, source_status),
+                "counts": {
+                    "candidate_count": len(nominations.get("nominations", ())) if isinstance(nominations, Mapping) and isinstance(nominations.get("nominations"), list) else 0,
+                    "deep_read_count": 0,
+                    "analyzed_posts": 0,
+                    "topic_count": 0,
+                    "failure_count": 1,
+                },
                 "progress": {"stage": "hot30_degraded", "message": message},
                 "failures": [{"stage": "host_judgment", "message": message}],
                 "protocol": {"mode": "one_shot_fallback", "angles": "not_generated_without_host_judgment"},
