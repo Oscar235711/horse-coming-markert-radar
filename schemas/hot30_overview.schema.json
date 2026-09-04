@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Opportunity Radar Hot30 Chinese Overview",
+  "type": "object",
+  "required": ["status", "headline_zh", "executive_summary_zh", "data_snapshot", "topics", "watchlist"],
+  "properties": {
+    "status": {"enum": ["completed", "insufficient_evidence", "analysis_unavailable", "analysis_failed"]},
+    "headline_zh": {"type": "string"},
+    "executive_summary_zh": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+    "data_snapshot": {"type": "object"},
+    "discovery": {"type": "object", "properties": {
+      "status": {"type": "string"},
+      "stage": {"type": "string"},
+      "counts": {"type": "object"},
+      "artifacts": {"type": "object"}
+    }},
+    "topics": {"type": "array", "items": {"$ref": "#/$defs/topic"}},
+    "watchlist": {"type": "array", "items": {"$ref": "#/$defs/topic"}},
+    "limitations_zh": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "topic": {
+      "type": "object",
+      "required": ["topic_id", "title_zh", "evidence_ids", "evidence"],
+      "properties": {
+        "topic_id": {"type": "string"},
+        "title_zh": {"type": "string"},
+        "title_en": {"type": "string"},
+        "one_line_zh": {"type": "string"},
+        "discussion_zh": {"type": "string"},
+        "user_context_zh": {"type": "string"},
+        "pain_need_zh": {"type": "string"},
+        "current_response_zh": {"type": "string"},
+        "why_watch_zh": {"type": "string"},
+        "opportunity_hypothesis_zh": {"type": "string"},
+        "counter_signal_zh": {"type": "string"},
+        "heat": {
+          "type": "object",
+          "properties": {
+            "score": {"type": "number", "minimum": 0, "maximum": 100},
+            "label_zh": {"type": "string"},
+            "evidence_count": {"type": "integer", "minimum": 0},
+            "source_count": {"type": "integer", "minimum": 0},
+            "participant_count": {"type": "integer", "minimum": 0}
+          }
+        },
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  }
+}

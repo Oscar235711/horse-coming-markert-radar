@@ -111,15 +111,32 @@ class OpenAIClient(ReasoningClient):
         tools: list[dict[str, Any]] | None = None,
         response_mime_type: str | None = None,
     ) -> str:
-        del tools, response_mime_type
-        payload = {
-            "model": model,
-            "store": False,
-            "input": prompt,
-            "temperature": 0,
+        del tools
+        base_url = os.environ.get("OPENAI_BASE_URL", OPENAI_RESPONSES_URL).rstrip("/")
+        chat_style = os.environ.get("LAST30DAYS_OPENAI_API_STYLE", "").strip().lower() in {
+            "chat",
+            "chat_completions",
+            "openai_chat",
         }
+        if chat_style:
+            payload: dict[str, Any] = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+            }
+            if response_mime_type == "application/json":
+                payload["response_format"] = {"type": "json_object"}
+            endpoint = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
+        else:
+            payload = {
+                "model": model,
+                "store": False,
+                "input": prompt,
+                "temperature": 0,
+            }
+            endpoint = base_url
         response = http.post(
-            os.environ.get("OPENAI_BASE_URL", OPENAI_RESPONSES_URL),
+            endpoint,
             payload,
             headers={
                 "Authorization": f"Bearer {self.token}",

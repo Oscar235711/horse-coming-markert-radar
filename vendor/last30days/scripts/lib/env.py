@@ -182,9 +182,19 @@ def _check_file_permissions(path: Path) -> None:
 def load_env_file(path: Path) -> dict[str, str]:
     """Load environment variables from a file."""
     env = {}
-    if not path or not path.exists():
+    if not path:
         return env
-    _check_file_permissions(path)
+    try:
+        if not path.exists():
+            return env
+        _check_file_permissions(path)
+    except PermissionError as exc:
+        # The file may exist but be outside the current desktop sandbox's
+        # readable roots. Treat it like an optional config miss and continue
+        # with process/project environment instead of crashing the Skill.
+        sys.stderr.write(f"[last30days] WARNING: could not inspect optional config {path}: {exc}\n")
+        sys.stderr.flush()
+        return env
 
     # Prefer UTF-8 (utf-8-sig transparently strips a BOM written by Windows
     # editors like Notepad). Fall back to the locale decoder for a genuinely
@@ -195,6 +205,14 @@ def load_env_file(path: Path) -> dict[str, str]:
         text = path.read_text(encoding='utf-8-sig')
     except UnicodeDecodeError:
         text = path.read_text(encoding=locale.getpreferredencoding(False))
+    except PermissionError as exc:
+        # A desktop sandbox may expose a user-created global config path but
+        # deny the child process read access to it.  Environment variables and
+        # project-local config remain valid sources; an unreadable optional
+        # global file must not abort an otherwise usable Skill run.
+        sys.stderr.write(f"[last30days] WARNING: could not read optional config {path}: {exc}\n")
+        sys.stderr.flush()
+        return env
 
     for line in text.splitlines():
         line = line.strip()
@@ -677,14 +695,19 @@ def get_config(policy: ConfigLoadPolicy | None = None) -> dict[str, Any]:
     # the label; keychain is only reported when nothing else is configured).
     if project_env_path:
         config['_CONFIG_SOURCE'] = f'project:{project_env_path}'
-    elif CONFIG_FILE and CONFIG_FILE.exists():
-        config['_CONFIG_SOURCE'] = f'global:{CONFIG_FILE}'
-    elif keychain_env:
-        config['_CONFIG_SOURCE'] = 'keychain'
-    elif pass_env:
-        config['_CONFIG_SOURCE'] = 'pass'
     else:
-        config['_CONFIG_SOURCE'] = 'env_only'
+        try:
+            global_config_exists = bool(CONFIG_FILE and CONFIG_FILE.exists())
+        except PermissionError:
+            global_config_exists = False
+        if global_config_exists:
+            config['_CONFIG_SOURCE'] = f'global:{CONFIG_FILE}'
+        elif keychain_env:
+            config['_CONFIG_SOURCE'] = 'keychain'
+        elif pass_env:
+            config['_CONFIG_SOURCE'] = 'pass'
+        else:
+            config['_CONFIG_SOURCE'] = 'env_only'
     if ignored_project_env_path:
         config['_IGNORED_PROJECT_CONFIG'] = str(ignored_project_env_path)
         config['_IGNORED_PROJECT_CONFIG_KEYS'] = ignored_project_keys

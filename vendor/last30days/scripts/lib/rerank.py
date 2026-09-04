@@ -692,6 +692,14 @@ def _primary_entity(topic: str) -> str:
     stripped = _INTENT_MODIFIER_RE.sub(" ", topic)
     # Also collapse multiple spaces and strip punctuation.
     stripped = re.sub(r"\s+", " ", stripped).strip(" \t\r\n?.,:;!")
+    # A broad CJK research question (for example, "北美柴油皮卡改装") is a
+    # domain label, not a literal entity token that English source titles can
+    # be expected to contain. Treating it as one entity makes the fallback
+    # grounding gate hide every otherwise relevant English result. Mixed
+    # topics such as "Duramax 改装" still retain their Latin entity and keep
+    # the normal grounding check.
+    if stripped and re.search(r"[\u3400-\u9fff]", stripped) and not re.search(r"[A-Za-z0-9]", stripped):
+        return ""
     return stripped
 
 

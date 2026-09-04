@@ -39,6 +39,15 @@ def test_prepare_run_creates_project_scoped_temporary_files_without_persisting_k
     assert all("top-secret" not in path.read_text(encoding="utf-8") for path in run.root.rglob("*") if path.is_file())
 
 
+def test_skill_subprocess_environment_forces_utf8_on_windows(tmp_path: Path) -> None:
+    adapter = Last30DaysAdapter(project_root=project_root(), runs_root=tmp_path)
+
+    environment = adapter._execution_environment({})
+
+    assert environment["PYTHONUTF8"] == "1"
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+
+
 def test_finalize_projection_maps_source_status_brief_and_trends_artifacts(tmp_path: Path) -> None:
     adapter = Hot30Adapter(project_root=project_root(), runs_root=tmp_path)
     run = adapter.prepare_run("hot30-projection")
@@ -245,3 +254,99 @@ def test_run_hot30_times_out_and_terminates_the_active_subprocess(tmp_path: Path
     assert result["status"] == "failed"
     assert result["stage"] == "hot30_timed_out"
     assert processes[0].terminated is True
+
+
+def test_run_multiplatform_uses_the_normal_skill_pipeline_and_one_canonical_json(tmp_path: Path, monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    class SkillProcess(_FakeProcess):
+        def communicate(self, timeout=None):
+            payload = {
+                "topic": "柴油皮卡改装",
+                "source_status": {
+                    source: {"source": source, "state": "ok", "items_returned": 1}
+                    for source in ("reddit", "x", "youtube", "tiktok", "instagram")
+                },
+                "items_by_source": {
+                    source: [{"item_id": source + "-1", "source": source, "title": source, "url": "https://example.test/" + source}]
+                    for source in ("reddit", "x", "youtube", "tiktok", "instagram")
+                },
+                "ranked_candidates": [{"candidate_id": "c1", "source": "reddit", "title": "拖挂高温", "url": "https://example.test/reddit", "snippet": "问题"}],
+                "clusters": [{"cluster_id": "cl1", "title": "拖挂高温", "candidate_ids": ["c1"], "representative_ids": ["c1"], "sources": ["reddit"]}],
+            }
+            return json.dumps(payload, ensure_ascii=False), ""
+
+    def fake_popen(argv, **_kwargs):
+        calls.append(tuple(argv))
+        return SkillProcess(argv)
+
+    monkeypatch.setattr("opportunity_radar.last30days_adapter.subprocess.Popen", fake_popen)
+    output_dir = tmp_path / "skill" / "artifacts"
+    result = Last30DaysAdapter(project_root=project_root()).run_multiplatform("柴油皮卡改装", output_dir)
+
+    assert result["mode"] == "skill30"
+    assert result["status"] == "completed"
+    command = calls[0]
+    assert "--search" in command
+    assert command[command.index("--search") + 1] == "reddit,youtube,tiktok,instagram,hackernews,polymarket,github,digg,arxiv,techmeme,grounding"
+    assert "--deep" in command and "--days" in command and "--emit=json" in command
+    assert (output_dir / "analysis.json").is_file()
+    assert (output_dir / "brief.html").is_file()
+    assert "全平台 Skill" in (output_dir / "brief.html").read_text(encoding="utf-8")
+
+
+def test_run_multiplatform_does_not_count_expected_unconfigured_sources_as_failures(tmp_path: Path, monkeypatch) -> None:
+    class SkillProcess(_FakeProcess):
+        def communicate(self, timeout=None):
+            payload = {
+                "topic": "柴油皮卡改装",
+                "source_status": {
+                    "reddit": {"source": "reddit", "state": "no-results", "items_returned": 0},
+                    "x": {"source": "x", "state": "skipped-unconfigured", "items_returned": 0},
+                },
+                "items_by_source": {"reddit": [], "x": []},
+                "ranked_candidates": [],
+                "clusters": [],
+            }
+            return json.dumps(payload, ensure_ascii=False), ""
+
+    monkeypatch.setattr(
+        "opportunity_radar.last30days_adapter.subprocess.Popen",
+        lambda argv, **_kwargs: SkillProcess(argv),
+    )
+    result = Last30DaysAdapter(project_root=project_root()).run_multiplatform(
+        "柴油皮卡改装", tmp_path / "skill" / "artifacts",
+    )
+
+    assert result["counts"]["failure_count"] == 0
+
+
+def test_run_multiplatform_merges_discovery_surface_into_one_result(tmp_path: Path, monkeypatch) -> None:
+    """The single Hot30 entry must retain both Skill topic and discovery evidence."""
+    class SkillProcess(_FakeProcess):
+        def communicate(self, timeout=None):
+            return json.dumps({
+                "topic": "柴油皮卡改装",
+                "source_status": {"reddit": {"source": "reddit", "state": "no-results", "items_returned": 0}},
+                "items_by_source": {"reddit": []},
+                "ranked_candidates": [],
+                "clusters": [],
+            }, ensure_ascii=False), ""
+
+    monkeypatch.setattr(
+        "opportunity_radar.last30days_adapter.subprocess.Popen",
+        lambda argv, **_kwargs: SkillProcess(argv),
+    )
+    discovery = {
+        "status": "completed",
+        "stage": "exported",
+        "counts": {"candidate_count": 2, "topic_count": 1},
+        "artifacts": {"trends": str(tmp_path / "discovery-trends.json")},
+    }
+    monkeypatch.setattr(Last30DaysAdapter, "run_hot30", lambda self, *args, **kwargs: discovery)
+    output_dir = tmp_path / "skill" / "artifacts"
+    result = Last30DaysAdapter(project_root=project_root()).run_multiplatform("柴油皮卡改装", output_dir)
+
+    assert result["protocol"]["discovery"] == "merged"
+    assert result["discovery"]["status"] == "completed"
+    assert result["counts"]["candidate_count"] == 2
