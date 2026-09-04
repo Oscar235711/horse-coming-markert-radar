@@ -21,3 +21,4 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest-tmp-*/
+.pytest-tmp/
