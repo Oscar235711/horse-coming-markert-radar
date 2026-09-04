@@ -95,8 +95,38 @@ class RunManager:
             state["status"] = "queued"
             state["stage"] = "resume_queued"
             self._states[run_id] = state
-            target = self._resume_hot30 if state.get("mode") == "hot30" else self._resume
+            if state.get("mode") == "hot30":
+                target = self._resume_hot30
+            elif state.get("mode") == "skill30":
+                target = self._resume_skill30
+            else:
+                target = self._resume
             thread = Thread(target=target, args=(run_id,), daemon=True)
+            self._threads[run_id] = thread
+            thread.start()
+            return dict(state)
+
+    def reanalyze_run(self, run_id: str) -> dict[str, Any]:
+        """Queue a Hot30-only analysis replay without touching source platforms."""
+        self._validate_run_id(run_id)
+        with self._lock:
+            if any(self._is_active_state(state) for state in self._states.values()):
+                raise RuntimeError("已有任务正在运行，请等待完成后再重新分析。")
+            state = self.snapshot(run_id)
+            if state.get("mode") not in {"skill30", "hot30"}:
+                raise ValueError("只有 Hot30/Skill30 任务支持重新分析。")
+            artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), Mapping) else {}
+            analysis_path = artifacts.get("analysis_json")
+            if not analysis_path or not Path(str(analysis_path)).is_file():
+                raise FileNotFoundError("任务没有可重新分析的原始数据。")
+            self._cancel_events.setdefault(run_id, Event()).clear()
+            state["status"] = "queued"
+            state["stage"] = "hot30_extracting"
+            state["collection_started"] = False
+            state["progress"] = {"stage": "hot30_extracting", "message": "正在使用已保存数据重新生成中文热点总览。"}
+            self._states[run_id] = state
+            self._persist_state(run_id, state)
+            thread = Thread(target=self._reanalyze_skill30, args=(run_id,), daemon=True)
             self._threads[run_id] = thread
             thread.start()
             return dict(state)
@@ -284,6 +314,9 @@ class RunManager:
         if mode == "hot30":
             self._execute_hot30(run_id, focus)
             return
+        if mode == "skill30":
+            self._execute_skill30(run_id, focus)
+            return
         assert scope is not None
         self._set_state(run_id, status="running", stage="configured")
         try:
@@ -364,6 +397,50 @@ class RunManager:
                     failures=[{"stage": "hot30", "message": f"{type(error).__name__}: {error}"}],
                 )
 
+    def _execute_skill30(self, run_id: str, topic: str) -> None:
+        """Run the vendored Skill's normal multi-platform topic pipeline."""
+        self._set_state(
+            run_id,
+            status="running",
+            stage="skill30_configured",
+            progress={"stage": "skill30_configured", "message": "正在启动 last30days 全平台 Skill。"},
+        )
+        try:
+            from .last30days_adapter import Last30DaysAdapter
+            output_dir = self._runs_root / run_id / "artifacts"
+            try:
+                adapter = Last30DaysAdapter(environment=getattr(self._app, "_environment", None))
+            except TypeError:
+                # Keep compatibility with lightweight adapters used by older
+                # integrations and tests that expose no environment argument.
+                adapter = Last30DaysAdapter()
+            result = adapter.run_multiplatform(
+                topic,
+                output_dir,
+                cancel_event=self._cancel_events.get(run_id),
+            )
+            if not isinstance(result, Mapping):
+                raise ValueError("Last30DaysAdapter 必须返回 JSON 对象")
+            normalized = dict(result)
+            artifacts = normalized.get("artifacts")
+            if isinstance(artifacts, Mapping):
+                normalized["artifacts"] = dict(artifacts)
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._replace_state(run_id, normalized)
+                self._persist_state(run_id, self._states[run_id])
+        except Exception as error:
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._set_state(
+                    run_id,
+                    status="failed",
+                    stage="failed",
+                    failures=[{"stage": "skill30", "message": f"{type(error).__name__}: {error}"}],
+                )
+
     def _resume(self, run_id: str) -> None:
         self._set_state(run_id, status="running", stage="resuming")
         try:
@@ -382,6 +459,35 @@ class RunManager:
         """Retry the same multi-platform topic in its existing run directory."""
         state = self.snapshot(run_id)
         self._execute_hot30(run_id, str(state.get("focus") or state.get("research_question") or "北美柴油皮卡改装"))
+
+    def _resume_skill30(self, run_id: str) -> None:
+        state = self.snapshot(run_id)
+        self._execute_skill30(run_id, str(state.get("focus") or state.get("research_question") or "北美柴油皮卡改装"))
+
+    def _reanalyze_skill30(self, run_id: str) -> None:
+        state = self.snapshot(run_id)
+        self._set_state(run_id, status="running", stage="hot30_extracting")
+        try:
+            from .last30days_adapter import Last30DaysAdapter
+
+            artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), Mapping) else {}
+            analysis_path = Path(str(artifacts.get("analysis_json")))
+            result = Last30DaysAdapter(environment=getattr(self._app, "_environment", None)).reanalyze_saved(
+                analysis_path.parent,
+                sources=tuple(str(item) for item in state.get("selected_sources", []) if str(item).strip()) or None,
+                days=30,
+                cancel_event=self._cancel_events.get(run_id),
+            )
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._replace_state(run_id, result)
+                self._persist_state(run_id, self._states[run_id])
+        except Exception as error:
+            if self._is_cancelled(run_id):
+                self._mark_interrupted(run_id)
+            else:
+                self._set_state(run_id, status="failed", stage="failed", failures=[{"stage": "hot30_reanalysis", "message": f"{type(error).__name__}: {error}"}])
 
     def _replace_state(self, run_id: str, result: Mapping[str, Any]) -> None:
         with self._lock:
@@ -421,15 +527,15 @@ class RunManager:
 
     def _validate_payload(self, payload: Mapping[str, Any]) -> tuple[str, CollectionScope | None, tuple[str, ...], str, tuple[str, ...], str]:
         mode = str(payload.get("mode", "range")).casefold().strip()
-        if mode not in {"range", "hot30"}:
-            raise ValueError("mode 必须是 range 或 hot30。")
+        if mode not in {"range", "hot30", "skill30"}:
+            raise ValueError("mode 必须是 range、hot30 或 skill30。")
         raw_focus = payload.get("focus", payload.get("research_question", ""))
         if raw_focus is not None and not isinstance(raw_focus, str):
             raise ValueError("focus 必须是文本。")
         focus = " ".join(str(raw_focus or "").split()).strip()
         if len(focus) > 500:
             raise ValueError("focus 最多 500 个字符。")
-        if mode == "hot30":
+        if mode in {"hot30", "skill30"}:
             scope = None
             if not focus:
                 focus = "北美柴油皮卡改装"
@@ -718,6 +824,8 @@ def build_server(
                 parts = [part for part in path.split("/") if part]
                 if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "resume":
                     return self._json(manager.resume_run(parts[2]), status=HTTPStatus.ACCEPTED)
+                if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "reanalyze":
+                    return self._json(manager.reanalyze_run(parts[2]), status=HTTPStatus.ACCEPTED)
                 if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "cancel":
                     return self._json(manager.cancel_run(parts[2]), status=HTTPStatus.ACCEPTED)
                 if len(parts) == 4 and parts[:2] == ["api", "schedules"] and parts[3] == "toggle":

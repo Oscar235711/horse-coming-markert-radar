@@ -55,13 +55,14 @@ def _payload() -> dict:
     }
 
 
-def test_dashboard_offers_multiplatform_hot30_and_reddit_range_modes() -> None:
-    """The landing page must make the two research contracts explicit."""
+def test_dashboard_offers_one_skill_hotspot_entry_and_reddit_range_mode() -> None:
+    """The landing page must present the Skill hotspot flow as one entry."""
     page = dashboard_html(("Cummins", "Duramax"), ("cummins",))
 
-    assert 'data-mode="hot30"' in page
+    assert 'data-mode="skill30"' in page
     assert 'data-mode="range"' in page
-    assert "多平台热点" in page
+    assert "近30天热点检索" in page
+    assert "last30days Skill" in page
     assert "Reddit 时间范围研究" in page
     assert "四个核心社区只是后台种子" in page
     assert "已降级（趋势不可用）" in page
@@ -109,6 +110,90 @@ def test_hot30_accepts_missing_focus_and_uses_local_adapter(tmp_path, monkeypatc
     assert manager.artifact_path(created["run_id"], "brief_html").name == "brief.html"
     persisted = json.loads((tmp_path / created["run_id"] / "state.json").read_text(encoding="utf-8"))
     assert persisted["status"] == "completed"
+
+
+def test_skill30_accepts_missing_focus_and_dispatches_full_skill_adapter(tmp_path, monkeypatch) -> None:
+    calls = []
+    module = ModuleType("opportunity_radar.last30days_adapter")
+
+    class Adapter:
+        def run_multiplatform(self, topic, output_dir, **kwargs):
+            calls.append((topic, Path(output_dir), kwargs))
+            artifact_dir = Path(output_dir)
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            paths = {}
+            for key, name in (("analysis_json", "analysis.json"), ("brief_html", "brief.html"), ("brief_md", "brief.md"), ("trends", "trends.json"), ("source_status", "source_status.json")):
+                path = artifact_dir / name
+                path.write_text(name, encoding="utf-8")
+                paths[key] = str(path)
+            return {"mode": "skill30", "status": "completed", "stage": "exported", "artifacts": paths}
+
+    module.Last30DaysAdapter = Adapter
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", module)
+    manager = RunManager(app=object(), config_path="config.yaml", runs_root=tmp_path, now=lambda: datetime(2026, 8, 31, 12, tzinfo=UTC))
+    created = manager.create_run({"mode": "skill30"})
+    manager.wait(created["run_id"], timeout=2)
+    state = manager.snapshot(created["run_id"])
+
+    assert state["mode"] == "skill30"
+    assert state["status"] == "completed"
+    assert calls[0][0] == "北美柴油皮卡改装"
+    assert manager.artifact_path(created["run_id"], "brief_html").name == "brief.html"
+
+
+def test_dashboard_exposes_saved_evidence_reanalysis_action() -> None:
+    page = dashboard_html(("Cummins",), ("diesel",))
+
+    assert "/reanalyze" in page
+    assert "重新生成中文总览" in page
+
+
+def test_skill30_reanalysis_uses_saved_source_without_collecting(tmp_path, monkeypatch) -> None:
+    """Reanalysis must replay the saved artifact and never invoke collection."""
+    calls = []
+    module = ModuleType("opportunity_radar.last30days_adapter")
+
+    class Adapter:
+        def __init__(self, environment=None):
+            self.environment = environment
+
+        def reanalyze_saved(self, output_dir, **kwargs):
+            calls.append((Path(output_dir), kwargs))
+            output_dir = Path(output_dir)
+            analysis = output_dir / "analysis.json"
+            analysis.write_text(json.dumps({"overview": {"status": "completed", "topics": []}}), encoding="utf-8")
+            return {
+                "mode": "skill30",
+                "status": "completed",
+                "stage": "exported",
+                "counts": {"candidate_count": 4, "analyzed_posts": 4, "topic_count": 0},
+                "artifacts": {"analysis_json": str(analysis)},
+            }
+
+    module.Last30DaysAdapter = Adapter
+    monkeypatch.setitem(sys.modules, "opportunity_radar.last30days_adapter", module)
+    manager = RunManager(app=object(), config_path="config.yaml", runs_root=tmp_path)
+    run_id = "20260904T000000Z-replay"
+    artifact_dir = tmp_path / run_id / "artifacts"
+    artifact_dir.mkdir(parents=True)
+    source = artifact_dir / "analysis.json"
+    source.write_text(json.dumps({"ranked_candidates": [], "items_by_source": {}}), encoding="utf-8")
+    manager._states[run_id] = {
+        "run_id": run_id,
+        "mode": "skill30",
+        "status": "completed",
+        "stage": "exported",
+        "artifacts": {"analysis_json": str(source)},
+        "counts": {},
+    }
+
+    manager.reanalyze_run(run_id)
+    manager.wait(run_id, timeout=2)
+
+    state = manager.snapshot(run_id)
+    assert state["status"] == "completed"
+    assert state["counts"]["candidate_count"] == 4
+    assert calls and calls[0][0] == artifact_dir
 
 
 def test_hot30_resume_restarts_the_adapter_without_using_reddit_resume(tmp_path, monkeypatch) -> None:

@@ -33,6 +33,38 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ConfigPath) { $ConfigPath = Join-Path $repoRoot ".env" }
 $ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
 $radarConfig = Import-RadarEnv -ConfigPath $ConfigPath
+# Hermes keeps the company DeepSeek/Higress credentials in its own local
+# environment file.  Load only the provider settings into this process so the
+# website and its child Skill process use the same configured gateway.  The
+# values are never printed or written to run artifacts.
+$hermesEnvPath = Get-RadarSetting -Name "RADAR_HERMES_ENV" -Config $radarConfig
+if ($hermesEnvPath) {
+  $hermesEnvPath = [Environment]::ExpandEnvironmentVariables($hermesEnvPath)
+  if (-not [System.IO.Path]::IsPathRooted($hermesEnvPath)) { $hermesEnvPath = Join-Path $repoRoot $hermesEnvPath }
+  if (Test-Path -LiteralPath $hermesEnvPath) {
+    $hermesConfig = Import-RadarEnv -ConfigPath $hermesEnvPath
+    foreach ($name in @("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_FLASH_MODEL", "DEEPSEEK_PRO_MODEL", "SCRAPECREATORS_API_KEY")) {
+      if (-not $radarConfig.ContainsKey($name) -and $hermesConfig.ContainsKey($name)) {
+        $radarConfig[$name] = $hermesConfig[$name]
+      }
+    }
+  }
+}
+# The vendored last30days Skill uses its OpenAI-compatible provider interface
+# for planner/rerank.  Map the existing DeepSeek/Higress settings to that
+# interface without duplicating the secret in project files.
+if (-not (Get-RadarSetting -Name "OPENAI_API_KEY" -Config $radarConfig) -and $radarConfig.ContainsKey("DEEPSEEK_API_KEY")) {
+  $radarConfig["OPENAI_API_KEY"] = $radarConfig["DEEPSEEK_API_KEY"]
+}
+if (-not (Get-RadarSetting -Name "OPENAI_BASE_URL" -Config $radarConfig) -and $radarConfig.ContainsKey("DEEPSEEK_BASE_URL")) {
+  $radarConfig["OPENAI_BASE_URL"] = $radarConfig["DEEPSEEK_BASE_URL"]
+}
+if ($radarConfig.ContainsKey("OPENAI_API_KEY")) {
+  if (-not $radarConfig.ContainsKey("LAST30DAYS_REASONING_PROVIDER")) { $radarConfig["LAST30DAYS_REASONING_PROVIDER"] = "openai" }
+  if (-not $radarConfig.ContainsKey("LAST30DAYS_PLANNER_MODEL")) { $radarConfig["LAST30DAYS_PLANNER_MODEL"] = "deepseek-v4-flash" }
+  if (-not $radarConfig.ContainsKey("LAST30DAYS_RERANK_MODEL")) { $radarConfig["LAST30DAYS_RERANK_MODEL"] = "deepseek-v4-flash" }
+  if (-not $radarConfig.ContainsKey("LAST30DAYS_OPENAI_API_STYLE")) { $radarConfig["LAST30DAYS_OPENAI_API_STYLE"] = "chat_completions" }
+}
 
 $DataRoot = Resolve-RadarPath -Value $(if ($DataRoot) { $DataRoot } else { Get-RadarSetting -Name "RADAR_DATA_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\data"
 $OutputRoot = Resolve-RadarPath -Value $(if ($OutputRoot) { $OutputRoot } else { Get-RadarSetting -Name "RADAR_OUTPUT_ROOT" -Config $radarConfig }) -RepoRoot $repoRoot -DefaultRelative ".local\outputs"
@@ -66,7 +98,7 @@ function Invoke-RadarPythonCli {
   if ($radarConfig) {
     $propagatedNames += $radarConfig.Keys | Where-Object { $_ -match '^(RADAR_|DEEPSEEK_)' }
   }
-  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_LIBRARY_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE"
+  $propagatedNames += "RADAR_DATA_ROOT", "RADAR_OUTPUT_ROOT", "RADAR_TOOLS_ROOT", "RADAR_LIBRARY_ROOT", "RADAR_AGENT_REACH_HOME", "RADAR_AGENT_REACH_EXE", "RADAR_OPENCLI_EXE", "RADAR_NODE_EXE", "RADAR_PYTHON_EXE", "OPENAI_API_KEY", "OPENAI_BASE_URL", "LAST30DAYS_REASONING_PROVIDER", "LAST30DAYS_PLANNER_MODEL", "LAST30DAYS_RERANK_MODEL", "LAST30DAYS_OPENAI_API_STYLE", "SCRAPECREATORS_API_KEY"
   $propagatedNames = $propagatedNames | Sort-Object -Unique
 
   $previousValues = @{}

@@ -37,7 +37,7 @@ Opportunity Radar 是 SuncentAuto 的本地市场探索工具。它把 Reddit �
 要求：Windows、Python 3.12+、Node.js、已登录 Codex CLI、Chrome、OpenCLI 扩展，以及 Chrome 中已经登录的 Reddit 小号。
 
 ```powershell
-git clone -b feature/community-radar https://github.com/Oscar235711/horse-coming-markert-radar.git
+git clone https://github.com/Oscar235711/horse-coming-markert-radar.git
 cd horse-coming-markert-radar
 
 py -3.12 -m venv .venv
@@ -81,7 +81,7 @@ RADAR_CODEX_EXE=C:\你本机的路径\codex.exe
 ### 成员安装步骤
 
 ```powershell
-git clone -b feature/community-radar https://github.com/Oscar235711/horse-coming-markert-radar.git
+git clone https://github.com/Oscar235711/horse-coming-markert-radar.git
 cd horse-coming-markert-radar
 py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
@@ -112,7 +112,7 @@ opencli validate opportunity-reddit
 - 代码或配置修改：新建分支并提交 Pull Request，说明改动和测试结果。
 - 研究结果：把 `run_id`、HTML/Excel 文件路径和一句话结论发到团队群；默认不提交 Reddit 原始数据。
 - 词库和社区库：运行时会写入本机 `library/`。需要纳入团队基线时，由队长审核差异后再提交 `library/communities.json`、`library/topics.json` 或 `library/keywords.json`。
-- 队长合并后，成员执行 `git pull --rebase origin feature/community-radar`，再继续使用自己的 `.env` 和 Chrome 会话。
+- 队长合并后，成员执行 `git pull --rebase origin main`，再继续使用自己的 `.env` 和 Chrome 会话。
 
 ### 三人分工建议
 
@@ -130,7 +130,7 @@ opencli validate opportunity-reddit
 .\scripts\radar.ps1 doctor
 ```
 
-检查项包括 Python、OpenCLI、项目分页插件、Chrome Reddit 会话、四个社区、Codex、Node 和 Excel 环境。DeepSeek 是可选项，未配置不会阻塞默认流程。
+检查项包括 Python、OpenCLI、项目分页插件、Chrome Reddit 会话、四个社区、Codex、Node 和 Excel 环境。选择 DeepSeek 分析时必须配置公司 Higress 网关；未配置会保留采集结果并明确标记分析未完成，不会用规则模板冒充 VOC。
 
 Codex 单篇分析默认最多等待 180 秒；网络较慢时可在本机 `.env` 调大：
 
@@ -157,8 +157,8 @@ opencli opportunity-reddit range Cummins `
 
 首页固定提供两个入口：
 
-- “近 30 天多平台热点”：调用仓库内完整的 `vendor/last30days` 引擎，覆盖已配置的平台来源，默认主题为北美柴油皮卡改装；不要求填写研究问题。
-- “Reddit 时间范围研究”：保留 Opportunity Radar 的社区种子、全站关键词、日期边界和深读分析流程；可选填研究问题和 focus。
+- “近 30 天热点检索”：一个按钮同时运行 Skill 的 discovery 和 normal-topic 多平台流程，按 canonical URL/平台 ID 去重后生成一份中文总览；可用来源会直接采集，需要账号/Key 的来源会在状态卡中明确说明。
+- “自定义时间范围研究”：保留 Opportunity Radar 的社区种子、全站关键词、日期边界和深读分析流程；可选填研究问题和 focus。
 
 `vendor/last30days` 是完整多平台引擎快照（发现、来源适配器、doctor、研究库、报告与降级协议），不是 Reddit 专用模板。项目通过 `Last30DaysAdapter` 从仓库相对路径调用它，因此不依赖任何成员电脑上的个人 skill 目录。
 
@@ -191,9 +191,15 @@ opencli opportunity-reddit range Cummins `
 
 ### 多平台来源与配置
 
-多平台热点的实际来源由 `vendor/last30days` 的配置和本机认证决定。可通过 `LAST30DAYS_DEFAULT_SEARCH` 固定来源集合（逗号分隔），或在网页/CLI 中使用引擎支持的来源配置；未配置的来源不会被伪装成成功，报告会标为 `off`、`warn`、`rate_limited`、`failed` 或 `no-results` 等状态。运行前可在 vendor 目录执行无网络检查：
+多平台热点的实际来源由 `vendor/last30days` 的配置和本机认证决定。“近30天热点检索”走 Skill 的正常主题管道，项目默认请求 Reddit、YouTube、TikTok、Instagram、Hacker News、Polymarket、GitHub、Digg、arXiv、Techmeme 和 Web；X 不在默认来源中，也不会被项目自动调用。可通过 `RADAR_LAST30DAYS_SOURCES`（项目适配器）或 `LAST30DAYS_DEFAULT_SEARCH`（引擎全局配置）固定来源集合。未配置的来源不会被伪装成成功，报告会标为未配置、限流、失败或无结果。
 
-基础发现来源为 Reddit、Hacker News、Digg 和 X；引擎还支持按配置启用 Perplexity、LinkedIn、Trustpilot、Amazon、Threads、Pinterest、Telegram 等扩展来源。只有实际启用且通过认证/可用性检查的来源才会参与运行。
+Skill 的基础来源为 Reddit、Hacker News 和 Digg，并支持 YouTube、TikTok、Instagram；X 是 Skill 支持但本项目明确禁用的可选来源。引擎还支持按配置启用 Perplexity、LinkedIn、Trustpilot、Amazon、Threads、Pinterest、Telegram 等扩展来源。只有实际启用且通过认证/可用性检查的来源才会参与运行。
+
+当前项目已将 Windows 所需的 Go 运行时、`yt-dlp`、Digg、arXiv 和 Techmeme CLI 配置到本机/项目环境中；网站进程会自动把项目虚拟环境中的 CLI 加入 Skill 子进程 PATH。项目启动脚本会读取 `RADAR_HERMES_ENV` 指向的 Hermes `.env`，把现有 Higress DeepSeek 配置桥接为 Skill 所需的 OpenAI-compatible Chat Completions 协议，密钥不会写入仓库或报告。TikTok/Instagram 仍需 `SCRAPECREATORS_API_KEY`，没有该凭据时报告会显示“需配置”；X 不会被项目调用。
+
+如需开通 TikTok/Instagram，只需把 `SCRAPECREATORS_API_KEY=...` 写入项目本机 `.env`（或 `RADAR_HERMES_ENV` 指向的本机环境文件），重启网站即可。该变量会以进程环境传给 Skill，不会写入运行产物。
+
+全平台检索可能受到各来源响应速度和限流影响，项目默认给单轮 Skill 900 秒并持续写入任务状态；“未配置”是账号型来源的正常状态，不计入失败数。
 
 ```powershell
 .\.venv\Scripts\python vendor/last30days/scripts/last30days.py doctor
@@ -223,6 +229,19 @@ DEEPSEEK_PRO_MODEL（例如 deepseek-reasoner）
 ```
 
 缺少 DeepSeek 时，Reddit 时间范围流程仍可按既有 Codex/rules 后备运行；多平台热点会完成一次真实的单次扫描，并明确返回 `degraded`，趋势标为 `unknown`，不会凭空生成趋势。来源失败或限流同样会保留 source status 和失败原因，不能把部分覆盖描述为全量结果。
+
+### 全平台 Skill CLI
+
+网页之外，也可以直接运行完整 Skill 主题管道：
+
+```powershell
+radar skill30 --run-id demo --topic "北美柴油皮卡改装" --days 30 --dry-run
+radar skill30 --run-id demo --topic "北美柴油皮卡改装" --days 30
+```
+
+默认输出到 `.local/runs/skill30/<run_id>/artifacts/`：`analysis.json`（唯一事实源）、`brief.html`、`brief.md`、`trends.json` 和 `source_status.json`。如需缩小来源集合，可传 `--sources reddit,youtube,tiktok,instagram,hackernews`；Digg 是内容聚合源，不是汽车社区，只有确有需要时再加入。
+
+如果采集已经完成但中文总览为空或希望更换分析提示词，可在首页任务卡点击“重新生成中文总览”。该操作只读取同一任务下 `work/source_data.json` 和本地缓存，不重新访问 Reddit 或其它平台；旧版 `analysis.json`、`brief.html`、`brief.md` 会保留为 `*.pre-overview.*` 备份。重新分析完成后，任务卡会更新为新的中文 `analysis.json`、`brief.html` 和 `brief.md`。
 
 ## 5. 命令行运行
 

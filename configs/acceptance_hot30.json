@@ -1,0 +1,19 @@
+{
+  "topic": "北美柴油皮卡改装",
+  "days": 30,
+  "mode": "skill30",
+  "sources": [
+    "reddit",
+    "youtube",
+    "tiktok",
+    "instagram",
+    "hackernews",
+    "polymarket",
+    "github",
+    "digg",
+    "arxiv",
+    "techmeme",
+    "grounding"
+  ],
+  "notes": "X 不在项目默认来源；需要账号或 API Key 的来源必须在 source_status 中如实显示。"
+}

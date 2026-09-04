@@ -10,12 +10,13 @@ import sys
 from typing import Any
 
 from .cli_app import RadarCliApp
-from .last30days_adapter import DEFAULT_HOT30_DOMAIN, Hot30Adapter, Last30DaysAdapter, project_root
+from .last30days_adapter import DEFAULT_HOT30_DOMAIN, DEFAULT_SKILL_SOURCES, Hot30Adapter, Last30DaysAdapter, project_root
 from .models import CollectionScope
 from .server import serve_local
 
 
 DEFAULT_HOT30_RUNS_ROOT = Path(".local") / "runs" / "hot30"
+DEFAULT_SKILL30_RUNS_ROOT = Path(".local") / "runs" / "skill30"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
     hot30_run.add_argument("--runs-root")
     hot30_run.add_argument("--dry-run", action="store_true", help="只输出三阶段命令，不启动采集")
     hot30_run.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
+
+    skill_parser = subparsers.add_parser("skill30", help="运行 vendored last30days Skill 的全平台主题检索")
+    skill_parser.add_argument("--run-id", required=True)
+    skill_parser.add_argument("--topic", default=DEFAULT_HOT30_DOMAIN)
+    skill_parser.add_argument("--days", type=int, default=30)
+    skill_parser.add_argument("--sources", default="", help="逗号分隔来源；默认使用项目 Skill 来源集合（不含 X）")
+    skill_parser.add_argument("--runs-root")
+    skill_parser.add_argument("--dry-run", action="store_true")
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--config", default="configs/diesel_90d.yaml")
@@ -112,6 +121,8 @@ def _dispatch(app: RadarCliApp, arguments: argparse.Namespace) -> dict[str, Any]
         return app.doctor()
     if arguments.command == "hot30":
         return _dispatch_hot30(arguments)
+    if arguments.command == "skill30":
+        return _dispatch_skill30(arguments)
     if arguments.command == "serve":
         return serve_local(
             app,
@@ -224,3 +235,22 @@ def _dispatch_hot30(arguments: argparse.Namespace) -> dict[str, Any]:
     # the configured runs root).
     output_dir = adapter.prepare_run(arguments.run_id).artifacts_dir
     return adapter.run_hot30(arguments.domain, output_dir, emit="compact")
+
+
+def _dispatch_skill30(arguments: argparse.Namespace) -> dict[str, Any]:
+    runs_root = Path(arguments.runs_root) if arguments.runs_root else project_root() / DEFAULT_SKILL30_RUNS_ROOT
+    adapter = Last30DaysAdapter(project_root=project_root(), runs_root=runs_root)
+    run = adapter.prepare_run(arguments.run_id)
+    sources = tuple(value.strip().lower() for value in arguments.sources.split(",") if value.strip()) or None
+    if arguments.dry_run:
+        return {
+            "status": "planned",
+            "mode": "skill30",
+            "run_id": arguments.run_id,
+            "topic": " ".join(str(arguments.topic or "").split()),
+            "days": max(1, arguments.days),
+            "sources": list(sources or DEFAULT_SKILL_SOURCES),
+            "paths": {key: _portable_path(value, root=project_root(), runs_root=adapter.runs_root) for key, value in run.as_dict().items()},
+            "command": ["python", "vendor/last30days/scripts/last30days.py", str(arguments.topic), "--search", ",".join(sources or DEFAULT_SKILL_SOURCES), "--deep", "--days", str(max(1, arguments.days)), "--emit=json", "--json-profile=raw"],
+        }
+    return adapter.run_multiplatform(arguments.topic, run.artifacts_dir, days=arguments.days, sources=sources)

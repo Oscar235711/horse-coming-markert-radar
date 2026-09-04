@@ -4,7 +4,7 @@
 
 ```text
 start_date, end_date       inclusive UTC calendar dates, at most 365 days
-communities                one or more approved catalog names
+communities                one or more seed/catalog names; evidence-qualified discoveries join the next run automatically
 keywords                   optional subset of active project keywords; empty means the configured diesel dictionary plus active library
 depth                      quick, standard, deep, or complete
 analysis_engine            deepseek for the production workflow; codex only for a local fallback explicitly selected by the user
@@ -28,7 +28,7 @@ The run directory is `.local/runs/<run_id>/`. Raw files are immutable evidence. 
 
 ## Data expansion loop
 
-The community catalog is the initial surface, not a claim that only four communities exist. Search results can record observed communities and Codex can discover candidate terms, but those candidates remain in the project library as observed/review rows until the configured promotion rule is met. Every later run loads the active rows. A schedule therefore gets a growing, traceable vocabulary without editing code.
+The community catalog is the initial surface, not a claim that only four communities exist. Search results can record observed communities and DeepSeek/Codex can discover candidate terms, but those candidates remain in the project library as observed/review rows until the configured promotion rule is met. Every later run loads only active rows. A schedule therefore gets a growing, traceable vocabulary without editing code.
 
 ## Rate limiting
 
