@@ -5,6 +5,7 @@ import json
 
 import opportunity_radar
 from opportunity_radar.cli import main
+from opportunity_radar.cli_app import _run_coverage_status
 
 
 def _listing(post_id: str, *, created_at: datetime, surface: str = "new") -> dict:
@@ -20,6 +21,14 @@ def _listing(post_id: str, *, created_at: datetime, surface: str = "new") -> dic
         "num_comments": 6,
         "source_surface": surface,
     }
+
+
+def test_final_coverage_status_is_partial_when_any_query_did_not_reach_boundary() -> None:
+    scope = opportunity_radar.CollectionScope(
+        start_date=date(2025, 9, 1), end_date=date(2026, 8, 31), depth="complete"
+    )
+    assert _run_coverage_status(scope, {"Cummins": {"status": "complete"}}, {"diesel": {"status": "partial"}}) == "partial"
+    assert _run_coverage_status(scope, {"Cummins": {"status": "complete"}}, {"diesel": {"status": "complete"}}) == "completed"
 
 
 def test_range_collection_emits_exact_dates_and_coverage(tmp_path) -> None:
@@ -130,6 +139,30 @@ def test_range_collection_accepts_plugin_complete_hint_when_subreddit_has_no_pos
     )
 
     assert result.coverage["Cummins"].status == "complete"
+
+
+def test_keyword_search_persists_per_term_coverage_and_marks_provider_failures_incomplete(tmp_path) -> None:
+    """A failed global query cannot disappear behind a completed community listing."""
+    as_of = datetime(2026, 8, 31, 12, tzinfo=UTC)
+    paths = opportunity_radar.create_run_paths(tmp_path, "keyword-coverage")
+    complete = _listing("search-hit", created_at=datetime(2026, 2, 1, 12, tzinfo=UTC))
+    complete["coverage_status"] = "complete"
+
+    def runner(arguments: tuple[str, ...]) -> str:
+        term = arguments[3]
+        if term == "broken search":
+            raise RuntimeError("Reddit search returned HTTP 429")
+        return json.dumps([complete])
+
+    result = opportunity_radar.OpenCliCollector(runner=runner, sleeper=lambda _: None).collect_round_two(
+        ("complete search", "broken search"), paths=paths, as_of=as_of,
+        scope=opportunity_radar.CollectionScope(date(2026, 1, 1), date(2026, 8, 31), "complete"),
+    )
+
+    assert result.coverage["complete search"]["status"] == "complete"
+    assert result.coverage["complete search"]["actual_start"] == "2026-02-01"
+    assert result.coverage["broken search"]["status"] == "incomplete"
+    assert result.coverage["broken search"]["stop_reason"] == "provider_error"
 
 
 def test_stratified_shortlist_retains_months_and_controversial_signal() -> None:

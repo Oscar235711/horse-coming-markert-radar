@@ -19,6 +19,14 @@ COMMUNITY_VERSION = "community-library.v1"
 TOPIC_VERSION = "topic-library.v1"
 KEYWORD_VERSION = "keyword-library.v1"
 _COMMUNITY_MENTION = re.compile(r"(?<![A-Za-z0-9_])r/([A-Za-z0-9_]+)")
+_SEED_COMMUNITIES = frozenset({"cummins", "duramax", "powerstroke", "forddiesels"})
+_NON_DIESEL_COMMUNITY_TOKENS = frozenset({
+    "game", "cricket", "train", "ballast", "job", "career", "hiring", "anime", "meme", "crypto",
+})
+_DIESEL_COMMUNITY_ANCHORS = frozenset({
+    "cummins", "duramax", "powerstroke", "forddiesel", "dieseltech", "diesel", "dpf", "egr", "ccv",
+    "pcv", "downpipe", "tuner", "turbo", "injector", "exhaust", "regen", "towing", "truck",
+})
 _KEYWORD_NOISE = frozenset({
     "http", "https", "www", "com", "reddit", "org", "amp", "comments", "comment", "replies", "reply",
     "gallery", "share", "view", "more", "removed", "deleted", "edit", "as", "well", "if", "don", "doesn",
@@ -34,6 +42,18 @@ _KEYWORD_ANCHORS = frozenset({
     "manifold", "intercooler", "gauge", "sensor", "injector", "turbo", "cooling", "system", "fuel", "oil",
     "filter", "delete", "price", "cost", "upgrade", "performance", "solution",
 })
+_KEYWORD_STRONG_ANCHORS = frozenset({
+    "cummins", "duramax", "powerstroke", "ford", "diesel", "dpf", "egr", "ccv", "pcv", "downpipe",
+    "tuner", "tuning", "exhaust", "egt", "cooler", "valve", "pipe", "kit", "clamp", "regen", "leak",
+    "failure", "failed", "broken", "crack", "clog", "fitment", "installation", "engine", "manifold",
+    "intercooler", "gauge", "sensor", "injector", "turbo", "fuel", "oil", "filter", "delete",
+})
+_KEYWORD_FRAGMENT_TOKENS = frozenset({
+    "a", "an", "and", "are", "at", "because", "but", "by", "for", "from", "got", "i", "im", "in",
+    "is", "just", "lot", "my", "new", "of", "on", "out", "over", "some", "the", "to", "under", "up",
+    "top", "was", "were", "where", "with", "work", "working", "pulling", "coming", "getting",
+})
+_NON_DIESEL_KEYWORD_PHRASES = frozenset({"gas engine", "gasoline engine", "motorcycle exhaust"})
 
 
 def update_project_library(
@@ -68,7 +88,7 @@ def update_project_library(
     topics_doc = _read_document(library_root / "topics.json", TOPIC_VERSION, "topics")
     keywords_doc = _read_document(library_root / "keywords.json", KEYWORD_VERSION, "keywords")
 
-    active_community_keys = {
+    configured_community_keys = {
         _community_key(item)
         for item in _as_list(analysis.get("communities"))
         if _community_key(item)
@@ -76,7 +96,7 @@ def update_project_library(
     community_rows = _community_observations(analysis, post_rows, comment_rows)
     _upsert_communities(
         communities_doc["communities"], community_rows, run_id=run_id,
-        timestamp=timestamp, active_keys=active_community_keys,
+        timestamp=timestamp, seed_keys=configured_community_keys & _SEED_COMMUNITIES,
     )
     _upsert_topics(topics_doc["topics"], analysis.get("topics"), run_id=run_id, timestamp=timestamp)
     _upsert_keywords(
@@ -122,7 +142,7 @@ def load_project_library(root: str | Path) -> dict[str, Any]:
 
 def active_keywords(root: str | Path) -> tuple[str, ...]:
     """Return deduplicated terms that must be used by the next search cycle."""
-    active_statuses = {"seed", "configured", "formal", "approved", "active"}
+    active_statuses = {"seed", "configured", "formal", "active"}
     rows = load_project_library(root)["keywords"]
     return tuple(dict.fromkeys(
         str(item.get("normalized_term") or item.get("term_en") or "").strip()
@@ -136,18 +156,24 @@ def active_keywords(root: str | Path) -> tuple[str, ...]:
 def active_communities(root: str | Path, *, minimum_source_posts: int = 3) -> tuple[str, ...]:
     """Return configured communities plus strongly evidenced discoveries.
 
-    A discovered subreddit becomes usable without a manual copy step once at
-    least three different source posts mention it. Rejected/disabled rows can
-    never be promoted by this helper.
+    A discovered subreddit becomes usable without a manual copy step only
+    after three relevant source posts from three distinct authors. Legacy
+    ``approved`` rows are deliberately not trusted as crawl authority.
     """
     rows = load_project_library(root)["communities"]
     output: list[str] = []
     for item in rows:
         status = str(item.get("status") or "observed").casefold()
         source_count = len(set(str(value) for value in _as_list(item.get("source_post_ids")) if value))
-        if status in {"rejected", "disabled"}:
+        author_count = len(set(str(value) for value in _as_list(item.get("source_author_ids")) if value))
+        relevant_count = len(set(str(value) for value in _as_list(item.get("relevant_source_post_ids")) if value))
+        key = _community_key(item.get("key") or item.get("display_name") or item.get("subreddit"))
+        if status in {"rejected", "disabled", "quarantined"}:
             continue
-        if status in {"seed", "configured", "approved", "active"} or source_count >= minimum_source_posts:
+        if key in _SEED_COMMUNITIES or (
+            status == "active" and source_count >= minimum_source_posts
+            and author_count >= 3 and relevant_count >= minimum_source_posts
+        ):
             name = str(item.get("display_name") or item.get("subreddit") or item.get("key") or "").strip().removeprefix("r/")
             if name and name.casefold() not in {value.casefold() for value in output}:
                 output.append(name)
@@ -167,18 +193,31 @@ def _community_observations(analysis: Mapping[str, Any], posts: Sequence[Any], c
     for post in posts:
         subreddit = _value(post, "subreddit")
         if subreddit:
-            rows.append({"name": subreddit, "post_id": _value(post, "post_id"), "url": _value(post, "url"), "platform": _platform(subreddit)})
+            rows.append({
+                "name": subreddit,
+                "post_id": _value(post, "post_id"),
+                "url": _value(post, "url"),
+                "author": _value(post, "author"),
+                "text": " ".join((_value(post, "title"), _value(post, "body"))),
+                "platform": _platform(subreddit),
+            })
         text = " ".join((_value(post, "title"), _value(post, "body")))
-        rows.extend({"name": match.group(1), "post_id": _value(post, "post_id"), "url": _value(post, "url"), "platform": _platform(match.group(1))} for match in _COMMUNITY_MENTION.finditer(text))
+        rows.extend({
+            "name": match.group(1), "post_id": _value(post, "post_id"), "url": _value(post, "url"),
+            "author": _value(post, "author"), "text": text, "platform": _platform(match.group(1)),
+        } for match in _COMMUNITY_MENTION.finditer(text))
     for comment in comments:
         text = _value(comment, "body")
-        rows.extend({"name": match.group(1), "post_id": _value(comment, "post_id"), "comment_id": _value(comment, "comment_id")} for match in _COMMUNITY_MENTION.finditer(text))
+        rows.extend({
+            "name": match.group(1), "post_id": _value(comment, "post_id"), "comment_id": _value(comment, "comment_id"),
+            "author": _value(comment, "author"), "text": text,
+        } for match in _COMMUNITY_MENTION.finditer(text))
     return rows
 
 
 def _upsert_communities(
     records: list[dict[str, Any]], observations: Sequence[Mapping[str, Any]], *,
-    run_id: str, timestamp: datetime, active_keys: set[str],
+    run_id: str, timestamp: datetime, seed_keys: set[str],
 ) -> None:
     by_key = {str(item.get("key", "")).casefold(): item for item in records if item.get("key")}
     for observation in observations:
@@ -191,10 +230,12 @@ def _upsert_communities(
                 "key": key,
                 "subreddit": f"r/{key}",
                 "display_name": _display_community(observation.get("name"), key),
-                "status": "approved" if key in active_keys else "observed",
+                "status": "seed" if key in seed_keys else ("observed" if _diesel_community_observation(key, observation) else "quarantined"),
                 "platforms": [],
                 "aliases": [],
                 "source_post_ids": [],
+                "source_author_ids": [],
+                "relevant_source_post_ids": [],
                 "source_urls": [],
                 "topic_ids": [],
                 "run_ids": [],
@@ -203,8 +244,11 @@ def _upsert_communities(
             }
             records.append(item)
             by_key[key] = item
-        if key in active_keys or str(item.get("status", "")).casefold() == "approved":
-            item["status"] = "approved"
+        status = str(item.get("status", "observed")).casefold()
+        if key in seed_keys or key in _SEED_COMMUNITIES:
+            item["status"] = "seed"
+        elif status == "approved":
+            item["status"] = "observed" if _diesel_community_name(key) else "quarantined"
         for field in ("aliases", "platforms"):
             values = item.setdefault(field, [])
             _merge_values(values, observation.get(field, ()))
@@ -218,6 +262,11 @@ def _upsert_communities(
             value = str(observation.get(field) or "").strip()
             if value:
                 _merge_values(item.setdefault("source_post_ids", []), [value])
+                if _diesel_community_observation(key, observation):
+                    _merge_values(item.setdefault("relevant_source_post_ids", []), [value])
+        author = str(observation.get("author") or "").strip()
+        if author:
+            _merge_values(item.setdefault("source_author_ids", []), [author])
         url = str(observation.get("url") or "").strip()
         if url.startswith(("http://", "https://")):
             _merge_values(item.setdefault("source_urls", []), [url])
@@ -226,7 +275,15 @@ def _upsert_communities(
         item["last_seen"] = max(str(item.get("last_seen") or timestamp.isoformat()), timestamp.isoformat())
         item["run_count"] = len(item.get("run_ids", []))
         item["source_post_count"] = len(item.get("source_post_ids", []))
-        if item.get("status") == "observed" and item["source_post_count"] >= 3:
+        item["source_author_count"] = len(item.get("source_author_ids", []))
+        item["relevant_source_post_count"] = len(item.get("relevant_source_post_ids", []))
+        if key not in _SEED_COMMUNITIES and not _diesel_community_observation(key, observation):
+            item["status"] = "quarantined"
+        elif item.get("status") == "observed" and (
+            item["source_post_count"] >= 3
+            and item["source_author_count"] >= 3
+            and item["relevant_source_post_count"] >= 3
+        ):
             item["status"] = "active"
     records.sort(key=lambda item: str(item.get("key", "")))
 
@@ -368,7 +425,7 @@ def _upsert_keywords(
         item["source_post_count"] = len(item.get("source_post_ids", []))
         item["source_comment_count"] = len(item.get("source_comment_ids", []))
         if (
-            str(item.get("status", "")).casefold() not in {"rejected", "disabled"}
+            str(item.get("status", "")).casefold() not in {"rejected", "disabled", "quarantined"}
             and item["source_post_count"] >= 2
             and item["author_count_max"] >= 2
             and _float(item.get("score_max")) >= 20
@@ -439,13 +496,35 @@ def _normalise(value: Any) -> str:
 def _useful_keyword(value: Any) -> bool:
     term = _normalise(value)
     tokens = term.split()
-    return bool(term and len(tokens) >= 2 and not any(token in _KEYWORD_NOISE for token in tokens)
-                and any(token in _KEYWORD_ANCHORS for token in tokens)
+    numeric_tokens = [token for token in tokens if token.isdigit()]
+    return bool(term and len(tokens) >= 2 and term not in _NON_DIESEL_KEYWORD_PHRASES
+                and not any(token in _KEYWORD_FRAGMENT_TOKENS for token in tokens)
+                and not any(token in _KEYWORD_NOISE for token in tokens)
+                and any(token in _KEYWORD_STRONG_ANCHORS for token in tokens)
+                and (not numeric_tokens or len(numeric_tokens) >= 2)
                 and not any(token.isdigit() and len(token) >= 2 for token in tokens))
 
 
+def _diesel_community_name(key: str) -> bool:
+    """Whether a subreddit name itself provides a diesel-pickup anchor."""
+    normalized = _normalise(key)
+    if any(token in normalized for token in _NON_DIESEL_COMMUNITY_TOKENS):
+        return False
+    return any(anchor in normalized for anchor in _DIESEL_COMMUNITY_ANCHORS)
+
+
+def _diesel_community_observation(key: str, observation: Mapping[str, Any]) -> bool:
+    """Require a domain anchor before a discovered subreddit can be promoted."""
+    text = " ".join((key, str(observation.get("text") or ""))).casefold()
+    if any(token in text for token in _NON_DIESEL_COMMUNITY_TOKENS):
+        return False
+    return _diesel_community_name(key) or any(anchor in text for anchor in _DIESEL_COMMUNITY_ANCHORS)
+
+
 def _community_key(value: Any) -> str:
-    raw = str(value or "").strip().removeprefix("r/")
+    raw = str(value or "").strip()
+    if raw[:2].casefold() == "r/":
+        raw = raw[2:]
     return raw.casefold()
 
 

@@ -65,6 +65,23 @@ Exporter = Callable[[Path, Mapping[str, Any], tuple[str, ...]], TopicExportArtif
 Clock = Callable[[], datetime]
 
 
+def _run_coverage_status(
+    scope: CollectionScope | None,
+    community_coverage: Mapping[str, Any],
+    keyword_coverage: Mapping[str, Any],
+) -> str:
+    """Return a truthful final status for a date-scoped research run."""
+    if scope is None:
+        return "completed"
+    rows = [*community_coverage.values(), *keyword_coverage.values()]
+    if not rows:
+        return "partial"
+    return "completed" if all(
+        isinstance(row, Mapping) and str(row.get("status") or "").casefold() == "complete"
+        for row in rows
+    ) else "partial"
+
+
 class RadarCliApp:
     """High-level application service used by the Python CLI and PowerShell wrapper."""
 
@@ -383,7 +400,9 @@ class RadarCliApp:
         state["artifacts"] = self._artifact_map(exported, requested_formats)
         state["export_formats"] = list(requested_formats)
         state["stage"] = "exported"
-        state["status"] = "completed"
+        scope = analysis.get("research_scope") if isinstance(analysis.get("research_scope"), Mapping) else {}
+        coverage_status = str(scope.get("coverage_status") or state.get("status") or "completed").casefold()
+        state["status"] = "partial" if coverage_status in {"partial", "incomplete"} else "completed"
         if "exported" not in state["completed_stages"]:
             state["completed_stages"].append("exported")
         self._write_state(paths.state_path, state)
@@ -394,13 +413,13 @@ class RadarCliApp:
                 run_id=manifest.run_id,
                 started_at=manifest.started_at,
                 config_sha256=manifest.config_sha256,
-                status="completed",
+                status=state["status"],
                 completed_stages=tuple(state["completed_stages"]),
             ),
         )
         return {
             "run_id": run_id,
-            "status": "completed",
+            "status": state["status"],
             "formats": list(requested_formats),
             "artifacts": state["artifacts"],
         }
@@ -538,14 +557,14 @@ class RadarCliApp:
         selected_keywords: Sequence[str] = (),
     ) -> dict[str, Any]:
         activated_names = active_communities(self._library_root)
-        # The cumulative library is discovery evidence, not crawl authority.
-        # Only the communities selected for this run may drive subreddit
-        # listing collection; keyword search can still discover posts across
-        # Reddit without turning noisy mentions into thousands of extra reads.
+        listing_communities = self._listing_communities(config)
+        # The selected catalog remains the seed surface. Evidence-qualified
+        # community discoveries are reused only from the *next* run onward,
+        # so no single noisy mention can expand an in-flight collection.
         state["community_expansion"] = {
             "loaded_active_count": len(activated_names),
-            "used_community_count": len(config.communities),
-            "used_communities": [community.name for community in config.communities],
+            "used_community_count": len(listing_communities),
+            "used_communities": [community.name for community in listing_communities],
             "library_only_count": len({name.casefold() for name in activated_names} - {community.name.casefold() for community in config.communities}),
         }
         collect_arguments: dict[str, Any] = {
@@ -583,10 +602,10 @@ class RadarCliApp:
             }
             if scope is not None:
                 raw_arguments["scope"] = scope
-            collection = self._collector.load_from_raw(config.communities, **raw_arguments)
+            collection = self._collector.load_from_raw(listing_communities, **raw_arguments)
         else:
             self._check_cancelled()
-            collection = self._collector.collect(config.communities, **collect_arguments)
+            collection = self._collector.collect(listing_communities, **collect_arguments)
 
         self._check_cancelled()
 
@@ -617,9 +636,7 @@ class RadarCliApp:
                 deep_read=True,
                 progress=report_collection_progress,
                 post_filter=lambda item: self._search_post_relevant(item, config, domain),
-                allowed_communities=(
-                    None if state.get("research_question") else tuple(community.name for community in config.communities)
-                ),
+                allowed_communities=None,
             )
             collection = replace(
                 collection,
@@ -636,6 +653,9 @@ class RadarCliApp:
                 "discovered_community_count": len({
                     item.post.subreddit.casefold() for item in expansion.candidates
                 }),
+            }
+            state["keyword_coverage"] = {
+                term: dict(item) for term, item in expansion.coverage.items()
             }
         if not collection.candidates and not collection.deep_reads and collection.failures:
             state["counts"]["failure_count"] = len(collection.failures)
@@ -794,9 +814,7 @@ class RadarCliApp:
                     deep_read=True,
                     progress=report_collection_progress,
                     post_filter=lambda item: self._search_post_relevant(item, config, domain),
-                    allowed_communities=(
-                        None if state.get("research_question") else tuple(community.name for community in config.communities)
-                    ),
+                    allowed_communities=None,
                 )
                 prior_post_ids = {thread.post.post_id for thread in collection.deep_reads}
                 collection = replace(
@@ -807,6 +825,9 @@ class RadarCliApp:
                 )
                 state.setdefault("expansion", {})["used_keywords"] = list(expansion.selected_terms)
                 state["expansion"]["used_keyword_count"] = len(expansion.selected_terms)
+                state["keyword_coverage"] = {
+                    term: dict(item) for term, item in expansion.coverage.items()
+                }
                 eligible_threads, audit = self._gate_threads(collection.deep_reads, config, domain)
                 audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
                 added_targets = [
@@ -923,7 +944,13 @@ class RadarCliApp:
             "end_date": scope.end_date.isoformat() if scope else None,
             "depth": scope.depth if scope else "legacy",
             "coverage": state.get("coverage", {}),
+            "keyword_coverage": state.get("keyword_coverage", {}),
         }
+        analysis["research_scope"]["coverage_status"] = _run_coverage_status(
+            scope,
+            state.get("coverage", {}),
+            state.get("keyword_coverage", {}),
+        )
         # Backward-compatible names are only a projection of the canonical
         # metrics object; HTML and Excel read report_metrics directly.
         analysis["crawl_counts"] = {
@@ -964,7 +991,7 @@ class RadarCliApp:
         state["artifacts"]["community_topic_map_json"] = str(report_path.parent / "community_topic_map.json")
         state["artifacts"]["evidence_gate_json"] = str(audit_path)
         state["stage"] = "exported"
-        state["status"] = "completed"
+        state["status"] = analysis["research_scope"]["coverage_status"]
         state["completed_stages"] = self._merge_stages(
             state["completed_stages"], "configured", "collected", "flash_extract", "topic_consolidation", "exported"
         )
@@ -973,7 +1000,7 @@ class RadarCliApp:
             "stage": "exported",
             "completed": 1,
             "total": 1,
-            "message": "分析、HTML 与 Excel 已生成。",
+            "message": "分析、HTML 与 Excel 已生成。" if state["status"] == "completed" else "分析、HTML 与 Excel 已生成，但采集范围仅部分覆盖。",
         }
         # Keep extraction failures visible after a successful partial run;
         # report generation must not erase them from the final counters.
@@ -987,7 +1014,7 @@ class RadarCliApp:
                 run_id=manifest.run_id,
                 started_at=manifest.started_at,
                 config_sha256=manifest.config_sha256,
-                status="completed",
+                status=state["status"],
                 completed_stages=tuple(state["completed_stages"]),
             ),
         )
@@ -1515,6 +1542,23 @@ class RadarCliApp:
             if community.name.casefold() in requested
         )
         return replace(config, communities=communities)
+
+    def _listing_communities(self, config: RadarConfig) -> tuple[Community, ...]:
+        """Append only evidence-qualified discoveries to the next listing run."""
+        communities: list[Community] = list(config.communities)
+        known = {community.name.casefold() for community in communities}
+        for name in active_communities(self._library_root):
+            normalized = str(name).strip().removeprefix("r/")
+            if not normalized or normalized.casefold() in known:
+                continue
+            communities.append(Community(
+                name=normalized,
+                category="library_discovered",
+                brand="柴油皮卡自动发现社区",
+                status="active",
+            ))
+            known.add(normalized.casefold())
+        return tuple(communities)
 
     def _scope_to_dict(self, scope: CollectionScope | None) -> dict[str, str] | None:
         if scope is None:

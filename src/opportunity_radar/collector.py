@@ -3,7 +3,7 @@
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import time
@@ -82,6 +82,7 @@ class RoundTwoCollectionResult:
     failures: tuple[CollectionFailure, ...]
     selected_terms: tuple[str, ...]
     deep_reads: tuple[ThreadDocument, ...] = ()
+    coverage: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 class OpenCliCollector:
@@ -504,6 +505,7 @@ class OpenCliCollector:
         reusable = checkpoint
         queries = reusable.get("queries") if isinstance(reusable.get("queries"), Mapping) else {}
         stored_records = reusable.get("records") if isinstance(reusable.get("records"), list) else []
+        stored_coverage = reusable.get("coverage") if isinstance(reusable.get("coverage"), Mapping) else {}
         records: list[Mapping[str, Any]] = [item for item in stored_records if isinstance(item, Mapping)]
         terms_to_run = tuple(
             term for term in selected_terms
@@ -514,6 +516,15 @@ class OpenCliCollector:
             term: {"status": "success"} for term in selected_terms
             if isinstance(queries.get(term), Mapping) and queries[term].get("status") == "success"
         }
+        coverage: dict[str, dict[str, Any]] = {
+            str(term): dict(value)
+            for term, value in stored_coverage.items()
+            if isinstance(value, Mapping) and str(term) in selected_terms
+        }
+        for term in current_queries:
+            if term not in coverage:
+                prior_rows = [item for item in records if str(item.get("source_surface") or "") == f"keyword:{term}"]
+                coverage[term] = _keyword_coverage(prior_rows, scope)
         failed_terms = 0
         for position, term in enumerate(terms_to_run):
             if position:
@@ -528,6 +539,7 @@ class OpenCliCollector:
                 parsed = _parse_records(raw_text)
                 records.extend({**dict(record), "source_surface": f"keyword:{term}"} for record in parsed)
                 current_queries[term] = {"status": "success"}
+                coverage[term] = _keyword_coverage(parsed, scope)
             except CollectionCancelled:
                 raise
             except Exception as error:
@@ -542,9 +554,19 @@ class OpenCliCollector:
                     "retryable": True,
                 })
                 current_queries[term] = {"status": "failed", "message": failure.message}
+                coverage[term] = {
+                    "status": "incomplete",
+                    "requested_start": scope.start_date.isoformat() if scope else None,
+                    "requested_end": scope.end_date.isoformat() if scope else None,
+                    "actual_start": None,
+                    "actual_end": None,
+                    "pages_scanned": 0,
+                    "hit_count": 0,
+                    "stop_reason": "provider_error",
+                }
             _write_checkpoint(checkpoint_path, {
                 "candidate_signature": signature, "selected_terms": list(selected_terms),
-                "queries": current_queries, "records": records,
+                "queries": current_queries, "coverage": coverage, "records": records,
             })
             if progress is not None:
                 progress({
@@ -555,7 +577,7 @@ class OpenCliCollector:
                 })
         _write_checkpoint(checkpoint_path, {
             "candidate_signature": signature, "selected_terms": list(selected_terms),
-            "queries": current_queries, "records": records,
+            "queries": current_queries, "coverage": coverage, "records": records,
         })
         normalized = normalize_and_deduplicate(records)
         additions = window_posts(
@@ -638,7 +660,45 @@ class OpenCliCollector:
                 [thread.post for thread in deep_reads],
                 [{"post_id": thread.post.post_id, "parent_id": "", "depth": 1, **asdict(comment)} for thread in deep_reads for comment in thread.comments],
             )
-        return RoundTwoCollectionResult(ordered, tuple(failures), selected_terms, deep_reads)
+        return RoundTwoCollectionResult(ordered, tuple(failures), selected_terms, deep_reads, coverage)
+
+
+def _keyword_coverage(records: Sequence[Mapping[str, Any]], scope: CollectionScope | None) -> dict[str, Any]:
+    """Summarise a single global-search query without claiming full Reddit coverage."""
+    dates: list[Any] = []
+    pages = 0
+    hints: set[str] = set()
+    for record in records:
+        try:
+            timestamp = float(record.get("created_utc"))
+        except (TypeError, ValueError):
+            continue
+        dates.append(datetime.fromtimestamp(timestamp, tz=UTC).date())
+        try:
+            pages = max(pages, int(record.get("pages_scanned") or 0))
+        except (TypeError, ValueError):
+            pass
+        hint = str(record.get("coverage_status") or "").strip().casefold()
+        if hint:
+            hints.add(hint)
+    actual_start = min(dates).isoformat() if dates else None
+    actual_end = max(dates).isoformat() if dates else None
+    if "partial" in hints:
+        status = "partial"
+    elif "complete" in hints or (scope is not None and dates and min(dates) <= scope.start_date):
+        status = "complete"
+    else:
+        status = "partial"
+    return {
+        "status": status,
+        "requested_start": scope.start_date.isoformat() if scope else None,
+        "requested_end": scope.end_date.isoformat() if scope else None,
+        "actual_start": actual_start,
+        "actual_end": actual_end,
+        "pages_scanned": pages,
+        "hit_count": len(records),
+        "stop_reason": "date_boundary_or_exhausted" if status == "complete" else "coverage_boundary_not_reached",
+    }
 
 
 def _listing_commands(community: str) -> tuple[tuple[str, tuple[str, ...]], ...]:

@@ -11,6 +11,8 @@ from opportunity_radar.library import (
     update_project_library,
 )
 from opportunity_radar.models import CollectionScope
+from opportunity_radar.models import Community, RadarConfig
+from opportunity_radar.cli_app import RadarCliApp
 
 
 def _candidate(index: int) -> KeywordCandidate:
@@ -83,7 +85,7 @@ def test_keyword_library_is_unique_by_normalized_term_and_exposes_active_items(t
     assert active_keywords(tmp_path) == ("egr cooler failure",)
 
 
-def test_observed_community_auto_activates_after_cross_post_evidence(tmp_path) -> None:
+def test_active_community_requires_cross_post_author_and_diesel_evidence(tmp_path) -> None:
     document = {
         "version": "community-library.v1",
         "updated_at": "2026-09-01T00:00:00+00:00",
@@ -91,8 +93,10 @@ def test_observed_community_auto_activates_after_cross_post_evidence(tmp_path) -
             "key": "dieseltech",
             "subreddit": "r/DieselTech",
             "display_name": "DieselTech",
-            "status": "observed",
+            "status": "active",
             "source_post_ids": ["t3_a", "t3_b", "t3_c"],
+            "source_author_ids": ["owner-a", "owner-b", "owner-c"],
+            "relevant_source_post_ids": ["t3_a", "t3_b", "t3_c"],
             "run_ids": ["run-a"],
             "first_seen": "2026-09-01T00:00:00+00:00",
             "last_seen": "2026-09-01T00:00:00+00:00",
@@ -102,3 +106,17 @@ def test_observed_community_auto_activates_after_cross_post_evidence(tmp_path) -
 
     assert active_communities(tmp_path) == ("DieselTech",)
 
+
+def test_next_run_adds_only_active_discovered_communities_to_listing_surfaces(tmp_path) -> None:
+    """An active discovery is reused next run while quarantined rows stay out."""
+    (tmp_path / "communities.json").write_text(json.dumps({
+        "version": "community-library.v1",
+        "communities": [
+            {"key": "dieseltech", "display_name": "DieselTech", "status": "active", "source_post_ids": ["a", "b", "c"], "source_author_ids": ["u1", "u2", "u3"], "relevant_source_post_ids": ["a", "b", "c"]},
+            {"key": "gameprofessional", "display_name": "GameProfessional", "status": "quarantined", "source_post_ids": ["d", "e", "f"], "source_author_ids": ["u4", "u5", "u6"], "relevant_source_post_ids": ["d", "e", "f"]},
+        ],
+    }), encoding="utf-8")
+    app = RadarCliApp(library_root=tmp_path)
+    config = RadarConfig(project="test", communities=(Community("Cummins"),))
+
+    assert [community.name for community in app._listing_communities(config)] == ["Cummins", "DieselTech"]

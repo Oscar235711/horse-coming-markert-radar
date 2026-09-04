@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 
-from opportunity_radar.library import load_project_library, update_project_library
+from opportunity_radar.library import active_communities, active_keywords, load_project_library, update_project_library
 from opportunity_radar.models import NormalizedPost
 
 
@@ -93,3 +93,39 @@ def test_project_library_upserts_communities_topics_and_keywords_across_runs(tmp
     # Files are plain UTF-8 JSON and do not contain raw post bodies.
     assert json.loads((tmp_path / "communities.json").read_text(encoding="utf-8"))["version"] == "community-library.v1"
     assert "Also see" not in (tmp_path / "communities.json").read_text(encoding="utf-8")
+
+
+def test_library_auto_activates_only_diesel_evidence_and_quarantines_generic_noise(tmp_path: Path) -> None:
+    """A three-post threshold must not promote game communities or sentence fragments."""
+    analysis = {
+        "generated_at": "2026-09-04T10:00:00+00:00",
+        "communities": ["Cummins"],
+        "topics": [],
+        "keyword_library": {"candidates": [
+            {
+                "term_en": "cummins downpipe fitment", "term_zh": "Cummins下降管适配",
+                "source_post_ids": ["diesel-1", "diesel-2", "diesel-3"], "author_count": 3,
+                "post_count": 3, "score": 78, "status": "observed", "community": "DieselTech",
+            },
+            {
+                "term_en": "lot of work", "term_zh": "很多工作量",
+                "source_post_ids": ["diesel-1", "diesel-2", "diesel-3"], "author_count": 3,
+                "post_count": 3, "score": 78, "status": "observed", "community": "DieselTech",
+            },
+        ]},
+    }
+    posts = [
+        _post(f"diesel-{index}", "DieselTech", title="Cummins diesel downpipe fitment", body="Need a diesel truck installation solution", author=f"owner-{index}")
+        for index in range(1, 4)
+    ] + [
+        _post("game-1", "GameProfessional", title="Game career advice", body="Looking for a job in games", author="gamer"),
+    ]
+
+    update_project_library(tmp_path, analysis, run_id="run-clean", posts=posts)
+    communities = {item["key"]: item for item in load_project_library(tmp_path)["communities"]}
+
+    assert communities["cummins"]["status"] == "seed"
+    assert communities["dieseltech"]["status"] == "active"
+    assert communities["gameprofessional"]["status"] == "quarantined"
+    assert active_communities(tmp_path) == ("Cummins", "DieselTech")
+    assert active_keywords(tmp_path) == ("cummins downpipe fitment",)
