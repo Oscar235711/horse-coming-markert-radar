@@ -76,7 +76,7 @@ from .topics import (
     build_community_library,
     export_topic_analysis,
 )
-from .report import build_topic_map, render_html
+from .report import build_topic_map, build_visible_topic_map, render_html
 
 __all__ = [
     "Community",
@@ -151,6 +151,7 @@ __all__ = [
     "write_community_catalog",
     "export_topic_analysis",
     "build_topic_map",
+    "build_visible_topic_map",
     "render_html",
     "apply_diesel_evidence_gate",
     "classify_diesel_evidence",

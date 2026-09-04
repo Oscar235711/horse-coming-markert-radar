@@ -94,8 +94,6 @@ function objectValue(item, key, fallback = "未知") {
     ? item[key]
     : fallback;
 }
-function safeText(value) { return String(value ?? "").replaceAll('"', '""'); }
-function urlFormula(url) { return `=HYPERLINK("${safeText(url)}","打开证据")`; }
 function columnName(number) {
   let result = "";
   for (let value = number; value > 0; value = Math.floor((value - 1) / 26)) result = String.fromCharCode(65 + ((value - 1) % 26)) + result;
@@ -172,10 +170,9 @@ function columnName(number) {
   const sheet = workbook.worksheets.getItem("帖子及评论证据");
   title(sheet, "帖子及评论证据（英文原文与中文翻译相邻）", "I");
   const evidenceRows = topics.flatMap((topic) => (topic.evidence ?? []).map((item) => [
-    topic.topic_id, topic.label_zh, item.evidence_id, item.post_id, item.stance, item.claim_en, item.claim_zh, "", item.url,
+    topic.topic_id, topic.label_zh, item.evidence_id, item.post_id, item.stance, item.claim_en, item.claim_zh, "打开证据", item.url,
   ]));
   table(sheet, ["话题ID", "话题", "证据ID", "帖子ID", "观点", "English evidence", "中文翻译", "可点击链接", "原始URL"], evidenceRows, [26, 20, 24, 20, 12, 38, 30, 14, 46]);
-  evidenceRows.forEach((row, index) => { sheet.getRange(`H${index + 4}`).formulas = [[urlFormula(row[8])]]; });
 }
 
 {

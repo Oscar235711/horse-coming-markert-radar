@@ -36,14 +36,16 @@ header{height:60px;padding:0 25px;border-bottom:1px solid var(--line);display:fl
 <script id="analysis-data" type="application/json">__PAYLOAD__</script>
 <script>
 const DATA=JSON.parse(document.getElementById('analysis-data').textContent||'{}');
-const ALL_TOPICS=Array.isArray(DATA.topics)?DATA.topics.filter(Boolean):[]; const formalTopics=ALL_TOPICS.filter(t=>t.status==='formal'); const TOPICS=formalTopics.length?formalTopics:ALL_TOPICS;
+const ALL_TOPICS=Array.isArray(DATA.topics)?DATA.topics.filter(Boolean):[]; const formalTopics=ALL_TOPICS.filter(t=>t.status==='formal'); const TOPICS=formalTopics;
 const norm=v=>String(v??'').trim().toLowerCase().replace(/^r\//,''); const arr=v=>Array.isArray(v)?v.filter(Boolean):[]; const obj=v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{}; const num=v=>Number.isFinite(Number(v))?Number(v):0;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const communityNames=new Map(); for(const raw of arr(DATA.communities).concat(TOPICS.map(t=>t.community||'')).filter(Boolean).map(String)){const key=norm(raw);if(!communityNames.has(key))communityNames.set(key,raw.replace(/^r\//i,''))} const COMMUNITIES=Array.from(communityNames.values()); const byCommunity=new Map(COMMUNITIES.map(c=>[norm(c),TOPICS.filter(t=>norm(t.community)===norm(c))]));
+const communityNames=new Map(); for(const raw of TOPICS.map(t=>t.community||'').filter(Boolean).map(String)){const key=norm(raw);if(!communityNames.has(key))communityNames.set(key,raw.replace(/^r\//i,''))} const COMMUNITIES=Array.from(communityNames.values()); const byCommunity=new Map(COMMUNITIES.map(c=>[norm(c),TOPICS.filter(t=>norm(t.community)===norm(c))]));
 const page=document.getElementById('page'),svg=document.getElementById('graph'),search=document.getElementById('search'),reset=document.getElementById('reset'),closeBtn=document.getElementById('close'),right=document.getElementById('right'),detail=document.getElementById('detail'),communityList=document.getElementById('communityList'),topicList=document.getElementById('topicList'),topicTitle=document.getElementById('topicTitle'),metrics=document.getElementById('metrics'),graphHelp=document.getElementById('graphHelp'),scopeLabel=document.getElementById('scopeLabel'),questionBanner=document.getElementById('questionBanner'); const NS='http://www.w3.org/2000/svg'; let selectedCommunity='',selectedTopic='',currentView='graph',applyingHash=false;
 const communityTopics=c=>byCommunity.get(norm(c))||[]; const findTopic=id=>TOPICS.find(t=>String(t.topic_id)===String(id)); const claims=(t,key,legacy=[])=>{const direct=arr(t[key]);if(direct.length)return direct;const nested=arr(obj(t.claim_evidence)[key]);if(nested.length)return nested;return arr(legacy).map(text=>({text}))}; const claimText=c=>typeof c==='object'?String(c.text||c.value||''):String(c||''); const evidenceOf=c=>arr(obj(c).evidence);
 function setHash(view){if(applyingHash)return;const p=new URLSearchParams();if(selectedCommunity)p.set('community',selectedCommunity);if(selectedTopic)p.set('topic',selectedTopic);if(view&&view!=='graph')p.set('view',view);const next=p.toString();if(location.hash.slice(1)!==next)location.hash=next} function openPanel(){right.classList.remove('closed');page.classList.add('detail-open')} function closePanel(sync=true){selectedCommunity='';selectedTopic='';currentView='graph';right.classList.add('closed');page.classList.remove('detail-open','report-open');renderSide();renderGraph();if(sync)setHash('graph')}
 function selectCommunity(name,sync=true){selectedCommunity=String(name).replace(/^r\//i,'');selectedTopic='';currentView='community';page.classList.remove('report-open');openPanel();renderSide();renderGraph();showCommunityDetail(selectedCommunity);if(sync)setHash('community')} function selectTopic(id,sync=true){const t=findTopic(id);if(!t)return;selectedCommunity=String(t.community).replace(/^r\//i,'');selectedTopic=String(t.topic_id);currentView='preview';page.classList.remove('report-open');openPanel();renderSide();renderGraph();showTopicPreview(t);if(sync)setHash('preview')} function openTopicReport(id=selectedTopic,sync=true){const t=findTopic(id);if(!t)return;selectedCommunity=String(t.community).replace(/^r\//i,'');selectedTopic=String(t.topic_id);currentView='report';openPanel();page.classList.add('report-open');renderSide();renderGraph();showTopicDetail(t);if(sync)setHash('report')} function returnToPreview(sync=true){const t=findTopic(selectedTopic);if(!t){closePanel(sync);return}currentView='preview';page.classList.remove('report-open');showTopicPreview(t);renderSide();renderGraph();if(sync)setHash('preview')}
+function coverageFor(name){const coverage=obj(obj(DATA.research_scope).coverage);const hit=Object.entries(coverage).find(([key])=>norm(key)===norm(name));return obj(hit&&hit[1])} function communityMetricsFor(name){const rows=obj(obj(DATA.report_metrics).communities);const hit=Object.entries(rows).find(([key])=>norm(key)===norm(name));return obj(hit&&hit[1])}
+function showCommunityDetail(name){const display=COMMUNITIES.find(c=>norm(c)===norm(name));if(!display){closePanel(false);return}const ts=communityTopics(display).slice().sort((a,b)=>num(b.heat_score)-num(a.heat_score));const metric=communityMetricsFor(display),coverage=coverageFor(display),count=(key,fallback=0)=>num(metric[key]??fallback);detail.innerHTML=`<div class="eyebrow">r/${esc(display)} · 社区概览</div><h2>r/${esc(display)}</h2><div class="summary">该社区本次仅展示达到最低证据门槛的正式话题；弱信号和无话题状态保留在覆盖说明中，不作为图谱节点。</div><section class="field"><h3>数据范围</h3><div class="preview-stats"><div class="stat"><div class="k">正式话题</div><div class="v">${ts.length}</div></div><div class="stat"><div class="k">覆盖状态</div><div class="v">${esc(coverage.status||'当前证据不足')}</div></div><div class="stat"><div class="k">扫描帖子</div><div class="v">${count('scanned_post_count',metric.scanned_posts)}</div></div><div class="stat"><div class="k">深读帖子</div><div class="v">${count('deep_read_post_count',metric.deep_read_posts)}</div></div><div class="stat"><div class="k">进入分析</div><div class="v">${count('analyzed_post_count',metric.analyzed_posts)}</div></div><div class="stat"><div class="k">实际覆盖</div><div class="v">${esc(coverage.actual_start&&coverage.actual_end?coverage.actual_start+' 至 '+coverage.actual_end:'当前证据不足')}</div></div></div></section><section class="field"><h3>话题排行</h3>${ts.length?ts.map((topic,index)=>`<button class="topic-mini" data-community-topic="${esc(topic.topic_id)}" type="button"><span class="topic-dot"></span><span><b>${index+1}. ${esc(topic.label_zh||topic.label_en||'未命名话题')}</b><br><small>${esc(topic.trend_card?.trend_label||topic.trend||'未知')} · 热度 ${esc(topic.heat_score||0)} · ${esc(topic.post_count||0)} 帖</small></span><span>→</span></button>`).join(''):'<div class="empty">当前证据不足，尚无正式话题。</div>'}</section>`;detail.querySelectorAll('[data-community-topic]').forEach(button=>button.addEventListener('click',()=>selectTopic(button.dataset.communityTopic)))}
 function applyHash(){applyingHash=true;try{const p=new URLSearchParams(location.hash.slice(1)),community=p.get('community'),topic=p.get('topic'),view=p.get('view');if(topic&&findTopic(topic)){view==='report'?openTopicReport(topic,false):selectTopic(topic,false)}else if(community&&COMMUNITIES.some(c=>norm(c)===norm(community))){selectCommunity(community,false)}else closePanel(false)}finally{applyingHash=false}}
 function renderSide(){const q=search.value.trim().toLowerCase();communityList.innerHTML=COMMUNITIES.filter(c=>!q||norm(c).includes(q)||communityTopics(c).some(t=>JSON.stringify(t).toLowerCase().includes(q))).map(c=>`<button class="community-row" data-community="${esc(c)}"><i class="dot"></i><span class="row-body"><span class="row-name">r/${esc(c)}</span><span class="row-meta">${communityTopics(c).length} 个话题</span></span></button>`).join('')||'<div class="empty">没有匹配社区</div>';communityList.querySelectorAll('[data-community]').forEach(b=>b.addEventListener('click',()=>selectCommunity(b.dataset.community)));if(!selectedCommunity){topicTitle.textContent='选择社区后显示话题';topicList.innerHTML='<div class="empty">当前未选择社区</div>';return}const ts=communityTopics(selectedCommunity).filter(t=>!q||JSON.stringify(t).toLowerCase().includes(q));topicTitle.textContent=`r/${selectedCommunity} · ${communityTopics(selectedCommunity).length} 个话题`;topicList.innerHTML=ts.length?ts.slice().sort((a,b)=>num(b.heat_score)-num(a.heat_score)).map(t=>`<button class="topic-row ${String(t.topic_id)===selectedTopic?'active':''}" data-topic="${esc(t.topic_id)}"><i class="topic-dot"></i><span class="row-body"><span class="row-name">${esc(t.label_zh||t.label_en||'未命名话题')}</span><span class="row-meta">${esc(t.trend_card?.trend_label||t.trend||'未知')} · 热度 ${esc(t.heat_score||0)} · ${esc(t.post_count||0)} 帖</span></span></button>`).join(''):'<div class="empty">该社区暂无达到证据门槛的话题</div>';topicList.querySelectorAll('[data-topic]').forEach(b=>b.addEventListener('click',()=>selectTopic(b.dataset.topic)))}
 function communityPositions(){const n=COMMUNITIES.length||1,out=[];for(let i=0;i<n;i++){const angle=-Math.PI/2+Math.PI*2*i/n,r=n<=2?170:240;out.push({x:500+Math.cos(angle)*r,y:355+Math.sin(angle)*r})}return out} function topicPositions(ts){const out=[];let index=0,ring=0;while(index<ts.length){const count=Math.min(7,ts.length-index),radius=145+ring*90;for(let j=0;j<count;j++){const angle=-Math.PI/2+Math.PI*2*j/count+(ring%2?Math.PI/7:0);out.push({x:500+Math.cos(angle)*radius,y:360+Math.sin(angle)*radius});index++}ring++}return out}
@@ -62,15 +64,41 @@ function updateMetrics(){const m=DATA.report_metrics||{};metrics.textContent=`${
     return output
 
 
-def build_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
-    """Return one case-insensitive graph projection for the report."""
-    topics = [item for item in analysis.get("topics", []) if isinstance(item, Mapping)]
+def _community_display_name(value: Any) -> str:
+    """Normalize a subreddit display label without losing its first spelling."""
+    display = str(value or "").strip()
+    return display[2:] if display[:2].casefold() == "r/" else display
+
+
+def build_visible_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    """Return case-folded communities that own at least one formal topic.
+
+    Coverage records intentionally do not create visual nodes.  A community
+    becomes visible only when it has a formal, evidence-gated topic, which
+    prevents a zero-topic hollow circle from implying a finding.
+    """
     names: dict[str, str] = {}
-    for value in [*analysis.get("communities", []), *(item.get("community", "") for item in topics)]:
-        display = str(value or "").removeprefix("r/")
-        if display:
-            names.setdefault(display.casefold(), display)
-    communities = list(names.values())
+    topics: list[dict[str, Any]] = []
+    for item in analysis.get("topics", []):
+        if not isinstance(item, Mapping) or item.get("status") != "formal":
+            continue
+        display = _community_display_name(item.get("community"))
+        topic_id = str(item.get("topic_id") or "").strip()
+        if not display or not topic_id:
+            continue
+        key = display.casefold()
+        canonical_display = names.setdefault(key, display)
+        topic = dict(item)
+        topic["community"] = canonical_display
+        topics.append(topic)
+    return {"communities": list(names.values()), "topics": topics}
+
+
+def build_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the one evidence-gated graph projection used by the report."""
+    visible = build_visible_topic_map(analysis)
+    communities = visible["communities"]
+    topics = visible["topics"]
     return {
         "nodes": ([{"id": f"community:{name}", "type": "community", "label": name} for name in communities]
                    + [{"id": str(item.get("topic_id", "")), "type": "topic", "label": item.get("label_zh", item.get("label_en", "")), "community": item.get("community")} for item in topics if item.get("topic_id")]),

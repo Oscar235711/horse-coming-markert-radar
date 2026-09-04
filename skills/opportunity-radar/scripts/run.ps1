@@ -6,6 +6,8 @@ param(
   [string]$EndDate,
   [ValidateSet('quick','standard','deep','complete')]
   [string]$Depth = 'standard',
+  [ValidateSet('deepseek','codex')]
+  [string]$AnalysisEngine = 'deepseek',
   [string]$Communities = 'Cummins,Duramax,powerstroke,FordDiesels',
   [string]$Keywords = '',
   [switch]$NoOpen
@@ -21,7 +23,7 @@ if ($Resume) {
   exit $LASTEXITCODE
 }
 if (-not $StartDate -or -not $EndDate) { throw 'Run requires -StartDate and -EndDate.' }
-$cliArgs = @('-m','opportunity_radar','run','--config',(Join-Path $repoRoot 'configs\diesel_90d.yaml'),'--start-date',$StartDate,'--end-date',$EndDate,'--depth',$Depth,'--analysis-engine','codex','--communities',$Communities)
+$cliArgs = @('-m','opportunity_radar','run','--config',(Join-Path $repoRoot 'configs\diesel_90d.yaml'),'--start-date',$StartDate,'--end-date',$EndDate,'--depth',$Depth,'--analysis-engine',$AnalysisEngine,'--communities',$Communities)
 if ($RunId) { $cliArgs += @('--run-id',$RunId) }
 if ($Keywords) { $cliArgs += @('--keywords',$Keywords) }
 Push-Location $repoRoot

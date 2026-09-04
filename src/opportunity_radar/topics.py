@@ -469,6 +469,22 @@ def export_topic_analysis(
         builder = Path(__file__).resolve().parents[2] / "scripts" / "build_topic_workbook.mjs"
         node = _resolve_node_executable(node_executable, environment)
         subprocess.run((str(node), str(builder), str(analysis_json), str(workbook_path)), check=True, capture_output=True, text=True)
+        from .xlsx_links import inject_external_hyperlinks
+
+        evidence_links: dict[str, str] = {}
+        row_number = 4
+        for topic in canonical.get("topics", []):
+            if not isinstance(topic, Mapping):
+                continue
+            for evidence in topic.get("evidence", []):
+                if isinstance(evidence, Mapping) and str(evidence.get("url") or "").strip():
+                    evidence_links[f"H{row_number}"] = str(evidence["url"])
+                row_number += 1
+        inject_external_hyperlinks(
+            workbook_path,
+            sheet_name="帖子及评论证据",
+            links=evidence_links,
+        )
     if "html" in requested_formats:
         from .report import render_html
         report_path = render_html(canonical, directory / "report.html")
@@ -479,14 +495,10 @@ def export_topic_analysis(
 
 
 def _community_topic_map(analysis: Mapping[str, Any]) -> dict[str, Any]:
-    """Tiny graph-ready projection for future WhatToSell-style visualization."""
-    topics = [item for item in analysis.get("topics", []) if isinstance(item, Mapping)]
-    communities = [str(item) for item in analysis.get("communities", []) if item]
-    return {
-        "nodes": ([{"id": f"community:{name}", "type": "community", "label": name} for name in communities]
-                  + [{"id": str(item.get("topic_id", "")), "type": "topic", "label": item.get("label_zh", item.get("label_en", "")), "community": item.get("community")} for item in topics]),
-        "edges": [{"source": f"community:{item.get('community')}", "target": item.get("topic_id")} for item in topics if item.get("topic_id")],
-    }
+    """Reuse the report projection so spreadsheet and graph cannot diverge."""
+    from .report import build_topic_map
+
+    return build_topic_map(analysis)
 
 
 def _fallback_community_library(analysis: Mapping[str, Any]) -> list[dict[str, Any]]:

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 
 import opportunity_radar
 
@@ -166,8 +167,43 @@ def test_export_derives_json_and_seven_sheet_excel_from_one_canonical_analysis(t
     assert "话题关键词库" in workbook_parts
     assert "冬季耐久性" in workbook_parts
     assert "Cracking after winter use." in workbook_parts
-    assert "HYPERLINK" in workbook_parts
+    assert "HYPERLINK is not implemented" not in workbook_parts
     assert "https://www.reddit.com/" in workbook_parts
+    _assert_native_evidence_link(exported.workbook_path, posts[0].url)
+
+
+def _assert_native_evidence_link(workbook_path: Path, expected_url: str) -> None:
+    """Evidence H4 must be an OOXML relationship, not an unsupported formula."""
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    document_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package_rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+    with ZipFile(workbook_path) as workbook:
+        workbook_root = ET.fromstring(workbook.read("xl/workbook.xml"))
+        evidence_sheet = next(
+            sheet for sheet in workbook_root.findall(f".//{{{main}}}sheet")
+            if sheet.attrib.get("name") == "帖子及评论证据"
+        )
+        workbook_rels = ET.fromstring(workbook.read("xl/_rels/workbook.xml.rels"))
+        relationship_id = evidence_sheet.attrib[f"{{{document_rel}}}id"]
+        target = next(
+            rel.attrib["Target"] for rel in workbook_rels.findall(f"{{{package_rel}}}Relationship")
+            if rel.attrib.get("Id") == relationship_id
+        )
+        sheet_path = target.lstrip("/") if target.startswith("/") else "xl/" + target.lstrip("/")
+        sheet_root = ET.fromstring(workbook.read(sheet_path))
+        cell = next(cell for cell in sheet_root.findall(f".//{{{main}}}c") if cell.attrib.get("r") == "H4")
+        assert cell.attrib.get("t") != "e"
+        assert cell.find(f"{{{main}}}f") is None
+        hyperlink = next(link for link in sheet_root.findall(f".//{{{main}}}hyperlink") if link.attrib.get("ref") == "H4")
+        link_relationship_id = hyperlink.attrib[f"{{{document_rel}}}id"]
+        rel_path = (PurePosixPath(sheet_path).parent / "_rels" / f"{PurePosixPath(sheet_path).name}.rels").as_posix()
+        sheet_rels = ET.fromstring(workbook.read(rel_path))
+        external = next(
+            rel for rel in sheet_rels.findall(f"{{{package_rel}}}Relationship")
+            if rel.attrib.get("Id") == link_relationship_id
+        )
+    assert external.attrib.get("TargetMode") == "External"
+    assert external.attrib.get("Target") == expected_url
 
 
 def test_aggregation_never_mixes_communities_or_calls_pro_again_during_export(tmp_path: Path) -> None:
